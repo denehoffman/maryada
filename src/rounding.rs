@@ -545,123 +545,381 @@ pub(crate) fn fma(x: f64, y: f64, z: f64, direction: Direction) -> f64 {
 // Power functions.
 
 pub(crate) fn pown(x: f64, p: i32, direction: Direction) -> f64 {
-    todo!()
+    if p == 0 {
+        return 1.0;
+    }
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    let negative = x.is_sign_negative() && p & 1 != 0;
+    let magnitude_direction = if negative {
+        match direction {
+            Direction::Down => Direction::Up,
+            Direction::Up => Direction::Down,
+        }
+    } else {
+        direction
+    };
+    let mut base = if p < 0 {
+        recip(x.abs(), magnitude_direction)
+    } else {
+        x.abs()
+    };
+    let mut exponent = p.unsigned_abs();
+    let mut magnitude = 1.0;
+    while exponent != 0 {
+        if exponent & 1 != 0 {
+            magnitude = mul(magnitude, base, magnitude_direction);
+        }
+        exponent >>= 1;
+        if exponent != 0 {
+            base = sqr(base, magnitude_direction);
+        }
+    }
+    if negative { -magnitude } else { magnitude }
 }
 
-pub(crate) fn pow(x: f64, y: f64, direction: Direction) -> f64 {
-    todo!()
+fn outward_positive_approximation(value: f64, direction: Direction) -> f64 {
+    // libm documents an error below one ulp for its exp kernel (and below
+    // 0.503 ulp for normalized exp2 results), so one representable step in the
+    // requested direction encloses the exact positive result.
+    if value == 0.0 {
+        return match direction {
+            Direction::Down => -0.0,
+            Direction::Up => f64::from_bits(1),
+        };
+    }
+    if value == f64::INFINITY {
+        return match direction {
+            Direction::Down => f64::MAX,
+            Direction::Up => f64::INFINITY,
+        };
+    }
+    outward_finite_approximation(value, direction)
+}
+
+fn outward_finite_approximation(value: f64, direction: Direction) -> f64 {
+    debug_assert!(value.is_finite());
+    match direction {
+        Direction::Down => value.next_down(),
+        Direction::Up => value.next_up(),
+    }
 }
 
 pub(crate) fn exp(x: f64, direction: Direction) -> f64 {
-    todo!()
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    if x == f64::NEG_INFINITY {
+        return direction.exact_zero();
+    }
+    if x == f64::INFINITY {
+        return f64::INFINITY;
+    }
+    if x == 0.0 {
+        return 1.0;
+    }
+    outward_positive_approximation(libm::exp(x), direction)
 }
 
 pub(crate) fn exp2(x: f64, direction: Direction) -> f64 {
-    todo!()
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    if x == f64::NEG_INFINITY {
+        return direction.exact_zero();
+    }
+    if x == f64::INFINITY {
+        return f64::INFINITY;
+    }
+    if (-1074.0..=-1023.0).contains(&x) && x == (x as i32) as f64 {
+        return f64::from_bits(1u64 << ((x as i32 + 1074) as u32));
+    }
+    if (-1022.0..=1023.0).contains(&x) && x == (x as i32) as f64 {
+        return f64::from_bits(((x as i32 + 1023) as u64) << 52);
+    }
+    outward_positive_approximation(libm::exp2(x), direction)
 }
 
 pub(crate) fn exp10(x: f64, direction: Direction) -> f64 {
-    todo!()
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    if x == f64::NEG_INFINITY {
+        return direction.exact_zero();
+    }
+    if x == f64::INFINITY {
+        return f64::INFINITY;
+    }
+    if x == 0.0 {
+        return 1.0;
+    }
+    if (-323.0..=308.0).contains(&x) && x == (x as i32) as f64 {
+        return pown(10.0, x as i32, direction);
+    }
+    let ln_10 = match (x.is_sign_negative(), direction) {
+        (false, Direction::Down) | (true, Direction::Up) => core::f64::consts::LN_10.next_down(),
+        (false, Direction::Up) | (true, Direction::Down) => core::f64::consts::LN_10.next_up(),
+    };
+    exp(mul(x, ln_10, direction), direction)
 }
 
 pub(crate) fn log(x: f64, direction: Direction) -> f64 {
-    todo!()
+    if x.is_nan() || x < 0.0 {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return f64::NEG_INFINITY;
+    }
+    if x == f64::INFINITY {
+        return f64::INFINITY;
+    }
+    if x == 1.0 {
+        return direction.exact_zero();
+    }
+    outward_finite_approximation(libm::log(x), direction)
 }
 
 pub(crate) fn log2(x: f64, direction: Direction) -> f64 {
-    todo!()
+    if x.is_nan() || x < 0.0 {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return f64::NEG_INFINITY;
+    }
+    if x == f64::INFINITY {
+        return f64::INFINITY;
+    }
+    if let FloatClass::Finite(value) = FloatClass::new(x)
+        && value.significand.is_power_of_two()
+    {
+        let exponent = value.exponent + value.significand.trailing_zeros() as i32;
+        return if exponent == 0 {
+            direction.exact_zero()
+        } else {
+            f64::from(exponent)
+        };
+    }
+    outward_finite_approximation(libm::log2(x), direction)
 }
 
 pub(crate) fn log10(x: f64, direction: Direction) -> f64 {
-    todo!()
+    if x.is_nan() || x < 0.0 {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return f64::NEG_INFINITY;
+    }
+    if x == f64::INFINITY {
+        return f64::INFINITY;
+    }
+    if x == 1.0 {
+        return direction.exact_zero();
+    }
+    outward_finite_approximation(libm::log10(x), direction)
 }
 
 // Trigonometric functions.
 
+fn outward_bounded_approximation(value: f64, lower: f64, upper: f64, direction: Direction) -> f64 {
+    let outward = outward_finite_approximation(value, direction);
+    match direction {
+        Direction::Down => f64::max(outward, lower),
+        Direction::Up => f64::min(outward, upper),
+    }
+}
+
 pub(crate) fn sin(x: f64, direction: Direction) -> f64 {
-    todo!()
+    if !x.is_finite() {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return direction.exact_zero();
+    }
+    outward_bounded_approximation(libm::sin(x), -1.0, 1.0, direction)
 }
 
 pub(crate) fn cos(x: f64, direction: Direction) -> f64 {
-    todo!()
+    if !x.is_finite() {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return 1.0;
+    }
+    outward_bounded_approximation(libm::cos(x), -1.0, 1.0, direction)
 }
 
 pub(crate) fn tan(x: f64, direction: Direction) -> f64 {
-    todo!()
+    if !x.is_finite() {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return direction.exact_zero();
+    }
+    outward_finite_approximation(libm::tan(x), direction)
 }
 
 pub(crate) fn asin(x: f64, direction: Direction) -> f64 {
-    todo!()
+    if x.is_nan() || !(-1.0..=1.0).contains(&x) {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return direction.exact_zero();
+    }
+    let half_pi_upper = core::f64::consts::FRAC_PI_2.next_up();
+    outward_bounded_approximation(libm::asin(x), -half_pi_upper, half_pi_upper, direction)
 }
 
 pub(crate) fn acos(x: f64, direction: Direction) -> f64 {
-    todo!()
+    if x.is_nan() || !(-1.0..=1.0).contains(&x) {
+        return f64::NAN;
+    }
+    if x == 1.0 {
+        return direction.exact_zero();
+    }
+    outward_bounded_approximation(
+        libm::acos(x),
+        -0.0,
+        core::f64::consts::PI.next_up(),
+        direction,
+    )
 }
 
 pub(crate) fn atan(x: f64, direction: Direction) -> f64 {
-    todo!()
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return direction.exact_zero();
+    }
+    let half_pi_upper = core::f64::consts::FRAC_PI_2.next_up();
+    outward_bounded_approximation(libm::atan(x), -half_pi_upper, half_pi_upper, direction)
 }
 
 pub(crate) fn atan2(y: f64, x: f64, direction: Direction) -> f64 {
-    todo!()
+    if x.is_nan() || y.is_nan() || (x == 0.0 && y == 0.0) {
+        return f64::NAN;
+    }
+    if y == 0.0 && x > 0.0 {
+        return direction.exact_zero();
+    }
+    let pi_upper = core::f64::consts::PI.next_up();
+    outward_bounded_approximation(libm::atan2(y, x), -pi_upper, pi_upper, direction)
 }
 
 // Hyperbolic functions.
 
 pub(crate) fn sinh(x: f64, direction: Direction) -> f64 {
-    todo!()
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return direction.exact_zero();
+    }
+    if x.is_infinite() {
+        return x;
+    }
+    let value = libm::sinh(x);
+    if value == f64::INFINITY {
+        return match direction {
+            Direction::Down => f64::MAX,
+            Direction::Up => f64::INFINITY,
+        };
+    }
+    if value == f64::NEG_INFINITY {
+        return match direction {
+            Direction::Down => f64::NEG_INFINITY,
+            Direction::Up => -f64::MAX,
+        };
+    }
+    outward_finite_approximation(value, direction)
 }
 
 pub(crate) fn cosh(x: f64, direction: Direction) -> f64 {
-    todo!()
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    if x.is_infinite() {
+        return f64::INFINITY;
+    }
+    if x == 0.0 {
+        return 1.0;
+    }
+    f64::max(
+        outward_positive_approximation(libm::cosh(x), direction),
+        1.0,
+    )
 }
 
 pub(crate) fn tanh(x: f64, direction: Direction) -> f64 {
-    todo!()
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return direction.exact_zero();
+    }
+    if x == f64::NEG_INFINITY {
+        return -1.0;
+    }
+    if x == f64::INFINITY {
+        return 1.0;
+    }
+    outward_bounded_approximation(libm::tanh(x), -1.0, 1.0, direction)
 }
 
 pub(crate) fn asinh(x: f64, direction: Direction) -> f64 {
-    todo!()
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    if x == 0.0 {
+        return direction.exact_zero();
+    }
+    if x.is_infinite() {
+        return x;
+    }
+    outward_finite_approximation(libm::asinh(x), direction)
 }
 
 pub(crate) fn acosh(x: f64, direction: Direction) -> f64 {
-    todo!()
+    if x.is_nan() || x < 1.0 {
+        return f64::NAN;
+    }
+    if x == 1.0 {
+        return direction.exact_zero();
+    }
+    if x == f64::INFINITY {
+        return f64::INFINITY;
+    }
+    outward_finite_approximation(libm::acosh(x), direction)
 }
 
 pub(crate) fn atanh(x: f64, direction: Direction) -> f64 {
-    todo!()
+    if x.is_nan() || !(-1.0..=1.0).contains(&x) {
+        return f64::NAN;
+    }
+    if x == -1.0 {
+        return f64::NEG_INFINITY;
+    }
+    if x == 1.0 {
+        return f64::INFINITY;
+    }
+    if x == 0.0 {
+        return direction.exact_zero();
+    }
+    outward_finite_approximation(libm::atanh(x), direction)
 }
 
-// Required tightest integer-valued functions.
-
-pub(crate) fn ceil(x: f64) -> f64 {
-    todo!()
-}
-
-pub(crate) fn floor(x: f64) -> f64 {
-    todo!()
-}
-
-pub(crate) fn trunc(x: f64) -> f64 {
-    todo!()
-}
-
-pub(crate) fn round_ties_to_even(x: f64) -> f64 {
-    todo!()
-}
-
-pub(crate) fn round_ties_to_away(x: f64) -> f64 {
-    todo!()
-}
+// NOTE: The required tightest integer-valued functions are all basically just direct libm
+// implementations, so no need to have crate-only methods here.
 
 // Numeric interval queries.
 
-pub(crate) fn midpoint(inf: f64, sup: f64) -> f64 {
-    todo!()
-}
-
 pub(crate) fn radius(inf: f64, sup: f64, midpoint: f64) -> f64 {
-    todo!()
+    // Each distance must be rounded upward independently: rounding the
+    // width first and then halving can underestimate after two roundings.
+    let below = sub(midpoint, inf, Direction::Up);
+    let above = sub(sup, midpoint, Direction::Up);
+    f64::max(below, above)
 }
 
 // Exact parsing of all required number literal forms.
@@ -682,22 +940,84 @@ pub(crate) fn number_literal(literal: &str, direction: Direction) -> Option<f64>
 
 // Certified argument-reduction predicates used by interval kernels.
 
+fn contains_periodic_point(
+    inf: f64,
+    sup: f64,
+    phase_lower: f64,
+    phase_upper: f64,
+    period_lower: f64,
+    period_upper: f64,
+) -> bool {
+    if !inf.is_finite() || !sup.is_finite() {
+        return true;
+    }
+
+    let numerator_lower = sub(inf, phase_upper, Direction::Down);
+    let numerator_upper = sub(sup, phase_lower, Direction::Up);
+    let quotient_lower = f64::min(
+        div(numerator_lower, period_lower, Direction::Down),
+        div(numerator_lower, period_upper, Direction::Down),
+    );
+    let quotient_upper = f64::max(
+        div(numerator_upper, period_lower, Direction::Up),
+        div(numerator_upper, period_upper, Direction::Up),
+    );
+    libm::ceil(quotient_lower) <= libm::floor(quotient_upper)
+}
+
 pub(crate) fn contains_sin_maximum(inf: f64, sup: f64) -> bool {
-    todo!()
+    let phase = core::f64::consts::FRAC_PI_2;
+    let period = core::f64::consts::TAU;
+    contains_periodic_point(
+        inf,
+        sup,
+        phase.next_down(),
+        phase.next_up(),
+        period.next_down(),
+        period.next_up(),
+    )
 }
 
 pub(crate) fn contains_sin_minimum(inf: f64, sup: f64) -> bool {
-    todo!()
+    let phase = core::f64::consts::FRAC_PI_2;
+    let period = core::f64::consts::TAU;
+    contains_periodic_point(
+        inf,
+        sup,
+        -phase.next_up(),
+        -phase.next_down(),
+        period.next_down(),
+        period.next_up(),
+    )
 }
 
 pub(crate) fn contains_cos_maximum(inf: f64, sup: f64) -> bool {
-    todo!()
+    let period = core::f64::consts::TAU;
+    contains_periodic_point(inf, sup, -0.0, 0.0, period.next_down(), period.next_up())
 }
 
 pub(crate) fn contains_cos_minimum(inf: f64, sup: f64) -> bool {
-    todo!()
+    let phase = core::f64::consts::PI;
+    let period = core::f64::consts::TAU;
+    contains_periodic_point(
+        inf,
+        sup,
+        phase.next_down(),
+        phase.next_up(),
+        period.next_down(),
+        period.next_up(),
+    )
 }
 
 pub(crate) fn contains_tan_pole(inf: f64, sup: f64) -> bool {
-    todo!()
+    let phase = core::f64::consts::FRAC_PI_2;
+    let period = core::f64::consts::PI;
+    contains_periodic_point(
+        inf,
+        sup,
+        phase.next_down(),
+        phase.next_up(),
+        period.next_down(),
+        period.next_up(),
+    )
 }

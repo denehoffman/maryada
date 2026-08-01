@@ -635,119 +635,587 @@ fn fma_bare(x: Interval, y: Interval, z: Interval) -> BareResult {
 }
 
 fn pown_bare(x: Interval, p: i32) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let inf = x.inf_raw();
+    let sup = x.sup_raw();
+    let odd = p & 1 != 0;
+    let interval = if p == 0 {
+        Interval::from_valid_bounds(1.0, 1.0)
+    } else if p > 0 && odd {
+        Interval::from_valid_bounds(
+            rounding::pown(inf, p, Direction::Down),
+            rounding::pown(sup, p, Direction::Up),
+        )
+    } else if p > 0 {
+        if inf >= 0.0 {
+            Interval::from_valid_bounds(
+                rounding::pown(inf, p, Direction::Down),
+                rounding::pown(sup, p, Direction::Up),
+            )
+        } else if sup <= 0.0 {
+            Interval::from_valid_bounds(
+                rounding::pown(sup, p, Direction::Down),
+                rounding::pown(inf, p, Direction::Up),
+            )
+        } else {
+            let inf_power = rounding::pown(inf, p, Direction::Up);
+            let sup_power = rounding::pown(sup, p, Direction::Up);
+            Interval::from_valid_bounds(-0.0, f64::max(inf_power, sup_power))
+        }
+    } else if inf == 0.0 && sup == 0.0 {
+        Interval::EMPTY
+    } else if odd {
+        if inf < 0.0 && sup > 0.0 {
+            Interval::ENTIRE
+        } else if inf == 0.0 {
+            Interval::from_valid_bounds(rounding::pown(sup, p, Direction::Down), f64::INFINITY)
+        } else if sup == 0.0 {
+            Interval::from_valid_bounds(f64::NEG_INFINITY, rounding::pown(inf, p, Direction::Up))
+        } else {
+            Interval::from_valid_bounds(
+                rounding::pown(sup, p, Direction::Down),
+                rounding::pown(inf, p, Direction::Up),
+            )
+        }
+    } else if inf < 0.0 && sup > 0.0 {
+        let inf_power = rounding::pown(inf, p, Direction::Down);
+        let sup_power = rounding::pown(sup, p, Direction::Down);
+        Interval::from_valid_bounds(f64::min(inf_power, sup_power), f64::INFINITY)
+    } else if inf == 0.0 {
+        Interval::from_valid_bounds(rounding::pown(sup, p, Direction::Down), f64::INFINITY)
+    } else if sup == 0.0 {
+        Interval::from_valid_bounds(rounding::pown(inf, p, Direction::Down), f64::INFINITY)
+    } else if inf > 0.0 {
+        Interval::from_valid_bounds(
+            rounding::pown(sup, p, Direction::Down),
+            rounding::pown(inf, p, Direction::Up),
+        )
+    } else {
+        Interval::from_valid_bounds(
+            rounding::pown(inf, p, Direction::Down),
+            rounding::pown(sup, p, Direction::Up),
+        )
+    };
+    let local = if p < 0 && x.contains_raw(0.0) {
+        Decoration::Trv
+    } else {
+        continuous_unary_decoration(x, interval)
+    };
+    BareResult { interval, local }
 }
 
 fn pow_bare(x: Interval, y: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() || y.is_empty_raw() {
+        return empty_result();
+    }
+    let x_inf = x.inf_raw();
+    let x_sup = x.sup_raw();
+    let y_inf = y.inf_raw();
+    let y_sup = y.sup_raw();
+    let interval = if x_sup < 0.0 || (x_sup == 0.0 && y_sup <= 0.0) {
+        Interval::EMPTY
+    } else if x_sup == 0.0 {
+        Interval::ZERO
+    } else {
+        let domain_x = Interval::from_valid_bounds(f64::max(x_inf, -0.0), x_sup);
+        let logarithm = log_bare(domain_x).interval;
+        let exponent = mul_interval(logarithm, y);
+        exp_bare(exponent).interval
+    };
+    let domain_contains_box = x_inf > 0.0 || (x_inf == 0.0 && y_inf > 0.0);
+    let local = if domain_contains_box {
+        continuous_binary_decoration(x, y, interval)
+    } else {
+        Decoration::Trv
+    };
+    BareResult { interval, local }
 }
 
 fn exp_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let interval = Interval::from_valid_bounds(
+        rounding::exp(x.inf_raw(), Direction::Down),
+        rounding::exp(x.sup_raw(), Direction::Up),
+    );
+    BareResult {
+        interval,
+        local: continuous_unary_decoration(x, interval),
+    }
 }
 
 fn exp2_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let interval = Interval::from_valid_bounds(
+        rounding::exp2(x.inf_raw(), Direction::Down),
+        rounding::exp2(x.sup_raw(), Direction::Up),
+    );
+    BareResult {
+        interval,
+        local: continuous_unary_decoration(x, interval),
+    }
 }
 
 fn exp10_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let interval = Interval::from_valid_bounds(
+        rounding::exp10(x.inf_raw(), Direction::Down),
+        rounding::exp10(x.sup_raw(), Direction::Up),
+    );
+    BareResult {
+        interval,
+        local: continuous_unary_decoration(x, interval),
+    }
 }
 
 fn log_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let inf = x.inf_raw();
+    let sup = x.sup_raw();
+    let interval = if sup <= 0.0 {
+        Interval::EMPTY
+    } else {
+        let lower = if inf <= 0.0 {
+            f64::NEG_INFINITY
+        } else {
+            rounding::log(inf, Direction::Down)
+        };
+        Interval::from_valid_bounds(lower, rounding::log(sup, Direction::Up))
+    };
+    let local = if inf <= 0.0 {
+        Decoration::Trv
+    } else {
+        continuous_unary_decoration(x, interval)
+    };
+    BareResult { interval, local }
 }
 
 fn log2_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let inf = x.inf_raw();
+    let sup = x.sup_raw();
+    let interval = if sup <= 0.0 {
+        Interval::EMPTY
+    } else {
+        let lower = if inf <= 0.0 {
+            f64::NEG_INFINITY
+        } else {
+            rounding::log2(inf, Direction::Down)
+        };
+        Interval::from_valid_bounds(lower, rounding::log2(sup, Direction::Up))
+    };
+    let local = if inf <= 0.0 {
+        Decoration::Trv
+    } else {
+        continuous_unary_decoration(x, interval)
+    };
+    BareResult { interval, local }
 }
 
 fn log10_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let inf = x.inf_raw();
+    let sup = x.sup_raw();
+    let interval = if sup <= 0.0 {
+        Interval::EMPTY
+    } else {
+        let lower = if inf <= 0.0 {
+            f64::NEG_INFINITY
+        } else {
+            rounding::log10(inf, Direction::Down)
+        };
+        Interval::from_valid_bounds(lower, rounding::log10(sup, Direction::Up))
+    };
+    let local = if inf <= 0.0 {
+        Decoration::Trv
+    } else {
+        continuous_unary_decoration(x, interval)
+    };
+    BareResult { interval, local }
 }
 
 fn sin_bare(x: Interval) -> BareResult {
-    // Endpoint evaluation alone is insufficient.
-    // Include -1 or +1 when the interval contains an extremum.
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let inf = x.inf_raw();
+    let sup = x.sup_raw();
+    let lower = if rounding::contains_sin_minimum(inf, sup) {
+        -1.0
+    } else {
+        f64::min(
+            rounding::sin(inf, Direction::Down),
+            rounding::sin(sup, Direction::Down),
+        )
+    };
+    let upper = if rounding::contains_sin_maximum(inf, sup) {
+        1.0
+    } else {
+        f64::max(
+            rounding::sin(inf, Direction::Up),
+            rounding::sin(sup, Direction::Up),
+        )
+    };
+    let interval = Interval::from_valid_bounds(lower, upper);
+    BareResult {
+        interval,
+        local: continuous_unary_decoration(x, interval),
+    }
 }
 
 fn cos_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let inf = x.inf_raw();
+    let sup = x.sup_raw();
+    let lower = if rounding::contains_cos_minimum(inf, sup) {
+        -1.0
+    } else {
+        f64::min(
+            rounding::cos(inf, Direction::Down),
+            rounding::cos(sup, Direction::Down),
+        )
+    };
+    let upper = if rounding::contains_cos_maximum(inf, sup) {
+        1.0
+    } else {
+        f64::max(
+            rounding::cos(inf, Direction::Up),
+            rounding::cos(sup, Direction::Up),
+        )
+    };
+    let interval = Interval::from_valid_bounds(lower, upper);
+    BareResult {
+        interval,
+        local: continuous_unary_decoration(x, interval),
+    }
 }
 
 fn tan_bare(x: Interval) -> BareResult {
-    // Return Entire if the interval crosses a tangent pole.
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let inf = x.inf_raw();
+    let sup = x.sup_raw();
+    if rounding::contains_tan_pole(inf, sup) {
+        return BareResult {
+            interval: Interval::ENTIRE,
+            local: Decoration::Trv,
+        };
+    }
+    let interval = Interval::from_valid_bounds(
+        rounding::tan(inf, Direction::Down),
+        rounding::tan(sup, Direction::Up),
+    );
+    BareResult {
+        interval,
+        local: continuous_unary_decoration(x, interval),
+    }
 }
 
 fn asin_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let inf = x.inf_raw();
+    let sup = x.sup_raw();
+    let interval = if sup < -1.0 || inf > 1.0 {
+        Interval::EMPTY
+    } else {
+        Interval::from_valid_bounds(
+            rounding::asin(f64::max(inf, -1.0), Direction::Down),
+            rounding::asin(f64::min(sup, 1.0), Direction::Up),
+        )
+    };
+    let local = if inf < -1.0 || sup > 1.0 {
+        Decoration::Trv
+    } else {
+        continuous_unary_decoration(x, interval)
+    };
+    BareResult { interval, local }
 }
 
 fn acos_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let inf = x.inf_raw();
+    let sup = x.sup_raw();
+    let interval = if sup < -1.0 || inf > 1.0 {
+        Interval::EMPTY
+    } else {
+        Interval::from_valid_bounds(
+            rounding::acos(f64::min(sup, 1.0), Direction::Down),
+            rounding::acos(f64::max(inf, -1.0), Direction::Up),
+        )
+    };
+    let local = if inf < -1.0 || sup > 1.0 {
+        Decoration::Trv
+    } else {
+        continuous_unary_decoration(x, interval)
+    };
+    BareResult { interval, local }
 }
 
 fn atan_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let interval = Interval::from_valid_bounds(
+        rounding::atan(x.inf_raw(), Direction::Down),
+        rounding::atan(x.sup_raw(), Direction::Up),
+    );
+    BareResult {
+        interval,
+        local: continuous_unary_decoration(x, interval),
+    }
 }
 
 fn atan2_bare(y: Interval, x: Interval) -> BareResult {
-    // Must account for:
-    //
-    // - exclusion of (0,0);
-    // - the branch discontinuity on y=0, x<0;
-    // - range convention (-pi, pi].
-    todo!()
+    if x.is_empty_raw() || y.is_empty_raw() {
+        return empty_result();
+    }
+    let x_inf = x.inf_raw();
+    let x_sup = x.sup_raw();
+    let y_inf = y.inf_raw();
+    let y_sup = y.sup_raw();
+    let both_zero = x_inf == 0.0 && x_sup == 0.0 && y_inf == 0.0 && y_sup == 0.0;
+    let interval = if both_zero {
+        Interval::EMPTY
+    } else if x_inf < 0.0 && y_inf < 0.0 && y_sup >= 0.0 {
+        let pi_upper = core::f64::consts::PI.next_up();
+        Interval::from_valid_bounds(-pi_upper, pi_upper)
+    } else {
+        let mut lower = f64::INFINITY;
+        let mut upper = f64::NEG_INFINITY;
+        for y_bound in [y_inf, y_sup] {
+            for x_bound in [x_inf, x_sup] {
+                if x_bound == 0.0 && y_bound == 0.0 {
+                    continue;
+                }
+                let y_bound = if y_bound == 0.0 { 0.0 } else { y_bound };
+                lower = f64::min(lower, rounding::atan2(y_bound, x_bound, Direction::Down));
+                upper = f64::max(upper, rounding::atan2(y_bound, x_bound, Direction::Up));
+            }
+        }
+        Interval::from_valid_bounds(lower, upper)
+    };
+    let local = if y.contains_raw(0.0) && x_inf <= 0.0 {
+        Decoration::Trv
+    } else {
+        continuous_binary_decoration(y, x, interval)
+    };
+    BareResult { interval, local }
 }
 
 fn sinh_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let interval = Interval::from_valid_bounds(
+        rounding::sinh(x.inf_raw(), Direction::Down),
+        rounding::sinh(x.sup_raw(), Direction::Up),
+    );
+    BareResult {
+        interval,
+        local: continuous_unary_decoration(x, interval),
+    }
 }
 
 fn cosh_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let inf = x.inf_raw();
+    let sup = x.sup_raw();
+    let lower = if x.contains_raw(0.0) {
+        1.0
+    } else if sup < 0.0 {
+        rounding::cosh(sup, Direction::Down)
+    } else {
+        rounding::cosh(inf, Direction::Down)
+    };
+    let upper = if -inf > sup {
+        rounding::cosh(inf, Direction::Up)
+    } else {
+        rounding::cosh(sup, Direction::Up)
+    };
+    let interval = Interval::from_valid_bounds(lower, upper);
+    BareResult {
+        interval,
+        local: continuous_unary_decoration(x, interval),
+    }
 }
 
 fn tanh_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let interval = Interval::from_valid_bounds(
+        rounding::tanh(x.inf_raw(), Direction::Down),
+        rounding::tanh(x.sup_raw(), Direction::Up),
+    );
+    BareResult {
+        interval,
+        local: continuous_unary_decoration(x, interval),
+    }
 }
 
 fn asinh_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let interval = Interval::from_valid_bounds(
+        rounding::asinh(x.inf_raw(), Direction::Down),
+        rounding::asinh(x.sup_raw(), Direction::Up),
+    );
+    BareResult {
+        interval,
+        local: continuous_unary_decoration(x, interval),
+    }
 }
 
 fn acosh_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let inf = x.inf_raw();
+    let sup = x.sup_raw();
+    let interval = if sup < 1.0 {
+        Interval::EMPTY
+    } else {
+        let lower = if inf <= 1.0 {
+            -0.0
+        } else {
+            rounding::acosh(inf, Direction::Down)
+        };
+        Interval::from_valid_bounds(lower, rounding::acosh(sup, Direction::Up))
+    };
+    let local = if inf < 1.0 {
+        Decoration::Trv
+    } else {
+        continuous_unary_decoration(x, interval)
+    };
+    BareResult { interval, local }
 }
 
 fn atanh_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let inf = x.inf_raw();
+    let sup = x.sup_raw();
+    let interval = if sup <= -1.0 || inf >= 1.0 {
+        Interval::EMPTY
+    } else {
+        let lower = if inf <= -1.0 {
+            f64::NEG_INFINITY
+        } else {
+            rounding::atanh(inf, Direction::Down)
+        };
+        let upper = if sup >= 1.0 {
+            f64::INFINITY
+        } else {
+            rounding::atanh(sup, Direction::Up)
+        };
+        Interval::from_valid_bounds(lower, upper)
+    };
+    let local = if inf <= -1.0 || sup >= 1.0 {
+        Decoration::Trv
+    } else {
+        continuous_unary_decoration(x, interval)
+    };
+    BareResult { interval, local }
 }
 
 fn sign_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    fn sign_value(value: f64) -> f64 {
+        if value < 0.0 {
+            -1.0
+        } else if value > 0.0 {
+            1.0
+        } else {
+            0.0
+        }
+    }
+    let interval = Interval::from_valid_bounds(sign_value(x.inf_raw()), sign_value(x.sup_raw()));
+    BareResult {
+        interval,
+        local: integer_function_decoration(x, interval, x.contains_raw(0.0)),
+    }
 }
 
 fn ceil_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let interval = Interval::from_valid_bounds(libm::ceil(x.inf_raw()), libm::ceil(x.sup_raw()));
+    BareResult {
+        interval,
+        local: integer_function_decoration(x, interval, contains_integer(x)),
+    }
 }
 
 fn floor_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let interval = Interval::from_valid_bounds(libm::floor(x.inf_raw()), libm::floor(x.sup_raw()));
+    BareResult {
+        interval,
+        local: integer_function_decoration(x, interval, contains_integer(x)),
+    }
 }
 
 fn trunc_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let interval = Interval::from_valid_bounds(libm::trunc(x.inf_raw()), libm::trunc(x.sup_raw()));
+    BareResult {
+        interval,
+        local: integer_function_decoration(x, interval, contains_nonzero_integer(x)),
+    }
 }
 
 fn round_ties_to_even_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let interval =
+        Interval::from_valid_bounds(libm::roundeven(x.inf_raw()), libm::roundeven(x.sup_raw()));
+    BareResult {
+        interval,
+        local: integer_function_decoration(x, interval, contains_half_integer(x)),
+    }
 }
 
 fn round_ties_to_away_bare(x: Interval) -> BareResult {
-    todo!()
+    if x.is_empty_raw() {
+        return empty_result();
+    }
+    let interval = Interval::from_valid_bounds(libm::round(x.inf_raw()), libm::round(x.sup_raw()));
+    BareResult {
+        interval,
+        local: integer_function_decoration(x, interval, contains_half_integer(x)),
+    }
 }
 
 fn abs_bare(x: Interval) -> BareResult {
@@ -834,12 +1302,54 @@ fn cancel_plus_bare(x: Interval, y: Interval) -> BareResult {
 }
 
 fn cancel_minus_interval(x: Interval, y: Interval) -> Interval {
-    // Required Level 2 behavior:
-    //
-    // - Empty for x=Empty and bounded y;
-    // - hull([inf(x)-inf(y), sup(x)-sup(y)]) for the valid bounded case;
-    // - Entire for every Level 1 no-value case.
-    todo!()
+    fn exact_difference_parts(sup: f64, inf: f64) -> (f64, f64) {
+        let neg_inf = -inf;
+        let difference = sup + neg_inf;
+        debug_assert!(difference.is_finite());
+        let neg_inf_rounded = difference - sup;
+        let error = (sup - (difference - neg_inf_rounded)) + (neg_inf - neg_inf_rounded);
+        (difference, error)
+    }
+
+    fn width_at_least(x: Interval, y: Interval) -> bool {
+        let x_width = x.sup_raw() - x.inf_raw();
+        let y_width = y.sup_raw() - y.inf_raw();
+
+        if x_width == f64::INFINITY || y_width == f64::INFINITY {
+            if x_width != y_width {
+                return x_width == f64::INFINITY;
+            }
+
+            // Both unscaled widths overflow. Halving these large finite
+            // endpoints is exact and brings both differences into range.
+            let x_parts = exact_difference_parts(x.sup_raw() * 0.5, x.inf_raw() * 0.5);
+            let y_parts = exact_difference_parts(y.sup_raw() * 0.5, y.inf_raw() * 0.5);
+            return x_parts.0 > y_parts.0 || (x_parts.0 == y_parts.0 && x_parts.1 >= y_parts.1);
+        }
+
+        let x_parts = exact_difference_parts(x.sup_raw(), x.inf_raw());
+        let y_parts = exact_difference_parts(y.sup_raw(), y.inf_raw());
+        x_parts.0 > y_parts.0 || (x_parts.0 == y_parts.0 && x_parts.1 >= y_parts.1)
+    }
+
+    if x.is_empty_raw() {
+        return if y.is_empty_raw() || y.is_bounded_raw() {
+            Interval::EMPTY
+        } else {
+            Interval::ENTIRE
+        };
+    }
+    if y.is_empty_raw() || !x.is_bounded_raw() || !y.is_bounded_raw() {
+        return Interval::ENTIRE;
+    }
+    if !width_at_least(x, y) {
+        return Interval::ENTIRE;
+    }
+
+    Interval::from_valid_bounds(
+        rounding::sub(x.inf_raw(), y.inf_raw(), Direction::Down),
+        rounding::sub(x.sup_raw(), y.sup_raw(), Direction::Up),
+    )
 }
 
 fn intersection_bare(x: Interval, y: Interval) -> BareResult {
@@ -910,7 +1420,7 @@ fn mid_bare(x: Interval) -> f64 {
     if x.sup_raw() == f64::INFINITY {
         return f64::MAX;
     }
-    rounding::midpoint(x.inf_raw(), x.sup_raw())
+    x.inf_raw().midpoint(x.sup_raw())
 }
 
 fn wid_bare(x: Interval) -> f64 {
@@ -996,6 +1506,36 @@ fn strict_or_same_infinity(left: f64, right: f64) -> bool {
 }
 
 // Decoration helpers.
+
+fn contains_integer(x: Interval) -> bool {
+    libm::ceil(x.inf_raw()) <= libm::floor(x.sup_raw())
+}
+
+fn contains_nonzero_integer(x: Interval) -> bool {
+    let first = libm::ceil(x.inf_raw());
+    let last = libm::floor(x.sup_raw());
+    first <= last && (first < 0.0 || last > 0.0)
+}
+
+fn contains_half_integer(x: Interval) -> bool {
+    // x contains k + 1/2 exactly when x - 1/2 contains an integer. Directed
+    // subtraction makes this conservative even when an endpoint is large.
+    let shifted_inf = rounding::sub(x.inf_raw(), 0.5, Direction::Down);
+    let shifted_sup = rounding::sub(x.sup_raw(), 0.5, Direction::Up);
+    libm::ceil(shifted_inf) <= libm::floor(shifted_sup)
+}
+
+fn integer_function_decoration(
+    input: Interval,
+    result: Interval,
+    contains_discontinuity: bool,
+) -> Decoration {
+    if contains_discontinuity {
+        Decoration::Def
+    } else {
+        continuous_unary_decoration(input, result)
+    }
+}
 
 fn empty_result() -> BareResult {
     BareResult {

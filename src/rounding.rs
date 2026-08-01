@@ -163,7 +163,7 @@ impl WideDyadic {
                 return overflow(self.negative, direction);
             }
         }
-        debug_assert!((1u128 << 52) <= rounded && rounded < (1u128 << 53),);
+        debug_assert!(((1u128 << 52)..(1u128 << 53)).contains(&rounded));
         let biased_exponent =
             u64::try_from(top_exponent + 1023).expect("validated binary64 exponent");
         f64::from_bits(sign | (biased_exponent << 52) | ((rounded as u64) & ((1u64 << 52) - 1)))
@@ -925,17 +925,520 @@ pub(crate) fn radius(inf: f64, sup: f64, midpoint: f64) -> f64 {
 // Exact parsing of all required number literal forms.
 
 pub(crate) fn number_literal(literal: &str, direction: Direction) -> Option<f64> {
-    // Must support:
-    //
-    // - decimal literals;
-    // - C99 hexadecimal floating constants;
-    // - rational literals p/q;
-    // - inf and infinity.
-    //
-    // The result must be correctly directed even for arbitrarily long
-    // literals. This can be implemented without allocation by repeatedly
-    // scanning the input slice and retaining guard/round/sticky data.
-    todo!()
+    let bytes = literal.as_bytes();
+    if bytes.is_empty() || bytes.iter().any(|byte| byte.is_ascii_whitespace()) {
+        return None;
+    }
+
+    let (negative, unsigned) = strip_number_sign(bytes)?;
+    if eq_ascii_case(unsigned, b"inf") || eq_ascii_case(unsigned, b"infinity") {
+        return Some(if negative {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        });
+    }
+
+    if bytes.contains(&b'/') {
+        return parse_rational_literal(bytes, direction);
+    }
+    if unsigned.len() >= 2 && unsigned[0] == b'0' && unsigned[1].eq_ignore_ascii_case(&b'x') {
+        return parse_hex_literal(bytes, direction);
+    }
+    parse_decimal_literal(literal, direction)
+}
+
+#[derive(Clone, Copy)]
+struct DecimalLiteral<'a> {
+    negative: bool,
+    mantissa: &'a [u8],
+    digits_before_point: usize,
+    leading_zero_digits: usize,
+    significant_digits: usize,
+    exponent: i64,
+    nonzero: bool,
+}
+
+#[derive(Clone, Copy)]
+struct IntegerLiteral<'a> {
+    negative: bool,
+    digits: &'a [u8],
+}
+
+struct ExactDecimal {
+    /// Decimal digits in little-endian order.
+    digits: [u8; 800],
+    len: usize,
+    /// The value is `digits * 10^shift`.
+    shift: i32,
+}
+
+fn strip_number_sign(bytes: &[u8]) -> Option<(bool, &[u8])> {
+    match bytes.first().copied()? {
+        b'-' => Some((true, &bytes[1..])),
+        b'+' => Some((false, &bytes[1..])),
+        _ => Some((false, bytes)),
+    }
+}
+
+fn eq_ascii_case(left: &[u8], right: &[u8]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .all(|(left, right)| left.eq_ignore_ascii_case(right))
+}
+
+fn parse_signed_decimal_exponent(bytes: &[u8]) -> Option<i64> {
+    let (negative, digits) = strip_number_sign(bytes)?;
+    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    let mut value = 0i64;
+    for &digit in digits {
+        value = value
+            .saturating_mul(10)
+            .saturating_add(i64::from(digit - b'0'));
+    }
+    Some(if negative {
+        value.saturating_neg()
+    } else {
+        value
+    })
+}
+
+fn analyze_decimal_literal(literal: &str) -> Option<DecimalLiteral<'_>> {
+    let bytes = literal.as_bytes();
+    let (negative, unsigned) = strip_number_sign(bytes)?;
+    if unsigned.is_empty() {
+        return None;
+    }
+    let exponent_index = unsigned
+        .iter()
+        .position(|byte| byte.eq_ignore_ascii_case(&b'e'));
+    let (mantissa, exponent) = if let Some(index) = exponent_index {
+        if unsigned[index + 1..]
+            .iter()
+            .any(|byte| byte.eq_ignore_ascii_case(&b'e'))
+        {
+            return None;
+        }
+        (
+            &unsigned[..index],
+            parse_signed_decimal_exponent(&unsigned[index + 1..])?,
+        )
+    } else {
+        (unsigned, 0)
+    };
+
+    let mut point = None;
+    let mut digit_count = 0usize;
+    let mut digits_before_point = 0usize;
+    let mut leading_zero_digits = 0usize;
+    let mut nonzero = false;
+    for (index, &byte) in mantissa.iter().enumerate() {
+        if byte == b'.' {
+            if point.replace(index).is_some() {
+                return None;
+            }
+        } else if byte.is_ascii_digit() {
+            if point.is_none() {
+                digits_before_point += 1;
+            }
+            digit_count += 1;
+            if !nonzero {
+                if byte == b'0' {
+                    leading_zero_digits += 1;
+                } else {
+                    nonzero = true;
+                }
+            }
+        } else {
+            return None;
+        }
+    }
+    if digit_count == 0 {
+        return None;
+    }
+
+    Some(DecimalLiteral {
+        negative,
+        mantissa,
+        digits_before_point,
+        leading_zero_digits,
+        significant_digits: digit_count - leading_zero_digits,
+        exponent,
+        nonzero,
+    })
+}
+
+fn exact_decimal_from_float(value: f64) -> ExactDecimal {
+    debug_assert!(value.is_finite() && value != 0.0);
+    let dyadic = match FloatClass::new(value.abs()) {
+        FloatClass::Finite(value) => value,
+        _ => unreachable!(),
+    };
+    let mut result = ExactDecimal {
+        digits: [0; 800],
+        len: 0,
+        shift: 0,
+    };
+    let mut significand = dyadic.significand;
+    while significand != 0 {
+        result.digits[result.len] = (significand % 10) as u8;
+        result.len += 1;
+        significand /= 10;
+    }
+    let (factor, count) = if dyadic.exponent < 0 {
+        result.shift = dyadic.exponent;
+        (5, dyadic.exponent.unsigned_abs())
+    } else {
+        (2, dyadic.exponent as u32)
+    };
+    for _ in 0..count {
+        let mut carry = 0u16;
+        for digit in &mut result.digits[..result.len] {
+            let product = u16::from(*digit) * factor + carry;
+            *digit = (product % 10) as u8;
+            carry = product / 10;
+        }
+        while carry != 0 {
+            debug_assert!(result.len < result.digits.len());
+            result.digits[result.len] = (carry % 10) as u8;
+            result.len += 1;
+            carry /= 10;
+        }
+    }
+    result
+}
+
+fn compare_decimal_to_float(decimal: DecimalLiteral<'_>, value: f64) -> Ordering {
+    if !decimal.nonzero {
+        return if value == 0.0 {
+            Ordering::Equal
+        } else if value > 0.0 {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        };
+    }
+    if value == f64::INFINITY {
+        return Ordering::Less;
+    }
+    if value == f64::NEG_INFINITY {
+        return Ordering::Greater;
+    }
+    if value == 0.0 || decimal.negative != value.is_sign_negative() {
+        return if decimal.negative {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        };
+    }
+
+    let exact = exact_decimal_from_float(value);
+    let decimal_position = (decimal.digits_before_point as i64)
+        .saturating_add(decimal.exponent)
+        .saturating_sub(decimal.leading_zero_digits as i64);
+    let exact_position = exact.len as i64 + i64::from(exact.shift);
+    let mut magnitude_order = decimal_position.cmp(&exact_position);
+    if magnitude_order == Ordering::Equal {
+        let mut input = decimal
+            .mantissa
+            .iter()
+            .copied()
+            .filter(u8::is_ascii_digit)
+            .skip(decimal.leading_zero_digits);
+        let count = decimal.significant_digits.max(exact.len);
+        for index in 0..count {
+            let input_digit = input.next().map_or(0, |digit| digit - b'0');
+            let exact_digit = if index < exact.len {
+                exact.digits[exact.len - 1 - index]
+            } else {
+                0
+            };
+            match input_digit.cmp(&exact_digit) {
+                Ordering::Equal => {}
+                order => {
+                    magnitude_order = order;
+                    break;
+                }
+            }
+        }
+    }
+    if decimal.negative {
+        magnitude_order.reverse()
+    } else {
+        magnitude_order
+    }
+}
+
+fn select_directed_neighbor(value: f64, exact_order: Ordering, direction: Direction) -> f64 {
+    match (exact_order, direction) {
+        (Ordering::Equal, _) => value,
+        (Ordering::Less, Direction::Down) | (Ordering::Greater, Direction::Up) => {
+            if exact_order == Ordering::Less {
+                value.next_down()
+            } else {
+                value.next_up()
+            }
+        }
+        _ => value,
+    }
+}
+
+fn parse_decimal_literal(literal: &str, direction: Direction) -> Option<f64> {
+    let decimal = analyze_decimal_literal(literal)?;
+    let nearest = literal.parse::<f64>().ok()?;
+    Some(select_directed_neighbor(
+        nearest,
+        compare_decimal_to_float(decimal, nearest),
+        direction,
+    ))
+}
+
+fn parse_integer_literal(bytes: &[u8], allow_negative: bool) -> Option<IntegerLiteral<'_>> {
+    let (negative, unsigned) = strip_number_sign(bytes)?;
+    if negative && !allow_negative {
+        return None;
+    }
+    if unsigned.is_empty() || !unsigned.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    let first_nonzero = unsigned
+        .iter()
+        .position(|&digit| digit != b'0')
+        .unwrap_or(unsigned.len());
+    Some(IntegerLiteral {
+        negative: negative && first_nonzero != unsigned.len(),
+        digits: &unsigned[first_nonzero..],
+    })
+}
+
+fn product_digit(
+    q: IntegerLiteral<'_>,
+    value: &ExactDecimal,
+    position: usize,
+    carry: &mut u64,
+) -> u8 {
+    let mut sum = *carry;
+    let first = position.saturating_sub(value.len.saturating_sub(1));
+    let last = position.min(q.digits.len().saturating_sub(1));
+    if !q.digits.is_empty() && first <= last {
+        for q_index in first..=last {
+            let q_digit = u64::from(q.digits[q.digits.len() - 1 - q_index] - b'0');
+            let value_digit = u64::from(value.digits[position - q_index]);
+            sum += q_digit * value_digit;
+        }
+    }
+    *carry = sum / 10;
+    (sum % 10) as u8
+}
+
+fn compare_integer_to_product(
+    numerator: IntegerLiteral<'_>,
+    numerator_shift: usize,
+    denominator: IntegerLiteral<'_>,
+    value: &ExactDecimal,
+    product_shift: usize,
+) -> Ordering {
+    let end = numerator_shift.saturating_add(numerator.digits.len()).max(
+        product_shift
+            .saturating_add(denominator.digits.len())
+            .saturating_add(value.len)
+            .saturating_add(1),
+    );
+    let mut carry = 0u64;
+    let mut order = Ordering::Equal;
+    for position in 0..end {
+        let left = if position >= numerator_shift {
+            let index = position - numerator_shift;
+            if index < numerator.digits.len() {
+                numerator.digits[numerator.digits.len() - 1 - index] - b'0'
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        let right = if position >= product_shift {
+            product_digit(denominator, value, position - product_shift, &mut carry)
+        } else {
+            0
+        };
+        if left != right {
+            order = left.cmp(&right);
+        }
+    }
+    debug_assert_eq!(carry, 0);
+    order
+}
+
+fn compare_rational_magnitude_to_float(
+    numerator: IntegerLiteral<'_>,
+    denominator: IntegerLiteral<'_>,
+    value: f64,
+) -> Ordering {
+    debug_assert!(!numerator.negative && !denominator.negative && value >= 0.0);
+    if numerator.digits.is_empty() {
+        return if value == 0.0 {
+            Ordering::Equal
+        } else {
+            Ordering::Less
+        };
+    }
+    if value == 0.0 {
+        return Ordering::Greater;
+    }
+    if value == f64::INFINITY {
+        return Ordering::Less;
+    }
+    let exact = exact_decimal_from_float(value);
+    if exact.shift >= 0 {
+        compare_integer_to_product(numerator, 0, denominator, &exact, exact.shift as usize)
+    } else {
+        compare_integer_to_product(
+            numerator,
+            exact.shift.unsigned_abs() as usize,
+            denominator,
+            &exact,
+            0,
+        )
+    }
+}
+
+fn parse_rational_literal(bytes: &[u8], direction: Direction) -> Option<f64> {
+    let slash = bytes.iter().position(|&byte| byte == b'/')?;
+    if bytes[slash + 1..].contains(&b'/') {
+        return None;
+    }
+    let numerator = parse_integer_literal(&bytes[..slash], true)?;
+    let denominator = parse_integer_literal(&bytes[slash + 1..], false)?;
+    if denominator.digits.is_empty() {
+        return None;
+    }
+    if numerator.digits.is_empty() {
+        return Some(if numerator.negative { -0.0 } else { 0.0 });
+    }
+    let magnitude_numerator = IntegerLiteral {
+        negative: false,
+        digits: numerator.digits,
+    };
+
+    let mut lower_bits = 0u64;
+    let mut upper_bits = f64::INFINITY.to_bits();
+    while upper_bits - lower_bits > 1 {
+        let middle_bits = lower_bits + (upper_bits - lower_bits) / 2;
+        let middle = f64::from_bits(middle_bits);
+        match compare_rational_magnitude_to_float(magnitude_numerator, denominator, middle) {
+            Ordering::Less => upper_bits = middle_bits,
+            Ordering::Greater => lower_bits = middle_bits,
+            Ordering::Equal => {
+                let exact = if numerator.negative { -middle } else { middle };
+                return Some(exact);
+            }
+        }
+    }
+    let lower = f64::from_bits(lower_bits);
+    let upper = f64::from_bits(upper_bits);
+    Some(match (numerator.negative, direction) {
+        (false, Direction::Down) => lower,
+        (false, Direction::Up) => upper,
+        (true, Direction::Down) => -upper,
+        (true, Direction::Up) => -lower,
+    })
+}
+
+fn parse_hex_literal(bytes: &[u8], direction: Direction) -> Option<f64> {
+    let (negative, unsigned) = strip_number_sign(bytes)?;
+    if unsigned.len() < 4 || unsigned[0] != b'0' || !unsigned[1].eq_ignore_ascii_case(&b'x') {
+        return None;
+    }
+    let exponent_index = unsigned[2..]
+        .iter()
+        .position(|byte| byte.eq_ignore_ascii_case(&b'p'))?
+        + 2;
+    if unsigned[exponent_index + 1..]
+        .iter()
+        .any(|byte| byte.eq_ignore_ascii_case(&b'p'))
+    {
+        return None;
+    }
+    let exponent = parse_signed_decimal_exponent(&unsigned[exponent_index + 1..])?;
+    let mantissa = &unsigned[2..exponent_index];
+    let mut point_seen = false;
+    let mut digit_count = 0usize;
+    let mut fractional_digits = 0usize;
+    let mut significant_started = false;
+    let mut significant_digits = 0usize;
+    let mut retained_digits = 0usize;
+    let mut significand = 0u128;
+    let mut sticky = false;
+    for &byte in mantissa {
+        if byte == b'.' {
+            if point_seen {
+                return None;
+            }
+            point_seen = true;
+            continue;
+        }
+        let digit = match byte {
+            b'0'..=b'9' => byte - b'0',
+            b'a'..=b'f' => byte - b'a' + 10,
+            b'A'..=b'F' => byte - b'A' + 10,
+            _ => return None,
+        };
+        digit_count += 1;
+        if point_seen {
+            fractional_digits += 1;
+        }
+        if digit != 0 {
+            significant_started = true;
+        }
+        if significant_started {
+            significant_digits += 1;
+            if retained_digits < 31 {
+                significand = (significand << 4) | u128::from(digit);
+                retained_digits += 1;
+            } else {
+                sticky |= digit != 0;
+            }
+        }
+    }
+    if digit_count == 0 {
+        return None;
+    }
+    if !significant_started {
+        return Some(if negative { -0.0 } else { 0.0 });
+    }
+    let omitted_digits = significant_digits - retained_digits;
+    let binary_exponent = exponent
+        .saturating_sub((fractional_digits as i64).saturating_mul(4))
+        .saturating_add((omitted_digits as i64).saturating_mul(4));
+    if binary_exponent > 4096 {
+        return Some(match (negative, direction) {
+            (false, Direction::Down) => f64::MAX,
+            (false, Direction::Up) => f64::INFINITY,
+            (true, Direction::Down) => f64::NEG_INFINITY,
+            (true, Direction::Up) => -f64::MAX,
+        });
+    }
+    if binary_exponent < -4096 {
+        return Some(match (negative, direction) {
+            (false, Direction::Down) => -0.0,
+            (false, Direction::Up) => f64::from_bits(1),
+            (true, Direction::Down) => -f64::from_bits(1),
+            (true, Direction::Up) => 0.0,
+        });
+    }
+    Some(
+        WideDyadic {
+            negative,
+            significand,
+            exponent: binary_exponent as i32,
+        }
+        .pack(sticky, direction),
+    )
 }
 
 // Certified argument-reduction predicates used by interval kernels.

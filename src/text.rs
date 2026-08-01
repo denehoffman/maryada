@@ -9,6 +9,9 @@ pub enum TextError {
     BufferTooSmall { required: usize },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParseIntervalError;
+
 struct ParsedBare {
     interval: Interval,
 

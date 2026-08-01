@@ -26,6 +26,8 @@ impl Interval {
         sup: 0.0,
     };
 
+    pub const ONE: Self = Self { inf: 1.0, sup: 1.0 };
+
     /// IEEE numsToInterval for the bare type.
     pub fn nums_to_interval<S: SignalSink>(l: f64, u: f64, signals: &mut S) -> Self {
         match Self::from_nums(l, u) {
@@ -150,6 +152,16 @@ impl DecoratedInterval {
         decoration: Decoration::Dac,
     };
 
+    pub const ZERO: Self = Self {
+        interval: Interval::ZERO,
+        decoration: Decoration::Com,
+    };
+
+    pub const ONE: Self = Self {
+        interval: Interval::ONE,
+        decoration: Decoration::Com,
+    };
+
     /// IEEE numsToInterval for the decorated type.
     pub fn nums_to_interval<S: SignalSink>(l: f64, u: f64, signals: &mut S) -> Self {
         match Interval::from_nums(l, u) {
@@ -227,6 +239,12 @@ mod sealed {
 /// defines exactly the bare and decorated binary64 interval types.
 pub trait IntervalDatum: sealed::Sealed + Copy {
     #[doc(hidden)]
+    fn __zero() -> Self;
+
+    #[doc(hidden)]
+    fn __from_nums(inf: f64, sup: f64) -> Self;
+
+    #[doc(hidden)]
     fn __interval(self) -> Interval;
 
     #[doc(hidden)]
@@ -260,6 +278,14 @@ pub trait IntervalDatum: sealed::Sealed + Copy {
 impl sealed::Sealed for Interval {}
 
 impl IntervalDatum for Interval {
+    fn __zero() -> Self {
+        Self::ZERO
+    }
+
+    fn __from_nums(inf: f64, sup: f64) -> Self {
+        Self::nums_to_interval(inf, sup, &mut ())
+    }
+
     fn __interval(self) -> Interval {
         self
     }
@@ -296,6 +322,14 @@ impl IntervalDatum for Interval {
 impl sealed::Sealed for DecoratedInterval {}
 
 impl IntervalDatum for DecoratedInterval {
+    fn __zero() -> Self {
+        Self::ZERO
+    }
+
+    fn __from_nums(inf: f64, sup: f64) -> Self {
+        Self::nums_to_interval(inf, sup, &mut ())
+    }
+
     fn __interval(self) -> Interval {
         self.interval
     }

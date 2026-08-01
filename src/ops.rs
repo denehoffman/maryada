@@ -45,6 +45,18 @@ fn ternary<T: IntervalDatum>(
     x.__ternary_result(y, z, result.interval, result.local)
 }
 
+pub fn new<T: IntervalDatum>(inf: f64, sup: f64) -> T {
+    T::__from_nums(inf, sup)
+}
+
+pub fn singleton<T: IntervalDatum>(value: f64) -> T {
+    T::__from_nums(value, value)
+}
+
+pub fn zero<T: IntervalDatum>() -> T {
+    T::__zero()
+}
+
 // 6.7.1: interval constants.
 
 pub fn empty<T: IntervalDatum>() -> T {
@@ -227,6 +239,12 @@ pub fn min<T: IntervalDatum>(x: T, y: T) -> T {
 
 pub fn max<T: IntervalDatum>(x: T, y: T) -> T {
     binary(x, y, max_bare)
+}
+
+// hypot for convenience:
+
+pub fn hypot<T: IntervalDatum>(x: T, y: T) -> T {
+    sqrt(add(sqr(x), sqr(y)))
 }
 
 // 6.7.3: cancellative operations.

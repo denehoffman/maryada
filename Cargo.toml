@@ -4,4 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+impl_ops = "0.1.1"
 libm = { version = "0.2.16", default-features = false }

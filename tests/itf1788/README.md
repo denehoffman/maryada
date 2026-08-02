@@ -2,20 +2,20 @@
 
 These fixtures were copied from `IntervalArithmetic.jl` revision
 `17865d8f58634dfc604c60c0009e64181dc20e5a`. The Rust harness executes the
-operations that Maryada currently exposes and ignores ITL operations without a
-Maryada equivalent (for example `rootn`, overlap classification, and vector
+operations that maryada currently exposes and ignores ITL operations without a
+maryada equivalent (for example `rootn`, overlap classification, and vector
 reductions).
 
 ITL interval endpoints denote binary64 operands, so the harness decodes those
-tokens and passes them to Maryada's `nums_to_interval` and `set_dec` APIs. It
-does not use `FromStr` for fixture operands: Maryada correctly interprets
+tokens and passes them to maryada's `nums_to_interval` and `set_dec` APIs. It
+does not use `FromStr` for fixture operands: maryada correctly interprets
 decimal interval text as exact real input requiring outward enclosure, which is
 different from ITL's already-rounded endpoint semantics. Hexadecimal tokens do
-delegate to Maryada's interval parser.
+delegate to maryada's interval parser.
 
-The upstream vectors specify tight results. Maryada currently promises valid
+The upstream vectors specify tight results. maryada currently promises valid
 outward enclosures, so interval assertions require the upstream expected result
-to be contained in Maryada's result. Decorations may be conservatively weaker
+to be contained in maryada's result. Decorations may be conservatively weaker
 than the upstream expectation. Empty intervals, NaI, Boolean results, and
 numeric results remain exact checks.
 

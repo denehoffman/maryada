@@ -2,7 +2,7 @@
 //
 // The test vectors in tests/itf1788 retain their original Apache-2.0 notices.
 // This harness is a Rust adaptation and intentionally exercises only operations
-// that are part of Maryada's current public API.
+// that are part of maryada's current public API.
 
 use maryada::{DecoratedInterval, Decoration, Interval};
 

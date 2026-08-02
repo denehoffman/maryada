@@ -26,7 +26,7 @@ release_please = Workflow(
             steps=[
                 ReleasePlease(
                     name='Create or update release PR',
-                    token='${{ secrets.RELEASE_PLEASE_TOKEN }}',  # noqa: S106
+                    token='${{ secrets.RELEASE_PLEASE }}',  # noqa: S106
                     config_file='release-please-config.json',
                     manifest_file='.release-please-manifest.json',
                 ),

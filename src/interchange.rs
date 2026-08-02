@@ -3,7 +3,9 @@ use crate::{
     signals::{Signal, SignalSink},
 };
 
+/// Encoded length of a bare interval: two binary64 endpoints.
 pub const INTERVAL_ENCODED_LEN: usize = 16;
+/// Encoded length of a decorated interval: two endpoints and one decoration.
 pub const DECORATED_INTERVAL_ENCODED_LEN: usize = 17;
 
 const POSITIVE_INFINITY_BITS: u64 = 0x7ff0_0000_0000_0000;
@@ -14,6 +16,7 @@ const CANONICAL_QUIET_NAN_BITS: u64 = 0x7ff8_0000_0000_0000;
 
 // Level 4 export.
 
+/// Encodes a bare interval using big-endian IEEE 754 endpoint bytes.
 pub fn interval_to_be_bytes(x: Interval) -> [u8; INTERVAL_ENCODED_LEN] {
     let mut output = [0_u8; INTERVAL_ENCODED_LEN];
     output[..8].copy_from_slice(&x.inf_raw().to_be_bytes());
@@ -21,6 +24,7 @@ pub fn interval_to_be_bytes(x: Interval) -> [u8; INTERVAL_ENCODED_LEN] {
     output
 }
 
+/// Encodes a bare interval using little-endian IEEE 754 endpoint bytes.
 pub fn interval_to_le_bytes(x: Interval) -> [u8; INTERVAL_ENCODED_LEN] {
     let mut output = [0_u8; INTERVAL_ENCODED_LEN];
     output[..8].copy_from_slice(&x.inf_raw().to_le_bytes());
@@ -28,6 +32,9 @@ pub fn interval_to_le_bytes(x: Interval) -> [u8; INTERVAL_ENCODED_LEN] {
     output
 }
 
+/// Encodes a decorated interval using big-endian endpoint bytes.
+///
+/// NaI is encoded with two canonical quiet NaNs and the `ill` decoration.
 pub fn decorated_interval_to_be_bytes(
     x: DecoratedInterval,
 ) -> [u8; DECORATED_INTERVAL_ENCODED_LEN] {
@@ -44,6 +51,9 @@ pub fn decorated_interval_to_be_bytes(
     output
 }
 
+/// Encodes a decorated interval using little-endian endpoint bytes.
+///
+/// NaI is encoded with two canonical quiet NaNs and the `ill` decoration.
 pub fn decorated_interval_to_le_bytes(
     x: DecoratedInterval,
 ) -> [u8; DECORATED_INTERVAL_ENCODED_LEN] {
@@ -64,6 +74,10 @@ pub fn decorated_interval_to_le_bytes(
 
 // Level 4 import with InvalidOperand signaling.
 
+/// Decodes a big-endian bare interval.
+///
+/// Invalid length, bounds, NaNs, or noncanonical signed zeros raise
+/// [`Signal::InvalidOperand`] and return the empty interval.
 pub fn interval_from_be_bytes<S: SignalSink>(bytes: &[u8], signals: &mut S) -> Interval {
     match decode_interval(bytes, Endian::Big) {
         Some(value) => value,
@@ -74,6 +88,10 @@ pub fn interval_from_be_bytes<S: SignalSink>(bytes: &[u8], signals: &mut S) -> I
     }
 }
 
+/// Decodes a little-endian bare interval.
+///
+/// Invalid input raises [`Signal::InvalidOperand`] and returns the empty
+/// interval.
 pub fn interval_from_le_bytes<S: SignalSink>(bytes: &[u8], signals: &mut S) -> Interval {
     match decode_interval(bytes, Endian::Little) {
         Some(value) => value,
@@ -84,6 +102,9 @@ pub fn interval_from_le_bytes<S: SignalSink>(bytes: &[u8], signals: &mut S) -> I
     }
 }
 
+/// Decodes a big-endian decorated interval.
+///
+/// Invalid input raises [`Signal::InvalidOperand`] and returns NaI.
 pub fn decorated_interval_from_be_bytes<S: SignalSink>(
     bytes: &[u8],
     signals: &mut S,
@@ -97,6 +118,9 @@ pub fn decorated_interval_from_be_bytes<S: SignalSink>(
     }
 }
 
+/// Decodes a little-endian decorated interval.
+///
+/// Invalid input raises [`Signal::InvalidOperand`] and returns NaI.
 pub fn decorated_interval_from_le_bytes<S: SignalSink>(
     bytes: &[u8],
     signals: &mut S,

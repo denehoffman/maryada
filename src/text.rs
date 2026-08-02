@@ -5,11 +5,17 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Error returned when formatting an interval into a caller-provided buffer.
 pub enum TextError {
-    BufferTooSmall { required: usize },
+    /// The output slice cannot hold the complete representation.
+    BufferTooSmall {
+        /// Minimum number of bytes required for this representation.
+        required: usize,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Error returned by [`core::str::FromStr`] for an invalid interval literal.
 pub struct ParseIntervalError;
 
 struct ParsedBare {
@@ -102,6 +108,17 @@ pub(crate) fn text_to_decorated_interval<S: SignalSink>(
 /// representation, as permitted by the standard.
 ///
 /// Returns the number of UTF-8/ASCII bytes written.
+///
+/// # Example
+///
+/// ```
+/// use maryada::{Interval, interval_to_text};
+///
+/// let mut output = [0_u8; 64];
+/// let length = interval_to_text(Interval::new(1.0, 2.0), None, &mut output)?;
+/// assert_eq!(core::str::from_utf8(&output[..length]).unwrap(), "[0x1p+0,0x1p+1]");
+/// # Ok::<(), maryada::TextError>(())
+/// ```
 pub fn interval_to_text<T: IntervalDatum>(
     x: T,
     cs: Option<&str>,

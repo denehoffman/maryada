@@ -5,30 +5,41 @@ use crate::{
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
+/// A closed binary64 interval, or the distinguished empty interval.
+///
+/// Finite and infinite endpoints are canonicalized so that lower zero is
+/// `-0.0` and upper zero is `+0.0`.
 pub struct Interval {
     inf: f64,
     sup: f64,
 }
 
 impl Interval {
+    /// The empty interval.
     pub const EMPTY: Self = Self {
         inf: f64::INFINITY,
         sup: f64::NEG_INFINITY,
     };
 
+    /// The interval containing every real number.
     pub const ENTIRE: Self = Self {
         inf: f64::NEG_INFINITY,
         sup: f64::INFINITY,
     };
 
+    /// The singleton interval containing zero.
     pub const ZERO: Self = Self {
         inf: -0.0,
         sup: 0.0,
     };
 
+    /// The singleton interval containing one.
     pub const ONE: Self = Self { inf: 1.0, sup: 1.0 };
 
-    /// IEEE numsToInterval for the bare type.
+    /// Constructs a bare interval from binary64 endpoints.
+    ///
+    /// Invalid bounds raise [`Signal::UndefinedOperation`] and return
+    /// [`Interval::EMPTY`].
     pub fn nums_to_interval<S: SignalSink>(l: f64, u: f64, signals: &mut S) -> Self {
         match Self::from_nums(l, u) {
             Some(value) => value,
@@ -39,7 +50,19 @@ impl Interval {
         }
     }
 
-    /// IEEE textToInterval for the bare type.
+    /// Parses an IEEE 1788 interval literal.
+    ///
+    /// Invalid text raises the corresponding signal and returns
+    /// [`Interval::EMPTY`].
+    ///
+    /// ```
+    /// use maryada::{Interval, SignalFlags};
+    ///
+    /// let mut signals = SignalFlags::NONE;
+    /// let x = Interval::text_to_interval("[0.1, 0.2]", &mut signals);
+    /// assert!(x.contains(0.15));
+    /// assert!(signals.is_empty());
+    /// ```
     pub fn text_to_interval<S: SignalSink>(s: &str, signals: &mut S) -> Self {
         text::text_to_interval(s, signals)
     }
@@ -92,20 +115,27 @@ const fn canonical_sup(value: f64) -> f64 {
     if value == 0.0 { 0.0 } else { value }
 }
 
-/// Declaration order and discriminants both follow:
+/// The definedness and continuity information attached to an interval result.
 ///
-/// ill < trv < def < dac < com
+/// Declaration order and discriminants follow `ill < trv < def < dac < com`,
+/// so taking the minimum selects the weaker decoration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[repr(u8)]
 pub enum Decoration {
+    /// Ill-formed: used only for Not an Interval (NaI).
     Ill = 0,
+    /// Trivial: no continuity or definedness guarantee.
     Trv = 4,
+    /// Defined throughout the input box.
     Def = 8,
+    /// Defined and continuous throughout the input box.
     Dac = 12,
+    /// Common: defined, continuous, bounded, and nonempty.
     Com = 16,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Error returned when a byte or string is not a valid [`Decoration`].
 pub struct InvalidDecoration;
 
 impl TryFrom<u8> for Decoration {
@@ -151,38 +181,48 @@ impl core::str::FromStr for Decoration {
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
+/// A binary64 interval paired with an IEEE 1788 decoration.
+///
+/// The type includes the distinguished [`DecoratedInterval::NAI`] value.
 pub struct DecoratedInterval {
     interval: Interval,
     decoration: Decoration,
 }
 
 impl DecoratedInterval {
+    /// Not an Interval, representing an invalid decorated result.
     pub const NAI: Self = Self {
         interval: Interval::EMPTY,
         decoration: Decoration::Ill,
     };
 
+    /// The empty interval with the trivial decoration.
     pub const EMPTY: Self = Self {
         interval: Interval::EMPTY,
         decoration: Decoration::Trv,
     };
 
+    /// The entire interval with the defined-and-continuous decoration.
     pub const ENTIRE: Self = Self {
         interval: Interval::ENTIRE,
         decoration: Decoration::Dac,
     };
 
+    /// The decorated singleton interval containing zero.
     pub const ZERO: Self = Self {
         interval: Interval::ZERO,
         decoration: Decoration::Com,
     };
 
+    /// The decorated singleton interval containing one.
     pub const ONE: Self = Self {
         interval: Interval::ONE,
         decoration: Decoration::Com,
     };
 
-    /// IEEE numsToInterval for the decorated type.
+    /// Constructs a decorated interval from binary64 endpoints.
+    ///
+    /// Invalid bounds raise [`Signal::UndefinedOperation`] and return NaI.
     pub fn nums_to_interval<S: SignalSink>(l: f64, u: f64, signals: &mut S) -> Self {
         match Interval::from_nums(l, u) {
             Some(value) => Self::new_dec_raw(value),
@@ -193,7 +233,9 @@ impl DecoratedInterval {
         }
     }
 
-    /// IEEE textToInterval for the decorated type.
+    /// Parses an IEEE 1788 decorated interval literal.
+    ///
+    /// Invalid text raises the corresponding signal and returns NaI.
     pub fn text_to_interval<S: SignalSink>(s: &str, signals: &mut S) -> Self {
         text::text_to_decorated_interval(s, signals)
     }

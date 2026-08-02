@@ -45,68 +45,83 @@ fn ternary<T: IntervalDatum>(
     x.__ternary_result(y, z, result.interval, result.local)
 }
 
+/// Constructs an interval datum with endpoints `inf` and `sup`.
 pub fn new<T: IntervalDatum>(inf: f64, sup: f64) -> T {
     T::__from_nums(inf, sup)
 }
 
+/// Constructs the singleton interval containing `value`.
 pub fn singleton<T: IntervalDatum>(value: f64) -> T {
     T::__from_nums(value, value)
 }
 
+/// Returns the singleton interval containing zero.
 pub fn zero<T: IntervalDatum>() -> T {
     T::__zero()
 }
 
 // 6.7.1: interval constants.
 
+/// Returns the empty interval.
 pub fn empty<T: IntervalDatum>() -> T {
     T::__empty()
 }
 
+/// Returns the interval containing every real number.
 pub fn entire<T: IntervalDatum>() -> T {
     T::__entire()
 }
 
 // 6.7.2: basic operations.
 
+/// Computes the additive inverse of every value in `x`.
 pub fn neg<T: IntervalDatum>(x: T) -> T {
     unary(x, neg_bare)
 }
 
+/// Encloses all pairwise sums of values from `x` and `y`.
 pub fn add<T: IntervalDatum>(x: T, y: T) -> T {
     binary(x, y, add_bare)
 }
 
+/// Encloses all pairwise differences `x - y`.
 pub fn sub<T: IntervalDatum>(x: T, y: T) -> T {
     binary(x, y, sub_bare)
 }
 
+/// Encloses all pairwise products of values from `x` and `y`.
 pub fn mul<T: IntervalDatum>(x: T, y: T) -> T {
     binary(x, y, mul_bare)
 }
 
+/// Encloses all defined quotients `x / y`.
 pub fn div<T: IntervalDatum>(x: T, y: T) -> T {
     binary(x, y, div_bare)
 }
 
+/// Encloses the reciprocals of the nonzero values in `x`.
 pub fn recip<T: IntervalDatum>(x: T) -> T {
     unary(x, recip_bare)
 }
 
+/// Encloses the squares of all values in `x`.
 pub fn sqr<T: IntervalDatum>(x: T) -> T {
     unary(x, sqr_bare)
 }
 
+/// Encloses the real square roots of the nonnegative part of `x`.
 pub fn sqrt<T: IntervalDatum>(x: T) -> T {
     unary(x, sqrt_bare)
 }
 
+/// Encloses the fused expression `x * y + z` with one final rounding step.
 pub fn fma<T: IntervalDatum>(x: T, y: T, z: T) -> T {
     ternary(x, y, z, fma_bare)
 }
 
 // Power functions.
 
+/// Raises every value in `x` to the integer power `p`.
 pub fn pown<T: IntervalDatum>(x: T, p: i32) -> T {
     if x.__is_nai() {
         return x.__unary_result(Interval::EMPTY, Decoration::Ill);
@@ -117,158 +132,193 @@ pub fn pown<T: IntervalDatum>(x: T, p: i32) -> T {
     x.__unary_result(result.interval, result.local)
 }
 
+/// Encloses the real-valued power function for bases in `x` and exponents in `y`.
 pub fn pow<T: IntervalDatum>(x: T, y: T) -> T {
     binary(x, y, pow_bare)
 }
 
+/// Encloses `e^x` over the input interval.
 pub fn exp<T: IntervalDatum>(x: T) -> T {
     unary(x, exp_bare)
 }
 
+/// Encloses `2^x` over the input interval.
 pub fn exp2<T: IntervalDatum>(x: T) -> T {
     unary(x, exp2_bare)
 }
 
+/// Encloses `10^x` over the input interval.
 pub fn exp10<T: IntervalDatum>(x: T) -> T {
     unary(x, exp10_bare)
 }
 
+/// Encloses the natural logarithm over the positive part of `x`.
 pub fn log<T: IntervalDatum>(x: T) -> T {
     unary(x, log_bare)
 }
 
+/// Encloses the base-two logarithm over the positive part of `x`.
 pub fn log2<T: IntervalDatum>(x: T) -> T {
     unary(x, log2_bare)
 }
 
+/// Encloses the base-ten logarithm over the positive part of `x`.
 pub fn log10<T: IntervalDatum>(x: T) -> T {
     unary(x, log10_bare)
 }
 
 // Trigonometric functions.
 
+/// Encloses the sine of every value in `x`.
 pub fn sin<T: IntervalDatum>(x: T) -> T {
     unary(x, sin_bare)
 }
 
+/// Encloses the cosine of every value in `x`.
 pub fn cos<T: IntervalDatum>(x: T) -> T {
     unary(x, cos_bare)
 }
 
+/// Encloses the defined tangent values over `x`.
 pub fn tan<T: IntervalDatum>(x: T) -> T {
     unary(x, tan_bare)
 }
 
+/// Encloses the inverse sine over the part of `x` in `[-1, 1]`.
 pub fn asin<T: IntervalDatum>(x: T) -> T {
     unary(x, asin_bare)
 }
 
+/// Encloses the inverse cosine over the part of `x` in `[-1, 1]`.
 pub fn acos<T: IntervalDatum>(x: T) -> T {
     unary(x, acos_bare)
 }
 
+/// Encloses the inverse tangent of every value in `x`.
 pub fn atan<T: IntervalDatum>(x: T) -> T {
     unary(x, atan_bare)
 }
 
+/// Encloses the two-argument angle `atan2(y, x)`.
 pub fn atan2<T: IntervalDatum>(y: T, x: T) -> T {
     binary(y, x, atan2_bare)
 }
 
 // Hyperbolic functions.
 
+/// Encloses the hyperbolic sine of every value in `x`.
 pub fn sinh<T: IntervalDatum>(x: T) -> T {
     unary(x, sinh_bare)
 }
 
+/// Encloses the hyperbolic cosine of every value in `x`.
 pub fn cosh<T: IntervalDatum>(x: T) -> T {
     unary(x, cosh_bare)
 }
 
+/// Encloses the hyperbolic tangent of every value in `x`.
 pub fn tanh<T: IntervalDatum>(x: T) -> T {
     unary(x, tanh_bare)
 }
 
+/// Encloses the inverse hyperbolic sine of every value in `x`.
 pub fn asinh<T: IntervalDatum>(x: T) -> T {
     unary(x, asinh_bare)
 }
 
+/// Encloses inverse hyperbolic cosine over the part of `x` at least one.
 pub fn acosh<T: IntervalDatum>(x: T) -> T {
     unary(x, acosh_bare)
 }
 
+/// Encloses inverse hyperbolic tangent over the part of `x` in `(-1, 1)`.
 pub fn atanh<T: IntervalDatum>(x: T) -> T {
     unary(x, atanh_bare)
 }
 
 // Integer functions.
 
+/// Maps negative values to `-1`, zero to `0`, and positive values to `1`.
 pub fn sign<T: IntervalDatum>(x: T) -> T {
     unary(x, sign_bare)
 }
 
+/// Encloses the ceiling of every value in `x`.
 pub fn ceil<T: IntervalDatum>(x: T) -> T {
     unary(x, ceil_bare)
 }
 
+/// Encloses the floor of every value in `x`.
 pub fn floor<T: IntervalDatum>(x: T) -> T {
     unary(x, floor_bare)
 }
 
+/// Encloses truncation toward zero for every value in `x`.
 pub fn trunc<T: IntervalDatum>(x: T) -> T {
     unary(x, trunc_bare)
 }
 
+/// Encloses rounding to nearest integer with ties to even.
 pub fn round_ties_to_even<T: IntervalDatum>(x: T) -> T {
     unary(x, round_ties_to_even_bare)
 }
 
+/// Encloses rounding to nearest integer with ties away from zero.
 pub fn round_ties_to_away<T: IntervalDatum>(x: T) -> T {
     unary(x, round_ties_to_away_bare)
 }
 
 // Absmax functions.
 
+/// Encloses the absolute value of every value in `x`.
 pub fn abs<T: IntervalDatum>(x: T) -> T {
     unary(x, abs_bare)
 }
 
+/// Encloses the pointwise minimum of values from `x` and `y`.
 pub fn min<T: IntervalDatum>(x: T, y: T) -> T {
     binary(x, y, min_bare)
 }
 
+/// Encloses the pointwise maximum of values from `x` and `y`.
 pub fn max<T: IntervalDatum>(x: T, y: T) -> T {
     binary(x, y, max_bare)
 }
 
 // hypot for convenience:
 
+/// Encloses `sqrt(x² + y²)` for values drawn from both intervals.
 pub fn hypot<T: IntervalDatum>(x: T, y: T) -> T {
     sqrt(add(sqr(x), sqr(y)))
 }
 
 // 6.7.3: cancellative operations.
 
+/// Computes the cancellative subtraction operation `x ⊖ y`.
 pub fn cancel_minus<T: IntervalDatum>(x: T, y: T) -> T {
     binary(x, y, cancel_minus_bare)
 }
 
+/// Computes the cancellative addition operation `x ⊕ y`.
 pub fn cancel_plus<T: IntervalDatum>(x: T, y: T) -> T {
     binary(x, y, cancel_plus_bare)
 }
 
 // 6.7.4: set operations.
 
+/// Returns the set intersection of `x` and `y`.
 pub fn intersection<T: IntervalDatum>(x: T, y: T) -> T {
     binary(x, y, intersection_bare)
 }
 
+/// Returns the smallest interval containing both `x` and `y`.
 pub fn convex_hull<T: IntervalDatum>(x: T, y: T) -> T {
     binary(x, y, convex_hull_bare)
 }
 
 // 6.7.6: numeric functions.
 
+/// Returns the lower endpoint, or NaN for NaI.
 pub fn inf<T: IntervalDatum>(x: T) -> f64 {
     if x.__is_nai() {
         f64::NAN
@@ -277,6 +327,7 @@ pub fn inf<T: IntervalDatum>(x: T) -> f64 {
     }
 }
 
+/// Returns the upper endpoint, or NaN for NaI.
 pub fn sup<T: IntervalDatum>(x: T) -> f64 {
     if x.__is_nai() {
         f64::NAN
@@ -285,6 +336,7 @@ pub fn sup<T: IntervalDatum>(x: T) -> f64 {
     }
 }
 
+/// Returns a representative midpoint, or NaN for an empty interval or NaI.
 pub fn mid<T: IntervalDatum>(x: T) -> f64 {
     if x.__is_nai() {
         f64::NAN
@@ -293,6 +345,7 @@ pub fn mid<T: IntervalDatum>(x: T) -> f64 {
     }
 }
 
+/// Returns the interval width rounded upward.
 pub fn wid<T: IntervalDatum>(x: T) -> f64 {
     if x.__is_nai() {
         f64::NAN
@@ -301,6 +354,7 @@ pub fn wid<T: IntervalDatum>(x: T) -> f64 {
     }
 }
 
+/// Returns the radius rounded upward.
 pub fn rad<T: IntervalDatum>(x: T) -> f64 {
     if x.__is_nai() {
         f64::NAN
@@ -309,6 +363,7 @@ pub fn rad<T: IntervalDatum>(x: T) -> f64 {
     }
 }
 
+/// Returns the magnitude, the greatest absolute value in `x`.
 pub fn mag<T: IntervalDatum>(x: T) -> f64 {
     if x.__is_nai() {
         f64::NAN
@@ -317,6 +372,7 @@ pub fn mag<T: IntervalDatum>(x: T) -> f64 {
     }
 }
 
+/// Returns the mignitude, the least absolute value in `x`.
 pub fn mig<T: IntervalDatum>(x: T) -> f64 {
     if x.__is_nai() {
         f64::NAN
@@ -325,7 +381,7 @@ pub fn mig<T: IntervalDatum>(x: T) -> f64 {
     }
 }
 
-/// Recommended combined midpoint/radius operation.
+/// Returns a midpoint and an upward-rounded radius enclosing `x`.
 pub fn mid_rad<T: IntervalDatum>(x: T) -> (f64, f64) {
     if x.__is_nai() {
         return (f64::NAN, f64::NAN);
@@ -340,14 +396,17 @@ pub fn mid_rad<T: IntervalDatum>(x: T) -> (f64, f64) {
 
 // 6.7.7: boolean functions.
 
+/// Returns whether `x` is the empty interval; NaI is not empty.
 pub fn is_empty<T: IntervalDatum>(x: T) -> bool {
     !x.__is_nai() && x.__interval().is_empty_raw()
 }
 
+/// Returns whether `x` contains every real number.
 pub fn is_entire<T: IntervalDatum>(x: T) -> bool {
     !x.__is_nai() && x.__interval().is_entire_raw()
 }
 
+/// Returns whether `x` and `y` denote the same set.
 pub fn equal<T: IntervalDatum>(x: T, y: T) -> bool {
     if x.__is_nai() || y.__is_nai() {
         return false;
@@ -356,6 +415,7 @@ pub fn equal<T: IntervalDatum>(x: T, y: T) -> bool {
     equal_bare(x.__interval(), y.__interval())
 }
 
+/// Returns whether every member of `x` is also a member of `y`.
 pub fn subset<T: IntervalDatum>(x: T, y: T) -> bool {
     if x.__is_nai() || y.__is_nai() {
         return false;
@@ -364,6 +424,7 @@ pub fn subset<T: IntervalDatum>(x: T, y: T) -> bool {
     subset_bare(x.__interval(), y.__interval())
 }
 
+/// Returns whether `x` is contained in the topological interior of `y`.
 pub fn interior<T: IntervalDatum>(x: T, y: T) -> bool {
     if x.__is_nai() || y.__is_nai() {
         return false;
@@ -372,6 +433,7 @@ pub fn interior<T: IntervalDatum>(x: T, y: T) -> bool {
     interior_bare(x.__interval(), y.__interval())
 }
 
+/// Returns whether `x` and `y` have no common members.
 pub fn disjoint<T: IntervalDatum>(x: T, y: T) -> bool {
     if x.__is_nai() || y.__is_nai() {
         return false;
@@ -380,16 +442,19 @@ pub fn disjoint<T: IntervalDatum>(x: T, y: T) -> bool {
     disjoint_bare(x.__interval(), y.__interval())
 }
 
+/// Returns whether a decorated interval is Not an Interval.
 pub fn is_nai(x: DecoratedInterval) -> bool {
     x.is_nai_raw()
 }
 
 // 6.7.8: operations on/with decorations.
 
+/// Attaches the strongest valid decoration to a bare interval.
 pub const fn new_dec(x: Interval) -> DecoratedInterval {
     DecoratedInterval::new_dec_raw(x)
 }
 
+/// Extracts the bare interval, signaling and returning empty for NaI.
 pub fn interval_part<S: SignalSink>(x: DecoratedInterval, signals: &mut S) -> Interval {
     if x.is_nai_raw() {
         signals.raise(Signal::IntvlPartOfNaI);
@@ -399,10 +464,12 @@ pub fn interval_part<S: SignalSink>(x: DecoratedInterval, signals: &mut S) -> In
     }
 }
 
+/// Returns the decoration component of a decorated interval.
 pub const fn decoration_part(x: DecoratedInterval) -> Decoration {
     x.decoration_raw()
 }
 
+/// Attaches `decoration`, weakening it when required by the interval.
 pub fn set_dec(x: Interval, decoration: Decoration) -> DecoratedInterval {
     DecoratedInterval::set_dec_raw(x, decoration)
 }

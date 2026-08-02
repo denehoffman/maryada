@@ -1438,7 +1438,8 @@ fn mid_bare(x: Interval) -> f64 {
     if x.sup_raw() == f64::INFINITY {
         return f64::MAX;
     }
-    x.inf_raw().midpoint(x.sup_raw())
+    let midpoint = x.inf_raw().midpoint(x.sup_raw());
+    if midpoint == 0.0 { 0.0 } else { midpoint }
 }
 
 fn wid_bare(x: Interval) -> f64 {

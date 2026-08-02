@@ -129,6 +129,26 @@ impl From<Decoration> for u8 {
     }
 }
 
+impl core::str::FromStr for Decoration {
+    type Err = InvalidDecoration;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value.eq_ignore_ascii_case("trv") {
+            Ok(Self::Trv)
+        } else if value.eq_ignore_ascii_case("def") {
+            Ok(Self::Def)
+        } else if value.eq_ignore_ascii_case("dac") {
+            Ok(Self::Dac)
+        } else if value.eq_ignore_ascii_case("com") {
+            Ok(Self::Com)
+        } else if value.eq_ignore_ascii_case("ill") {
+            Ok(Self::Ill)
+        } else {
+            Err(InvalidDecoration)
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct DecoratedInterval {

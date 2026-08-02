@@ -163,13 +163,10 @@ fn parse_decorated_literal(s: &str) -> Result<ParsedDecorated, ()> {
     }
 
     let (bare_text, decoration) = if let Some(index) = s.rfind('_') {
-        let decoration = match &s[index + 1..] {
-            value if eq_ascii_case(value, "trv") => Decoration::Trv,
-            value if eq_ascii_case(value, "def") => Decoration::Def,
-            value if eq_ascii_case(value, "dac") => Decoration::Dac,
-            value if eq_ascii_case(value, "com") => Decoration::Com,
-            _ => return Err(()),
-        };
+        let decoration: Decoration = s[index + 1..].parse().map_err(|_| ())?;
+        if decoration == Decoration::Ill {
+            return Err(());
+        }
         (trim_ascii_space(&s[..index]), Some(decoration))
     } else {
         (s, None)

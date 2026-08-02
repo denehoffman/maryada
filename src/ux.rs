@@ -375,7 +375,7 @@ impl Interval {
     }
 
     pub fn contains(&self, value: f64) -> bool {
-        !value.is_nan() && crate::subset(Self::from(value), *self)
+        value.is_finite() && crate::subset(Self::from(value), *self)
     }
 
     pub fn mid(&self) -> f64 {
@@ -641,7 +641,7 @@ impl DecoratedInterval {
     }
 
     pub fn contains(&self, value: f64) -> bool {
-        !value.is_nan() && crate::subset(Self::from(value), *self)
+        value.is_finite() && crate::subset(Self::from(value), *self)
     }
 
     pub fn mid(&self) -> f64 {

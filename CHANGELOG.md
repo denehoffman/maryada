@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/denehoffman/maryada/compare/v0.1.1...v0.1.2) (2026-08-03)
+
+
+### Features
+
+* Expand owned interval arithmetic APIs ([2551133](https://github.com/denehoffman/maryada/commit/2551133af5ba7b31764bc115e54427db43e7de5d))
+
 ## [0.1.1](https://github.com/denehoffman/maryada/compare/v0.1.0...v0.1.1) (2026-08-03)
 
 

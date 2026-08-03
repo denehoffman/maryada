@@ -12,6 +12,12 @@ enum AnyInterval {
     Decorated(DecoratedInterval),
 }
 
+#[derive(Clone, Copy, Debug)]
+enum Api {
+    Intrinsic,
+    Ux,
+}
+
 // ITL numeric tokens denote binary64 operands. This differs from IEEE
 // textToInterval: decimal text such as 17.1 is a rounded binary64 endpoint in
 // ITL, while "[17.1]" asks textToInterval to enclose the exact decimal value.
@@ -143,7 +149,28 @@ macro_rules! binary {
     };
 }
 
-fn apply_unary(op: &str, value: AnyInterval) -> Option<AnyInterval> {
+macro_rules! unary_method {
+    ($value:expr, $method:ident) => {
+        match $value {
+            AnyInterval::Bare(x) => AnyInterval::Bare(x.$method()),
+            AnyInterval::Decorated(x) => AnyInterval::Decorated(x.$method()),
+        }
+    };
+}
+
+macro_rules! binary_method {
+    ($left:expr, $right:expr, $method:ident) => {
+        match ($left, $right) {
+            (AnyInterval::Bare(x), AnyInterval::Bare(y)) => AnyInterval::Bare(x.$method(&y)),
+            (AnyInterval::Decorated(x), AnyInterval::Decorated(y)) => {
+                AnyInterval::Decorated(x.$method(&y))
+            }
+            _ => panic!("mixed bare/decorated operands"),
+        }
+    };
+}
+
+fn apply_unary_intrinsic(op: &str, value: AnyInterval) -> Option<AnyInterval> {
     Some(match op {
         "pos" => value,
         "neg" => unary!(value, maryada::neg),
@@ -179,7 +206,53 @@ fn apply_unary(op: &str, value: AnyInterval) -> Option<AnyInterval> {
     })
 }
 
-fn apply_binary(op: &str, left: AnyInterval, right: AnyInterval) -> Option<AnyInterval> {
+fn apply_unary_ux(op: &str, value: AnyInterval) -> Option<AnyInterval> {
+    Some(match op {
+        "pos" => value,
+        "neg" => match value {
+            AnyInterval::Bare(x) => AnyInterval::Bare(-x),
+            AnyInterval::Decorated(x) => AnyInterval::Decorated(-x),
+        },
+        "recip" => unary_method!(value, recip),
+        "sqr" => unary_method!(value, sqr),
+        "sqrt" => unary_method!(value, sqrt),
+        "exp" => unary_method!(value, exp),
+        "exp2" => unary_method!(value, exp2),
+        "exp10" => unary_method!(value, exp10),
+        "log" => unary_method!(value, log),
+        "log2" => unary_method!(value, log2),
+        "log10" => unary_method!(value, log10),
+        "sin" => unary_method!(value, sin),
+        "cos" => unary_method!(value, cos),
+        "tan" => unary_method!(value, tan),
+        "asin" => unary_method!(value, asin),
+        "acos" => unary_method!(value, acos),
+        "atan" => unary_method!(value, atan),
+        "sinh" => unary_method!(value, sinh),
+        "cosh" => unary_method!(value, cosh),
+        "tanh" => unary_method!(value, tanh),
+        "asinh" => unary_method!(value, asinh),
+        "acosh" => unary_method!(value, acosh),
+        "atanh" => unary_method!(value, atanh),
+        "sign" => unary_method!(value, sign),
+        "ceil" => unary_method!(value, ceil),
+        "floor" => unary_method!(value, floor),
+        "trunc" => unary_method!(value, trunc),
+        "roundTiesToEven" => unary_method!(value, round_ties_to_even),
+        "roundTiesToAway" => unary_method!(value, round_ties_to_away),
+        "abs" => unary_method!(value, abs),
+        _ => return None,
+    })
+}
+
+fn apply_unary(api: Api, op: &str, value: AnyInterval) -> Option<AnyInterval> {
+    match api {
+        Api::Intrinsic => apply_unary_intrinsic(op, value),
+        Api::Ux => apply_unary_ux(op, value),
+    }
+}
+
+fn apply_binary_intrinsic(op: &str, left: AnyInterval, right: AnyInterval) -> Option<AnyInterval> {
     Some(match op {
         "add" => binary!(left, right, maryada::add),
         "sub" => binary!(left, right, maryada::sub),
@@ -197,26 +270,80 @@ fn apply_binary(op: &str, left: AnyInterval, right: AnyInterval) -> Option<AnyIn
     })
 }
 
-fn apply_pown(value: AnyInterval, exponent: i32) -> AnyInterval {
-    match value {
-        AnyInterval::Bare(x) => AnyInterval::Bare(maryada::pown(x, exponent)),
-        AnyInterval::Decorated(x) => AnyInterval::Decorated(maryada::pown(x, exponent)),
+fn apply_binary_ux(op: &str, left: AnyInterval, right: AnyInterval) -> Option<AnyInterval> {
+    Some(match op {
+        "add" => match (left, right) {
+            (AnyInterval::Bare(x), AnyInterval::Bare(y)) => AnyInterval::Bare(x + y),
+            (AnyInterval::Decorated(x), AnyInterval::Decorated(y)) => AnyInterval::Decorated(x + y),
+            _ => panic!("mixed bare/decorated operands"),
+        },
+        "sub" => match (left, right) {
+            (AnyInterval::Bare(x), AnyInterval::Bare(y)) => AnyInterval::Bare(x - y),
+            (AnyInterval::Decorated(x), AnyInterval::Decorated(y)) => AnyInterval::Decorated(x - y),
+            _ => panic!("mixed bare/decorated operands"),
+        },
+        "mul" => match (left, right) {
+            (AnyInterval::Bare(x), AnyInterval::Bare(y)) => AnyInterval::Bare(x * y),
+            (AnyInterval::Decorated(x), AnyInterval::Decorated(y)) => AnyInterval::Decorated(x * y),
+            _ => panic!("mixed bare/decorated operands"),
+        },
+        "div" => match (left, right) {
+            (AnyInterval::Bare(x), AnyInterval::Bare(y)) => AnyInterval::Bare(x / y),
+            (AnyInterval::Decorated(x), AnyInterval::Decorated(y)) => AnyInterval::Decorated(x / y),
+            _ => panic!("mixed bare/decorated operands"),
+        },
+        "pow" => binary_method!(left, right, pow),
+        "atan2" => binary_method!(left, right, atan2),
+        "min" => binary_method!(left, right, min),
+        "max" => binary_method!(left, right, max),
+        // The cancellation operations have no ergonomic method equivalents.
+        "cancelMinus" => binary!(left, right, maryada::cancel_minus),
+        "cancelPlus" => binary!(left, right, maryada::cancel_plus),
+        "intersection" => binary_method!(left, right, intersection),
+        "convexHull" => binary_method!(left, right, convex_hull),
+        _ => return None,
+    })
+}
+
+fn apply_binary(api: Api, op: &str, left: AnyInterval, right: AnyInterval) -> Option<AnyInterval> {
+    match api {
+        Api::Intrinsic => apply_binary_intrinsic(op, left, right),
+        Api::Ux => apply_binary_ux(op, left, right),
     }
 }
 
-fn apply_fma(x: AnyInterval, y: AnyInterval, z: AnyInterval) -> AnyInterval {
+fn apply_pown(api: Api, value: AnyInterval, exponent: i32) -> AnyInterval {
+    match value {
+        AnyInterval::Bare(x) => AnyInterval::Bare(match api {
+            Api::Intrinsic => maryada::pown(x, exponent),
+            Api::Ux => x.pown(exponent),
+        }),
+        AnyInterval::Decorated(x) => AnyInterval::Decorated(match api {
+            Api::Intrinsic => maryada::pown(x, exponent),
+            Api::Ux => x.pown(exponent),
+        }),
+    }
+}
+
+fn apply_fma(api: Api, x: AnyInterval, y: AnyInterval, z: AnyInterval) -> AnyInterval {
     match (x, y, z) {
         (AnyInterval::Bare(x), AnyInterval::Bare(y), AnyInterval::Bare(z)) => {
-            AnyInterval::Bare(maryada::fma(x, y, z))
+            AnyInterval::Bare(match api {
+                Api::Intrinsic => maryada::fma(x, y, z),
+                Api::Ux => x.mul_add(&y, &z),
+            })
         }
         (AnyInterval::Decorated(x), AnyInterval::Decorated(y), AnyInterval::Decorated(z)) => {
-            AnyInterval::Decorated(maryada::fma(x, y, z))
+            AnyInterval::Decorated(match api {
+                Api::Intrinsic => maryada::fma(x, y, z),
+                Api::Ux => x.mul_add(&y, &z),
+            })
         }
         _ => panic!("mixed bare/decorated operands"),
     }
 }
 
-fn boolean_unary(op: &str, value: AnyInterval) -> Option<bool> {
+fn boolean_unary_intrinsic(op: &str, value: AnyInterval) -> Option<bool> {
     Some(match (op, value) {
         ("isEmpty", AnyInterval::Bare(x)) => maryada::is_empty(x),
         ("isEmpty", AnyInterval::Decorated(x)) => maryada::is_empty(x),
@@ -233,7 +360,31 @@ fn boolean_unary(op: &str, value: AnyInterval) -> Option<bool> {
     })
 }
 
-fn boolean_binary(op: &str, left: AnyInterval, right: AnyInterval) -> Option<bool> {
+fn boolean_unary_ux(op: &str, value: AnyInterval) -> Option<bool> {
+    Some(match (op, value) {
+        ("isEmpty", AnyInterval::Bare(x)) => x.is_empty(),
+        ("isEmpty", AnyInterval::Decorated(x)) => x.is_empty(),
+        ("isEntire", AnyInterval::Bare(x)) => x.is_entire(),
+        ("isEntire", AnyInterval::Decorated(x)) => x.is_entire(),
+        ("isNaI", AnyInterval::Decorated(x)) => x.is_nai(),
+        ("isSingleton", AnyInterval::Bare(x)) => x.is_singleton(),
+        ("isSingleton", AnyInterval::Decorated(x)) => x.is_singleton(),
+        ("isCommonInterval", AnyInterval::Bare(x)) => !x.is_empty() && x.is_bounded(),
+        ("isCommonInterval", AnyInterval::Decorated(x)) => {
+            !x.is_nai() && !x.is_empty() && x.is_bounded()
+        }
+        _ => return None,
+    })
+}
+
+fn boolean_unary(api: Api, op: &str, value: AnyInterval) -> Option<bool> {
+    match api {
+        Api::Intrinsic => boolean_unary_intrinsic(op, value),
+        Api::Ux => boolean_unary_ux(op, value),
+    }
+}
+
+fn boolean_binary_intrinsic(op: &str, left: AnyInterval, right: AnyInterval) -> Option<bool> {
     macro_rules! call {
         ($function:path) => {
             match (left, right) {
@@ -252,7 +403,32 @@ fn boolean_binary(op: &str, left: AnyInterval, right: AnyInterval) -> Option<boo
     })
 }
 
-fn numeric_unary(op: &str, value: AnyInterval) -> Option<f64> {
+fn boolean_binary_ux(op: &str, left: AnyInterval, right: AnyInterval) -> Option<bool> {
+    Some(match (op, left, right) {
+        // ITF equality ignores decorations, unlike Rust's `PartialEq` implementation.
+        ("equal", AnyInterval::Bare(x), AnyInterval::Bare(y)) => maryada::equal(x, y),
+        ("equal", AnyInterval::Decorated(x), AnyInterval::Decorated(y)) => maryada::equal(x, y),
+        ("subset", AnyInterval::Bare(x), AnyInterval::Bare(y)) => x.subset(&y),
+        ("subset", AnyInterval::Decorated(x), AnyInterval::Decorated(y)) => x.subset(&y),
+        ("interior", AnyInterval::Bare(x), AnyInterval::Bare(y)) => x.interior(&y),
+        ("interior", AnyInterval::Decorated(x), AnyInterval::Decorated(y)) => x.interior(&y),
+        ("disjoint", AnyInterval::Bare(x), AnyInterval::Bare(y)) => x.disjoint(&y),
+        ("disjoint", AnyInterval::Decorated(x), AnyInterval::Decorated(y)) => x.disjoint(&y),
+        ("equal" | "subset" | "interior" | "disjoint", _, _) => {
+            panic!("mixed bare/decorated operands")
+        }
+        _ => return None,
+    })
+}
+
+fn boolean_binary(api: Api, op: &str, left: AnyInterval, right: AnyInterval) -> Option<bool> {
+    match api {
+        Api::Intrinsic => boolean_binary_intrinsic(op, left, right),
+        Api::Ux => boolean_binary_ux(op, left, right),
+    }
+}
+
+fn numeric_unary_intrinsic(op: &str, value: AnyInterval) -> Option<f64> {
     macro_rules! call {
         ($function:path) => {
             match value {
@@ -273,6 +449,33 @@ fn numeric_unary(op: &str, value: AnyInterval) -> Option<f64> {
     })
 }
 
+fn numeric_unary_ux(op: &str, value: AnyInterval) -> Option<f64> {
+    Some(match (op, value) {
+        ("inf", AnyInterval::Bare(x)) => x.inf(),
+        ("inf", AnyInterval::Decorated(x)) => x.inf(),
+        ("sup", AnyInterval::Bare(x)) => x.sup(),
+        ("sup", AnyInterval::Decorated(x)) => x.sup(),
+        ("mid", AnyInterval::Bare(x)) => x.mid(),
+        ("mid", AnyInterval::Decorated(x)) => x.mid(),
+        ("rad", AnyInterval::Bare(x)) => x.rad(),
+        ("rad", AnyInterval::Decorated(x)) => x.rad(),
+        ("wid", AnyInterval::Bare(x)) => x.wid(),
+        ("wid", AnyInterval::Decorated(x)) => x.wid(),
+        ("mag", AnyInterval::Bare(x)) => x.mag(),
+        ("mag", AnyInterval::Decorated(x)) => x.mag(),
+        ("mig", AnyInterval::Bare(x)) => x.mig(),
+        ("mig", AnyInterval::Decorated(x)) => x.mig(),
+        _ => return None,
+    })
+}
+
+fn numeric_unary(api: Api, op: &str, value: AnyInterval) -> Option<f64> {
+    match api {
+        Api::Intrinsic => numeric_unary_intrinsic(op, value),
+        Api::Ux => numeric_unary_ux(op, value),
+    }
+}
+
 fn parse_bool(text: &str) -> bool {
     match text.trim() {
         "true" => true,
@@ -281,7 +484,7 @@ fn parse_bool(text: &str) -> bool {
     }
 }
 
-fn run_statement(statement: &str) -> bool {
+fn run_statement(api: Api, statement: &str) -> bool {
     let statement = statement.trim().trim_end_matches(';').trim();
     let Some((left, expected_text)) = statement.split_once(" = ") else {
         return false;
@@ -296,7 +499,7 @@ fn run_statement(statement: &str) -> bool {
     ) {
         let (value, rest) = parse_itl_interval_operand(args);
         assert!(rest.trim().is_empty(), "{statement}: unexpected arguments");
-        let Some(actual) = boolean_unary(op, value) else {
+        let Some(actual) = boolean_unary(api, op, value) else {
             return false;
         };
         assert_eq!(actual, parse_bool(expected_text), "{statement}");
@@ -322,7 +525,7 @@ fn run_statement(statement: &str) -> bool {
         let (left, rest) = parse_itl_interval_operand(args);
         let (right, rest) = parse_itl_interval_operand(rest);
         assert!(rest.trim().is_empty(), "{statement}: unexpected arguments");
-        let Some(actual) = boolean_binary(op, left, right) else {
+        let Some(actual) = boolean_binary(api, op, left, right) else {
             return false;
         };
         assert_eq!(actual, parse_bool(expected_text), "{statement}");
@@ -332,7 +535,7 @@ fn run_statement(statement: &str) -> bool {
     if matches!(op, "inf" | "sup" | "mid" | "rad" | "wid" | "mag" | "mig") {
         let (value, rest) = parse_itl_interval_operand(args);
         assert!(rest.trim().is_empty(), "{statement}: unexpected arguments");
-        let actual = numeric_unary(op, value).unwrap();
+        let actual = numeric_unary(api, op, value).unwrap();
         let expected = parse_itl_binary64(expected_text);
         assert!(
             same_number(actual, expected),
@@ -393,19 +596,23 @@ fn run_statement(statement: &str) -> bool {
 
     let (first, rest) = parse_itl_interval_operand(args);
     let actual = if op == "pown" {
-        apply_pown(first, rest.trim().parse().expect("integer pown exponent"))
+        apply_pown(
+            api,
+            first,
+            rest.trim().parse().expect("integer pown exponent"),
+        )
     } else if op == "fma" {
         let (second, rest) = parse_itl_interval_operand(rest);
         let (third, rest) = parse_itl_interval_operand(rest);
         assert!(rest.trim().is_empty(), "{statement}: unexpected arguments");
-        apply_fma(first, second, third)
-    } else if let Some(result) = apply_unary(op, first) {
+        apply_fma(api, first, second, third)
+    } else if let Some(result) = apply_unary(api, op, first) {
         assert!(rest.trim().is_empty(), "{statement}: unexpected arguments");
         result
     } else {
         let (second, rest) = parse_itl_interval_operand(rest);
         assert!(rest.trim().is_empty(), "{statement}: unexpected arguments");
-        let Some(result) = apply_binary(op, first, second) else {
+        let Some(result) = apply_binary(api, op, first, second) else {
             return false;
         };
         result
@@ -440,7 +647,7 @@ fn run_statement(statement: &str) -> bool {
     true
 }
 
-fn run_itl(source: &str) -> usize {
+fn run_itl(api: Api, source: &str) -> usize {
     let mut in_comment = false;
     let mut executed = 0;
     for line in source.lines() {
@@ -448,7 +655,7 @@ fn run_itl(source: &str) -> usize {
         if trimmed.starts_with("/*") {
             in_comment = true;
         }
-        if !in_comment && trimmed.ends_with(';') && run_statement(trimmed) {
+        if !in_comment && trimmed.ends_with(';') && run_statement(api, trimmed) {
             executed += 1;
         }
         if trimmed.ends_with("*/") {
@@ -458,17 +665,33 @@ fn run_itl(source: &str) -> usize {
     executed
 }
 
+const ITF1788_SOURCES: [&str; 7] = [
+    include_str!("itf1788/atan2.itl"),
+    include_str!("itf1788/libieeep1788_bool.itl"),
+    include_str!("itf1788/libieeep1788_cancel.itl"),
+    include_str!("itf1788/libieeep1788_elem.itl"),
+    include_str!("itf1788/libieeep1788_num.itl"),
+    include_str!("itf1788/libieeep1788_rec_bool.itl"),
+    include_str!("itf1788/libieeep1788_set.itl"),
+];
+
+fn run_port(api: Api) {
+    let executed: usize = ITF1788_SOURCES
+        .into_iter()
+        .map(|source| run_itl(api, source))
+        .sum();
+    assert_eq!(
+        executed, 4_642,
+        "unexpected number of ITF1788 cases for {api:?} API"
+    );
+}
+
 #[test]
-fn interval_arithmetic_itf1788_port() {
-    let sources = [
-        include_str!("itf1788/atan2.itl"),
-        include_str!("itf1788/libieeep1788_bool.itl"),
-        include_str!("itf1788/libieeep1788_cancel.itl"),
-        include_str!("itf1788/libieeep1788_elem.itl"),
-        include_str!("itf1788/libieeep1788_num.itl"),
-        include_str!("itf1788/libieeep1788_rec_bool.itl"),
-        include_str!("itf1788/libieeep1788_set.itl"),
-    ];
-    let executed: usize = sources.into_iter().map(run_itl).sum();
-    assert_eq!(executed, 4_642, "unexpected number of ITF1788 cases");
+fn interval_arithmetic_intrinsic_itf1788_port() {
+    run_port(Api::Intrinsic);
+}
+
+#[test]
+fn interval_arithmetic_ux_itf1788_port() {
+    run_port(Api::Ux);
 }

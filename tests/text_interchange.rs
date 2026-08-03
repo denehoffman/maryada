@@ -1,5 +1,5 @@
 use maryada::{
-    DecoratedInterval, Decoration, Interval, Signal, SignalFlags, decoration_part,
+    DecoratedInterval, Decoration, Interval, Signal, SignalFlags, TextError, decoration_part,
     interval_to_text, set_dec, subset,
 };
 
@@ -355,4 +355,124 @@ fn interchange_encoding_and_validation_match_the_standard_representation() {
     }
     assert!(DecoratedInterval::from_be_bytes(&[0; 16], &mut signals).is_nai());
     assert!(signals.contains(Signal::InvalidOperand));
+}
+
+#[test]
+fn uncertain_literals_cover_long_input_and_checked_arithmetic_boundaries() {
+    let long_center =
+        Interval::text_to_interval("1234567890123456789012345678901234567890?1", &mut ());
+    assert!(long_center.is_bounded());
+    assert!(long_center.contains(1.2345678901234568e39));
+
+    let doubled_center_fallback =
+        Interval::text_to_interval("170141183460469231731687303715884105727?1", &mut ());
+    assert!(doubled_center_fallback.is_bounded());
+
+    for literal in [
+        "170141183460469231731687303715884105727??",
+        "170141183460469231731687303715884105727??d",
+        "170141183460469231731687303715884105727??U",
+    ] {
+        let value = Interval::text_to_interval(literal, &mut ());
+        assert!(!value.is_empty(), "fallback rejected {literal:?}");
+    }
+
+    for literal in [
+        "1?170141183460469231731687303715884105727",
+        "85070591730234615865843651857942052863?85070591730234615865843651857942052863",
+    ] {
+        assert!(
+            Interval::text_to_interval(literal, &mut ()).is_entire(),
+            "boundary did not conservatively widen {literal:?}",
+        );
+    }
+
+    let huge_positive =
+        Interval::text_to_interval("1?1e999999999999999999999999999999999999999", &mut ());
+    assert!(!huge_positive.is_empty());
+    assert_eq!(huge_positive.sup(), f64::INFINITY);
+    let huge_negative =
+        Interval::text_to_interval("1?1e-999999999999999999999999999999999999999", &mut ());
+    assert!(!huge_negative.is_empty());
+    assert!(huge_negative.contains(0.0));
+
+    let mut signals = SignalFlags::NONE;
+    for literal in [
+        "1?9999999999999999999999999999999999999999",
+        "1234567890123456789012345678901234567890.0.0?1",
+        "1?1e+",
+        "1?1e-",
+        "1?1e-not-a-number",
+    ] {
+        assert!(
+            Interval::text_to_interval(literal, &mut signals).is_empty(),
+            "accepted malformed uncertain literal {literal:?}",
+        );
+        assert!(
+            signals.contains(Signal::UndefinedOperation),
+            "missing signal for {literal:?}"
+        );
+        signals.clear();
+    }
+
+    for literal in ["[inf]", "[-inf]", "[+infinity]", "[-INFINITY]"] {
+        assert!(Interval::text_to_interval(literal, &mut signals).is_empty());
+        assert!(signals.contains(Signal::UndefinedOperation));
+        signals.clear();
+    }
+}
+
+#[test]
+fn hexadecimal_output_handles_binary64_edges_decorations_and_small_buffers() {
+    let values = [
+        Interval::ZERO,
+        Interval::new(f64::from_bits(1), f64::from_bits(1)),
+        Interval::from(1.625),
+        Interval::from(-1.625),
+        Interval::from(f64::MAX),
+        Interval::new(f64::NEG_INFINITY, -1.0),
+        Interval::new(1.0, f64::INFINITY),
+        Interval::EMPTY,
+        Interval::ENTIRE,
+    ];
+
+    let mut output = [0; 128];
+    for value in values {
+        let length = interval_to_text(value, Some("hex"), &mut output).unwrap();
+        let text = core::str::from_utf8(&output[..length]).unwrap();
+        assert_eq!(Interval::text_to_interval(text, &mut ()), value, "{text}");
+    }
+
+    let length = interval_to_text(Interval::ZERO, None, &mut output).unwrap();
+    assert_eq!(&output[..length], b"[-0x0p+0,0x0p+0]");
+    let length = interval_to_text(Interval::from(f64::from_bits(1)), None, &mut output).unwrap();
+    assert_eq!(&output[..length], b"[0x1p-1074,0x1p-1074]");
+    let length = interval_to_text(Interval::from(1.625), None, &mut output).unwrap();
+    assert_eq!(&output[..length], b"[0x1.ap+0,0x1.ap+0]");
+
+    for decoration in [
+        Decoration::Trv,
+        Decoration::Def,
+        Decoration::Dac,
+        Decoration::Com,
+    ] {
+        let value = set_dec(Interval::new(-1.625, 2.5), decoration);
+        let length = interval_to_text(value, Some("hex"), &mut output).unwrap();
+        let text = core::str::from_utf8(&output[..length]).unwrap();
+        let parsed = DecoratedInterval::text_to_interval(text, &mut ());
+        assert_eq!(parsed, value, "{text}");
+        assert_eq!(decoration_part(parsed), decoration);
+    }
+
+    let ill_length = interval_to_text(DecoratedInterval::NAI, None, &mut output).unwrap();
+    assert_eq!(&output[..ill_length], b"[nai]");
+
+    for (value, capacity) in [
+        (Interval::EMPTY, 0usize),
+        (Interval::ENTIRE, 4usize),
+        (Interval::from(1.625), 8usize),
+    ] {
+        let error = interval_to_text(value, None, &mut output[..capacity]).unwrap_err();
+        assert!(matches!(error, TextError::BufferTooSmall { required } if required > capacity));
+    }
 }

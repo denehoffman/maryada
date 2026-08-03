@@ -1,3 +1,5 @@
+#![cfg(feature = "num-complex")]
+
 use maryada::{ComplexBox, DecoratedInterval, Decoration, Interval, decoration_part, set_dec};
 use num_complex::Complex64;
 
@@ -15,7 +17,7 @@ fn arithmetic_and_elementary_functions_enclose_singleton_references() {
     let x = ComplexBox::<Interval>::new(1.0.into(), 2.0.into());
     let y = ComplexBox::<Interval>::new(3.0.into(), 4.0.into());
     let z = ComplexBox::<Interval>::new(5.0.into(), 6.0.into());
-    let fused = x.mul_add(&y, &z);
+    let fused = x.mul_add(y, z);
     assert_eq!(fused.re.bounds(), (0.0, 0.0));
     assert_eq!(fused.im.bounds(), (16.0, 16.0));
 
@@ -41,11 +43,11 @@ fn rectangular_geometry_and_set_relations_are_componentwise() {
     let outer = ComplexBox::<Interval>::new(Interval::new(0.0, 3.0), Interval::new(0.0, 3.0));
     let apart = ComplexBox::<Interval>::new(Interval::new(4.0, 5.0), Interval::new(1.0, 2.0));
 
-    assert!(inner.subset(&outer));
-    assert!(inner.interior(&outer));
-    assert!(inner.disjoint(&apart));
-    assert_eq!(inner.intersection(&outer), inner);
-    assert_eq!(inner.convex_hull(&outer), outer);
+    assert!(inner.subset(outer));
+    assert!(inner.interior(outer));
+    assert!(inner.disjoint(apart));
+    assert_eq!(inner.intersection(outer), inner);
+    assert_eq!(inner.convex_hull(outer), outer);
 
     let value = ComplexBox::<Interval>::new(Interval::new(0.0, 6.0), Interval::new(0.0, 8.0));
     assert_eq!(value.wid_box(), Complex64::new(6.0, 8.0));
@@ -83,21 +85,20 @@ fn decorations_conversions_and_constants_preserve_semantics() {
 }
 
 #[test]
-#[allow(clippy::op_ref)]
 fn arithmetic_operators_polar_forms_and_powers_enclose_reference_values() {
     let z = ComplexBox::<Interval>::from(Complex64::new(2.0, 1.0));
     let w = ComplexBox::<Interval>::from(Complex64::new(-0.5, 0.25));
 
     for (result, reference) in [
-        (&z + &w, Complex64::new(1.5, 1.25)),
-        (&z - &w, Complex64::new(2.5, 0.75)),
-        (&z * &w, Complex64::new(-1.25, 0.0)),
-        (&z / &w, Complex64::new(-2.4, -3.2)),
-        (-&z, Complex64::new(-2.0, -1.0)),
-        (&z + 2.0, Complex64::new(4.0, 1.0)),
-        (2.0 - &z, Complex64::new(0.0, -1.0)),
-        (&z * 2.0, Complex64::new(4.0, 2.0)),
-        (2.0 / &z, Complex64::new(0.8, -0.4)),
+        (z + w, Complex64::new(1.5, 1.25)),
+        (z - w, Complex64::new(2.5, 0.75)),
+        (z * w, Complex64::new(-1.25, 0.0)),
+        (z / w, Complex64::new(-2.4, -3.2)),
+        (-z, Complex64::new(-2.0, -1.0)),
+        (z + 2.0, Complex64::new(4.0, 1.0)),
+        (2.0 - z, Complex64::new(0.0, -1.0)),
+        (z * 2.0, Complex64::new(4.0, 2.0)),
+        (2.0 / z, Complex64::new(0.8, -0.4)),
         (z.add_real(1.0.into()), Complex64::new(3.0, 1.0)),
         (z.sub_real(1.0.into()), Complex64::new(1.0, 1.0)),
         (z.scale(2.0.into()), Complex64::new(4.0, 2.0)),
@@ -128,9 +129,42 @@ fn arithmetic_operators_polar_forms_and_powers_enclose_reference_values() {
         Complex64::new(2.0 * 0.25_f64.cos(), 2.0 * 0.25_f64.sin()),
     );
     assert_contains_complex(
-        ComplexBox::<Interval>::from(2.0).pow(&ComplexBox::from(3.0)),
+        ComplexBox::<Interval>::from(2.0).pow(ComplexBox::from(3.0)),
         Complex64::new(8.0, 0.0),
     );
+}
+
+#[test]
+fn complex_scalar_operators_cover_interval_and_box_combinations() {
+    type BareBox = ComplexBox<Interval>;
+    type DecoratedBox = ComplexBox<DecoratedInterval>;
+
+    fn bare(_: BareBox) {}
+    fn decorated(_: DecoratedBox) {}
+
+    macro_rules! check_op {
+        ($op:tt) => {{
+            let scalar = Complex64::new(2.0, 1.0);
+            let bare_box = BareBox::from(3.0);
+            let decorated_box = DecoratedBox::from(4.0);
+            let bare_interval = Interval::from(5.0);
+            let decorated_interval = DecoratedInterval::from(6.0);
+
+            bare(bare_box $op scalar);
+            bare(scalar $op bare_box);
+            decorated(decorated_box $op scalar);
+            decorated(scalar $op decorated_box);
+            bare(bare_interval $op scalar);
+            bare(scalar $op bare_interval);
+            decorated(decorated_interval $op scalar);
+            decorated(scalar $op decorated_interval);
+        }};
+    }
+
+    check_op!(+);
+    check_op!(-);
+    check_op!(*);
+    check_op!(/);
 }
 
 #[test]
@@ -247,19 +281,19 @@ fn geometry_and_set_relations_handle_empty_entire_and_nai_boxes() {
     assert!(value.is_bounded());
     assert!(!value.is_singleton());
     assert!(!value.is_real());
-    assert!(value.intersects(&ComplexBox::from(Complex64::new(1.0, 0.0))));
+    assert!(value.intersects(ComplexBox::from(Complex64::new(1.0, 0.0))));
 
     let empty = ComplexBox::<Interval>::new(Interval::EMPTY, Interval::ONE);
     assert!(empty.is_empty());
     assert!(empty.rad().is_nan());
     assert!(empty.diameter().is_nan());
-    assert!(empty.subset(&value));
-    assert!(empty.interior(&value));
-    assert!(!value.subset(&empty));
-    assert!(!value.interior(&empty));
-    assert_eq!(empty.convex_hull(&value), value);
-    assert_eq!(value.convex_hull(&empty), value);
-    assert!(value.intersection(&ComplexBox::from(10.0)).is_empty());
+    assert!(empty.subset(value));
+    assert!(empty.interior(value));
+    assert!(!value.subset(empty));
+    assert!(!value.interior(empty));
+    assert_eq!(empty.convex_hull(value), value);
+    assert_eq!(value.convex_hull(empty), value);
+    assert!(value.intersection(ComplexBox::from(10.0)).is_empty());
     assert!(empty.pown(3).is_empty());
 
     assert!(ComplexBox::<Interval>::ENTIRE.is_entire());
@@ -276,10 +310,10 @@ fn geometry_and_set_relations_handle_empty_entire_and_nai_boxes() {
     let nai = ComplexBox::new(DecoratedInterval::NAI, DecoratedInterval::ZERO);
     let ordinary = ComplexBox::<DecoratedInterval>::ONE;
     assert!(nai.is_nai());
-    assert!(!nai.subset(&ordinary));
-    assert!(!ordinary.subset(&nai));
-    assert!(!nai.interior(&ordinary));
-    assert!(!ordinary.interior(&nai));
+    assert!(!nai.subset(ordinary));
+    assert!(!ordinary.subset(nai));
+    assert!(!nai.interior(ordinary));
+    assert!(!ordinary.interior(nai));
 
     let decorated = value.decorate(&mut ());
     assert_eq!(ComplexBox::<Interval>::from(&decorated), value);

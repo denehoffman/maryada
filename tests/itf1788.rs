@@ -161,9 +161,9 @@ macro_rules! unary_method {
 macro_rules! binary_method {
     ($left:expr, $right:expr, $method:ident) => {
         match ($left, $right) {
-            (AnyInterval::Bare(x), AnyInterval::Bare(y)) => AnyInterval::Bare(x.$method(&y)),
+            (AnyInterval::Bare(x), AnyInterval::Bare(y)) => AnyInterval::Bare(x.$method(y)),
             (AnyInterval::Decorated(x), AnyInterval::Decorated(y)) => {
-                AnyInterval::Decorated(x.$method(&y))
+                AnyInterval::Decorated(x.$method(y))
             }
             _ => panic!("mixed bare/decorated operands"),
         }
@@ -330,13 +330,13 @@ fn apply_fma(api: Api, x: AnyInterval, y: AnyInterval, z: AnyInterval) -> AnyInt
         (AnyInterval::Bare(x), AnyInterval::Bare(y), AnyInterval::Bare(z)) => {
             AnyInterval::Bare(match api {
                 Api::Intrinsic => maryada::fma(x, y, z),
-                Api::Ux => x.mul_add(&y, &z),
+                Api::Ux => x.mul_add(y, z),
             })
         }
         (AnyInterval::Decorated(x), AnyInterval::Decorated(y), AnyInterval::Decorated(z)) => {
             AnyInterval::Decorated(match api {
                 Api::Intrinsic => maryada::fma(x, y, z),
-                Api::Ux => x.mul_add(&y, &z),
+                Api::Ux => x.mul_add(y, z),
             })
         }
         _ => panic!("mixed bare/decorated operands"),
@@ -408,12 +408,12 @@ fn boolean_binary_ux(op: &str, left: AnyInterval, right: AnyInterval) -> Option<
         // ITF equality ignores decorations, unlike Rust's `PartialEq` implementation.
         ("equal", AnyInterval::Bare(x), AnyInterval::Bare(y)) => maryada::equal(x, y),
         ("equal", AnyInterval::Decorated(x), AnyInterval::Decorated(y)) => maryada::equal(x, y),
-        ("subset", AnyInterval::Bare(x), AnyInterval::Bare(y)) => x.subset(&y),
-        ("subset", AnyInterval::Decorated(x), AnyInterval::Decorated(y)) => x.subset(&y),
-        ("interior", AnyInterval::Bare(x), AnyInterval::Bare(y)) => x.interior(&y),
-        ("interior", AnyInterval::Decorated(x), AnyInterval::Decorated(y)) => x.interior(&y),
-        ("disjoint", AnyInterval::Bare(x), AnyInterval::Bare(y)) => x.disjoint(&y),
-        ("disjoint", AnyInterval::Decorated(x), AnyInterval::Decorated(y)) => x.disjoint(&y),
+        ("subset", AnyInterval::Bare(x), AnyInterval::Bare(y)) => x.subset(y),
+        ("subset", AnyInterval::Decorated(x), AnyInterval::Decorated(y)) => x.subset(y),
+        ("interior", AnyInterval::Bare(x), AnyInterval::Bare(y)) => x.interior(y),
+        ("interior", AnyInterval::Decorated(x), AnyInterval::Decorated(y)) => x.interior(y),
+        ("disjoint", AnyInterval::Bare(x), AnyInterval::Bare(y)) => x.disjoint(y),
+        ("disjoint", AnyInterval::Decorated(x), AnyInterval::Decorated(y)) => x.disjoint(y),
         ("equal" | "subset" | "interior" | "disjoint", _, _) => {
             panic!("mixed bare/decorated operands")
         }

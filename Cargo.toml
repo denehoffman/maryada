@@ -12,6 +12,10 @@ keywords = ["interval", "arithmetic", "ieee-1788", "numerics", "no-std"]
 categories = ["mathematics", "no-std", "science"]
 
 [dependencies]
-impl_ops = "0.1.1"
 libm = { version = "=0.2.16", default-features = false }
-num-complex = { version = "0.4.6", default-features = false }
+num-complex = { version = "0.4.6", default-features = false, optional = true }
+
+[features]
+default = []
+complex = []
+num-complex = ["complex", "dep:num-complex"]

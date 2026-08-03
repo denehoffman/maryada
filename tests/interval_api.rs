@@ -26,21 +26,20 @@ fn constructors_and_set_operations_follow_the_set_based_model() {
 }
 
 #[test]
-#[allow(clippy::op_ref)]
 fn ergonomic_protocols_preserve_interval_semantics_and_edge_states() {
     let x = Interval::new(1.0, 2.0);
     let y = Interval::new(3.0, 4.0);
 
-    assert_eq!(&x + &y, maryada::add(x, y));
+    assert_eq!(x + y, maryada::add(x, y));
     assert_eq!(x - y, maryada::sub(x, y));
-    assert_eq!(&x * 2.0, maryada::mul(x, 2.0.into()));
-    assert_eq!(2.0 * &x, maryada::mul(2.0.into(), x));
-    assert_eq!(&x / 2.0, maryada::div(x, 2.0.into()));
-    assert_eq!(2.0 / &x, maryada::div(2.0.into(), x));
-    assert_eq!(-&x, maryada::neg(x));
+    assert_eq!(x * 2.0, maryada::mul(x, 2.0.into()));
+    assert_eq!(2.0 * x, maryada::mul(2.0.into(), x));
+    assert_eq!(x / 2.0, maryada::div(x, 2.0.into()));
+    assert_eq!(2.0 / x, maryada::div(2.0.into(), x));
+    assert_eq!(-x, maryada::neg(x));
     assert_eq!(x.powi(3), Interval::new(1.0, 8.0));
 
-    let hypot = x.hypot(&y);
+    let hypot = x.hypot(y);
     assert!(hypot.contains(10.0_f64.sqrt()));
     assert!(hypot.contains(20.0_f64.sqrt()));
     assert_eq!(x.bounds(), (1.0, 2.0));
@@ -70,7 +69,7 @@ fn ergonomic_protocols_preserve_interval_semantics_and_edge_states() {
     assert_eq!(decoration_part(decorated), Decoration::Def);
     assert_eq!(decorated.powi(3).bounds(), (1.0, 8.0));
     let decorated_y = set_dec(y, Decoration::Def);
-    let decorated_hypot = decorated.hypot(&decorated_y);
+    let decorated_hypot = decorated.hypot(decorated_y);
     assert!(decorated_hypot.contains(10.0_f64.sqrt()));
     assert!(decorated_hypot.contains(20.0_f64.sqrt()));
     let (midpoint, radius) = decorated.mid_rad();
@@ -112,7 +111,7 @@ fn ergonomic_protocols_preserve_interval_semantics_and_edge_states() {
     );
 
     let (left, right) = x.bisect();
-    assert_eq!(left.convex_hull(&right), x);
+    assert_eq!(left.convex_hull(right), x);
     assert_eq!(Interval::EMPTY.bisect(), (Interval::EMPTY, Interval::EMPTY));
     let (left, right) = decorated.bisect();
     assert_eq!(decoration_part(left), Decoration::Def);
@@ -125,14 +124,14 @@ fn ergonomic_protocols_preserve_interval_semantics_and_edge_states() {
     assert_eq!(x.hull_value(5.0), Interval::new(1.0, 5.0));
     assert!(x.contains(1.5));
     assert!(!x.contains(f64::INFINITY));
-    assert!(x.intersects(&Interval::new(2.0, 3.0)));
+    assert!(x.intersects(Interval::new(2.0, 3.0)));
     assert!(x.is_bounded());
     assert!(!Interval::ENTIRE.is_bounded());
     assert!(Interval::from(1.0).is_singleton());
     assert!(decorated.is_bounded());
     assert_eq!(decorated.decoration(), Decoration::Def);
     assert_eq!(decorated.hull_value(5.0).bounds(), (1.0, 5.0));
-    assert!(decorated.intersects(&DecoratedInterval::from(2.0)));
+    assert!(decorated.intersects(DecoratedInterval::from(2.0)));
     assert!(!decorated.is_entire());
     assert!(DecoratedInterval::ENTIRE.is_entire());
 
@@ -152,4 +151,36 @@ fn ergonomic_protocols_preserve_interval_semantics_and_edge_states() {
     let invalid = Interval::from_be_bytes(&[0; 3], &mut invalid_signals);
     assert!(invalid.is_empty());
     assert!(invalid_signals.contains(Signal::InvalidOperand));
+}
+
+#[test]
+fn arithmetic_operators_cover_owned_interval_and_scalar_combinations() {
+    fn bare(_: Interval) {}
+    fn decorated(_: DecoratedInterval) {}
+
+    macro_rules! check_op {
+        ($op:tt) => {{
+            let bare_value = Interval::from(2.0);
+            let decorated_value = DecoratedInterval::from(3.0);
+            let scalar = 4.0;
+
+            bare(bare_value $op bare_value);
+            decorated(bare_value $op decorated_value);
+            decorated(decorated_value $op bare_value);
+            decorated(decorated_value $op decorated_value);
+            bare(bare_value $op scalar);
+            bare(scalar $op bare_value);
+            decorated(decorated_value $op scalar);
+            decorated(scalar $op decorated_value);
+        }};
+    }
+
+    check_op!(+);
+    check_op!(-);
+    check_op!(*);
+    check_op!(/);
+
+    let mixed = Interval::new(1.0, 2.0) + DecoratedInterval::from(3.0);
+    assert_eq!(mixed.bounds(), (4.0, 5.0));
+    assert_eq!(mixed.decoration(), Decoration::Com);
 }

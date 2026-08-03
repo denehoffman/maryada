@@ -4,8 +4,8 @@
 //! standard.
 //!
 //! maryada provides [`Interval`] and [`DecoratedInterval`] for outward-rounded
-//! real interval arithmetic, [`ComplexBox`] for rectangular complex intervals,
-//! and text and binary interchange operations. Most arithmetic functions are
+//! real interval arithmetic, `ComplexBox` for rectangular complex intervals
+//! when the `complex` feature is enabled, and text and binary interchange operations. Most arithmetic functions are
 //! generic over [`IntervalDatum`], so the same free-function API works with
 //! bare and decorated intervals.
 //!
@@ -28,6 +28,7 @@
 #![deny(missing_docs)]
 #![deny(rustdoc::broken_intra_doc_links)]
 
+#[cfg(feature = "complex")]
 mod complex;
 mod interchange;
 mod ops;
@@ -37,6 +38,7 @@ mod text;
 mod types;
 mod ux;
 
+#[cfg(feature = "complex")]
 pub use complex::ComplexBox;
 pub use interchange::*;
 pub use ops::*;

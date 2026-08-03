@@ -1,4 +1,7 @@
-//! A `no_std` binary64 interval arithmetic library based on IEEE 1788.1.
+//! A `no_std` binary64 real interval arithmetic library conforming to IEEE 1788.1.
+//!
+//! The rectangular complex interval extension is outside the scope of the
+//! standard.
 //!
 //! maryada provides [`Interval`] and [`DecoratedInterval`] for outward-rounded
 //! real interval arithmetic, [`ComplexBox`] for rectangular complex intervals,

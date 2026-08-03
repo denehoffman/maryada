@@ -1,11 +1,8 @@
 # maryada
-![Crates.io Version](https://img.shields.io/crates/v/maryada?style=for-the-badge&logo=rust&logoColor=%23D34516&labelColor=%231E2650&color=%23D34516&link=https%3A%2F%2Fcrates.io%2Fcrates%2Fmaryada) ![docs.rs](https://img.shields.io/docsrs/maryada?style=for-the-badge&logo=docs.rs&logoColor=%23D34516&labelColor=%231E2650&link=https%3A%2F%2Fdocs.rs%2Fmaryada%2Flatest%2Fmaryada%2F) ![Codecov](https://img.shields.io/codecov/c/github/denehoffman/maryada?style=for-the-badge&logo=codecov&link=https%3A%2F%2Fapp.codecov.io%2Fgh%2Fdenehoffman%2Fmaryada) ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/denehoffman/maryada/build-clippy-test.yml?style=for-the-badge&logo=github&link=https%3A%2F%2Fgithub.com%2Fdenehoffman%2Fmaryada%2Factions%2Fworkflows%2Fbuild-clippy-test.yml) 
+[![Crates.io Version](https://img.shields.io/crates/v/maryada?style=for-the-badge&logo=rust&logoColor=%23D34516&labelColor=%231E2650&color=%23D34516)](https://crates.io/crates/maryada) [![docs.rs](https://img.shields.io/docsrs/maryada?style=for-the-badge&logo=docs.rs&logoColor=%23D34516&labelColor=%231E2650)](https://docs.rs/maryada/latest/maryada/) [![Codecov](https://img.shields.io/codecov/c/github/denehoffman/maryada?style=for-the-badge&logo=codecov)](https://app.codecov.io/gh/denehoffman/maryada) [![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/denehoffman/maryada/build-clippy-test.yml?style=for-the-badge&logo=github)](https://github.com/denehoffman/maryada/actions/workflows/build-clippy-test.yml)
+maryada is a `no_std` binary64 interval arithmetic library conforming to IEEE Std 1788.1-2017. It provides bare and decorated real intervals, outward-rounded elementary operations, text and binary interchange, and rectangular complex intervals.
 
-
-
-
-
-maryada is a `no_std` binary64 interval arithmetic library compliant with the IEEE 1788.1 standard. It provides bare and decorated real intervals, outward-rounded elementary operations, text and binary interchange, and rectangular complex intervals.
+The conformance claim applies to the real interval API. The rectangular complex interval extension is outside the scope of the standard. See [CONFORMANCE.md](CONFORMANCE.md) for the operation accuracy declarations, required features, implementation details, and test coverage.
 
 ```rust
 use maryada::Interval;

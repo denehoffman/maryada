@@ -86,25 +86,35 @@ fn same_number(actual: f64, expected: f64) -> bool {
     (actual.is_nan() && expected.is_nan()) || actual.to_bits() == expected.to_bits()
 }
 
-fn assert_interval(actual: AnyInterval, expected: AnyInterval, context: &str) {
+fn assert_interval(actual: AnyInterval, expected: AnyInterval, exact: bool, context: &str) {
     match (actual, expected) {
         (AnyInterval::Bare(actual), AnyInterval::Bare(expected)) => {
             assert!(
-                (maryada::is_empty(expected) && maryada::is_empty(actual))
-                    || maryada::subset(expected, actual),
+                if exact {
+                    actual == expected
+                } else {
+                    (maryada::is_empty(expected) && maryada::is_empty(actual))
+                        || maryada::subset(expected, actual)
+                },
                 "{context}: expected {expected:?}, got {actual:?}"
             );
         }
         (AnyInterval::Decorated(actual), AnyInterval::Decorated(expected)) => {
-            let same_bounds = if maryada::is_nai(actual) && maryada::is_nai(expected) {
+            let acceptable_bounds = if maryada::is_nai(actual) && maryada::is_nai(expected) {
                 true
+            } else if exact {
+                maryada::interval_part(actual, &mut ()) == maryada::interval_part(expected, &mut ())
             } else {
                 (maryada::is_empty(expected) && maryada::is_empty(actual))
                     || maryada::subset(expected, actual)
             };
             assert!(
-                same_bounds
-                    && maryada::decoration_part(actual) <= maryada::decoration_part(expected),
+                acceptable_bounds
+                    && if exact {
+                        maryada::decoration_part(actual) == maryada::decoration_part(expected)
+                    } else {
+                        maryada::decoration_part(actual) <= maryada::decoration_part(expected)
+                    },
                 "{context}: expected {expected:?}, got {actual:?}"
             );
         }
@@ -405,7 +415,28 @@ fn run_statement(statement: &str) -> bool {
         rest.trim().is_empty(),
         "{statement}: unexpected expected-result suffix"
     );
-    assert_interval(actual, expected, statement);
+    let tightest_required = matches!(
+        op,
+        "neg"
+            | "add"
+            | "sub"
+            | "mul"
+            | "div"
+            | "recip"
+            | "sqr"
+            | "sqrt"
+            | "fma"
+            | "sign"
+            | "ceil"
+            | "floor"
+            | "trunc"
+            | "roundTiesToEven"
+            | "roundTiesToAway"
+            | "abs"
+            | "min"
+            | "max"
+    );
+    assert_interval(actual, expected, tightest_required, statement);
     true
 }
 

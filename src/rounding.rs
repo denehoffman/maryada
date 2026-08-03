@@ -1,4 +1,7 @@
-use core::cmp::Ordering;
+use core::{
+    cmp::Ordering,
+    f64::consts::{FRAC_PI_2, FRAC_PI_4, LN_2, LN_10, PI, TAU},
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Direction {
@@ -12,6 +15,20 @@ impl Direction {
         match self {
             Direction::Down => -0.0,
             Direction::Up => 0.0,
+        }
+    }
+
+    fn opposite(&self) -> Direction {
+        match self {
+            Direction::Down => Direction::Up,
+            Direction::Up => Direction::Down,
+        }
+    }
+
+    fn constant_bound(&self, value: f64) -> f64 {
+        match self {
+            Direction::Down => value.next_down(),
+            Direction::Up => value.next_up(),
         }
     }
 }
@@ -553,10 +570,7 @@ pub(crate) fn pown(x: f64, p: i32, direction: Direction) -> f64 {
     }
     let negative = x.is_sign_negative() && p & 1 != 0;
     let magnitude_direction = if negative {
-        match direction {
-            Direction::Down => Direction::Up,
-            Direction::Up => Direction::Down,
-        }
+        direction.opposite()
     } else {
         direction
     };
@@ -580,9 +594,9 @@ pub(crate) fn pown(x: f64, p: i32, direction: Direction) -> f64 {
 }
 
 fn outward_positive_approximation(value: f64, direction: Direction) -> f64 {
-    // libm documents an error below one ulp for its exp kernel (and below
-    // 0.503 ulp for normalized exp2 results), so one representable step in the
-    // requested direction encloses the exact positive result.
+    // Some libm transcendental kernels are documented only as nearly rounded.
+    // Two representable steps conservatively cover the observed binary64 error;
+    // exact zeros and overflow require separate one-sided handling.
     if value == 0.0 {
         return match direction {
             Direction::Down => -0.0,
@@ -595,15 +609,18 @@ fn outward_positive_approximation(value: f64, direction: Direction) -> f64 {
             Direction::Up => f64::INFINITY,
         };
     }
-    outward_finite_approximation(value, direction)
+    outward_finite_approximation_ulps(value, direction, 2)
 }
 
-fn outward_finite_approximation(value: f64, direction: Direction) -> f64 {
+fn outward_finite_approximation_ulps(mut value: f64, direction: Direction, ulps: usize) -> f64 {
     debug_assert!(value.is_finite());
-    match direction {
-        Direction::Down => value.next_down(),
-        Direction::Up => value.next_up(),
+    for _ in 0..ulps {
+        value = match direction {
+            Direction::Down => value.next_down(),
+            Direction::Up => value.next_up(),
+        };
     }
+    value
 }
 
 pub(crate) fn exp(x: f64, direction: Direction) -> f64 {
@@ -638,7 +655,11 @@ pub(crate) fn exp2(x: f64, direction: Direction) -> f64 {
     if (-1022.0..=1023.0).contains(&x) && x == (x as i32) as f64 {
         return f64::from_bits(((x as i32 + 1023) as u64) << 52);
     }
-    outward_positive_approximation(libm::exp2(x), direction)
+    let ln_2 = match (x.is_sign_negative(), direction) {
+        (false, Direction::Down) | (true, Direction::Up) => LN_2.next_down(),
+        (false, Direction::Up) | (true, Direction::Down) => LN_2.next_up(),
+    };
+    exp(mul(x, ln_2, direction), direction)
 }
 
 pub(crate) fn exp10(x: f64, direction: Direction) -> f64 {
@@ -658,8 +679,8 @@ pub(crate) fn exp10(x: f64, direction: Direction) -> f64 {
         return pown(10.0, x as i32, direction);
     }
     let ln_10 = match (x.is_sign_negative(), direction) {
-        (false, Direction::Down) | (true, Direction::Up) => core::f64::consts::LN_10.next_down(),
-        (false, Direction::Up) | (true, Direction::Down) => core::f64::consts::LN_10.next_up(),
+        (false, Direction::Down) | (true, Direction::Up) => LN_10.next_down(),
+        (false, Direction::Up) | (true, Direction::Down) => LN_10.next_up(),
     };
     exp(mul(x, ln_10, direction), direction)
 }
@@ -677,7 +698,7 @@ pub(crate) fn log(x: f64, direction: Direction) -> f64 {
     if x == 1.0 {
         return direction.exact_zero();
     }
-    outward_finite_approximation(libm::log(x), direction)
+    outward_finite_approximation_ulps(libm::log(x), direction, 2)
 }
 
 pub(crate) fn log2(x: f64, direction: Direction) -> f64 {
@@ -700,7 +721,7 @@ pub(crate) fn log2(x: f64, direction: Direction) -> f64 {
             f64::from(exponent)
         };
     }
-    outward_finite_approximation(libm::log2(x), direction)
+    log_over_constant(x, LN_2, direction)
 }
 
 pub(crate) fn log10(x: f64, direction: Direction) -> f64 {
@@ -716,18 +737,29 @@ pub(crate) fn log10(x: f64, direction: Direction) -> f64 {
     if x == 1.0 {
         return direction.exact_zero();
     }
-    outward_finite_approximation(libm::log10(x), direction)
+    log_over_constant(x, LN_10, direction)
+}
+
+fn log_over_constant(x: f64, constant: f64, direction: Direction) -> f64 {
+    // The standard constants are correctly rounded binary64 values, so the
+    // adjacent values enclose the exact logarithm of the base. Division by
+    // both positive endpoints handles either sign of log(x).
+    let numerator = log(x, direction);
+    let constant_lower = constant.next_down();
+    let constant_upper = constant.next_up();
+    match direction {
+        Direction::Down => f64::min(
+            div(numerator, constant_lower, Direction::Down),
+            div(numerator, constant_upper, Direction::Down),
+        ),
+        Direction::Up => f64::max(
+            div(numerator, constant_lower, Direction::Up),
+            div(numerator, constant_upper, Direction::Up),
+        ),
+    }
 }
 
 // Trigonometric functions.
-
-fn outward_bounded_approximation(value: f64, lower: f64, upper: f64, direction: Direction) -> f64 {
-    let outward = outward_finite_approximation(value, direction);
-    match direction {
-        Direction::Down => f64::max(outward, lower),
-        Direction::Up => f64::min(outward, upper),
-    }
-}
 
 pub(crate) fn sin(x: f64, direction: Direction) -> f64 {
     if !x.is_finite() {
@@ -736,7 +768,16 @@ pub(crate) fn sin(x: f64, direction: Direction) -> f64 {
     if x == 0.0 {
         return direction.exact_zero();
     }
-    outward_bounded_approximation(libm::sin(x), -1.0, 1.0, direction)
+    let Some(((lower, upper), _)) = reduced_trig_bounds(x) else {
+        return match direction {
+            Direction::Down => -1.0,
+            Direction::Up => 1.0,
+        };
+    };
+    match direction {
+        Direction::Down => lower,
+        Direction::Up => upper,
+    }
 }
 
 pub(crate) fn cos(x: f64, direction: Direction) -> f64 {
@@ -746,7 +787,16 @@ pub(crate) fn cos(x: f64, direction: Direction) -> f64 {
     if x == 0.0 {
         return 1.0;
     }
-    outward_bounded_approximation(libm::cos(x), -1.0, 1.0, direction)
+    let Some((_, (lower, upper))) = reduced_trig_bounds(x) else {
+        return match direction {
+            Direction::Down => -1.0,
+            Direction::Up => 1.0,
+        };
+    };
+    match direction {
+        Direction::Down => lower,
+        Direction::Up => upper,
+    }
 }
 
 pub(crate) fn tan(x: f64, direction: Direction) -> f64 {
@@ -756,7 +806,158 @@ pub(crate) fn tan(x: f64, direction: Direction) -> f64 {
     if x == 0.0 {
         return direction.exact_zero();
     }
-    outward_finite_approximation(libm::tan(x), direction)
+    let Some(((sin_lower, sin_upper), (cos_lower, cos_upper))) = reduced_trig_bounds(x) else {
+        return match direction {
+            Direction::Down => f64::NEG_INFINITY,
+            Direction::Up => f64::INFINITY,
+        };
+    };
+    if cos_lower <= 0.0 && cos_upper >= 0.0 {
+        return match direction {
+            Direction::Down => f64::NEG_INFINITY,
+            Direction::Up => f64::INFINITY,
+        };
+    }
+    let candidates = [
+        div(sin_lower, cos_lower, direction),
+        div(sin_lower, cos_upper, direction),
+        div(sin_upper, cos_lower, direction),
+        div(sin_upper, cos_upper, direction),
+    ];
+    match direction {
+        Direction::Down => candidates.into_iter().fold(f64::INFINITY, f64::min),
+        Direction::Up => candidates.into_iter().fold(f64::NEG_INFINITY, f64::max),
+    }
+}
+
+type Bounds = (f64, f64);
+
+fn reduced_trig_bounds(x: f64) -> Option<(Bounds, Bounds)> {
+    debug_assert!(x.is_finite());
+    // Any exactly represented integer multiple is valid for the reduction.
+    // The subsequent remainder check rejects a quotient whose binary64
+    // selection or pi enclosure is too imprecise.
+    let multiple = libm::round(x / FRAC_PI_2);
+    if multiple.abs() > (1_u64 << 52) as f64 {
+        return None;
+    }
+    let multiple_integer = multiple as i64;
+    let half_pi_lower = FRAC_PI_2.next_down();
+    let half_pi_upper = FRAC_PI_2.next_up();
+    let product_lower = f64::min(
+        mul(multiple, half_pi_lower, Direction::Down),
+        mul(multiple, half_pi_upper, Direction::Down),
+    );
+    let product_upper = f64::max(
+        mul(multiple, half_pi_lower, Direction::Up),
+        mul(multiple, half_pi_upper, Direction::Up),
+    );
+    let remainder_lower = sub(x, product_upper, Direction::Down);
+    let remainder_upper = sub(x, product_lower, Direction::Up);
+    if remainder_lower < -0.8 || remainder_upper > 0.8 {
+        return None;
+    }
+
+    let sine = (
+        sin_series(remainder_lower, Direction::Down),
+        sin_series(remainder_upper, Direction::Up),
+    );
+    let cosine_lower = f64::min(
+        cos_series(remainder_lower, Direction::Down),
+        cos_series(remainder_upper, Direction::Down),
+    );
+    let cosine_upper = if remainder_lower <= 0.0 && remainder_upper >= 0.0 {
+        1.0
+    } else {
+        f64::max(
+            cos_series(remainder_lower, Direction::Up),
+            cos_series(remainder_upper, Direction::Up),
+        )
+    };
+    let cosine = (cosine_lower, cosine_upper);
+    let negate = |(lower, upper): Bounds| (-upper, -lower);
+    Some(match multiple_integer.rem_euclid(4) {
+        0 => (sine, cosine),
+        1 => (cosine, negate(sine)),
+        2 => (negate(sine), negate(cosine)),
+        _ => (negate(cosine), sine),
+    })
+}
+
+fn sin_series(x: f64, direction: Direction) -> f64 {
+    if x.is_sign_negative() {
+        return -sin_series(-x, direction.opposite());
+    }
+    debug_assert!((0.0..=0.8).contains(&x));
+    let square_lower = mul(x, x, Direction::Down);
+    let square_upper = mul(x, x, Direction::Up);
+    let mut term_lower = x;
+    let mut term_upper = x;
+    let mut lower = 0.0;
+    let mut upper = 0.0;
+    for index in 0..14 {
+        if index & 1 == 0 {
+            lower = add(lower, term_lower, Direction::Down);
+            upper = add(upper, term_upper, Direction::Up);
+        } else {
+            lower = sub(lower, term_upper, Direction::Down);
+            upper = sub(upper, term_lower, Direction::Up);
+        }
+        let denominator = f64::from(((2 * index + 2) * (2 * index + 3)) as u32);
+        term_lower = div(
+            mul(term_lower, square_lower, Direction::Down),
+            denominator,
+            Direction::Down,
+        );
+        term_upper = div(
+            mul(term_upper, square_upper, Direction::Up),
+            denominator,
+            Direction::Up,
+        );
+    }
+    // Fourteen terms end on a negative term; the next positive term bounds
+    // the alternating remainder from above.
+    upper = add(upper, term_upper, Direction::Up);
+    match direction {
+        Direction::Down => lower,
+        Direction::Up => upper,
+    }
+}
+
+fn cos_series(x: f64, direction: Direction) -> f64 {
+    let x = x.abs();
+    debug_assert!((0.0..=0.8).contains(&x));
+    let square_lower = mul(x, x, Direction::Down);
+    let square_upper = mul(x, x, Direction::Up);
+    let mut term_lower = 1.0;
+    let mut term_upper = 1.0;
+    let mut lower = 0.0;
+    let mut upper = 0.0;
+    for index in 0..14 {
+        if index & 1 == 0 {
+            lower = add(lower, term_lower, Direction::Down);
+            upper = add(upper, term_upper, Direction::Up);
+        } else {
+            lower = sub(lower, term_upper, Direction::Down);
+            upper = sub(upper, term_lower, Direction::Up);
+        }
+        let denominator = f64::from(((2 * index + 1) * (2 * index + 2)) as u32);
+        term_lower = div(
+            mul(term_lower, square_lower, Direction::Down),
+            denominator,
+            Direction::Down,
+        );
+        term_upper = div(
+            mul(term_upper, square_upper, Direction::Up),
+            denominator,
+            Direction::Up,
+        );
+    }
+    upper = add(upper, term_upper, Direction::Up);
+    match direction {
+        Direction::Down => lower,
+        Direction::Up => upper,
+    }
 }
 
 pub(crate) fn asin(x: f64, direction: Direction) -> f64 {
@@ -766,8 +967,30 @@ pub(crate) fn asin(x: f64, direction: Direction) -> f64 {
     if x == 0.0 {
         return direction.exact_zero();
     }
-    let half_pi_upper = core::f64::consts::FRAC_PI_2.next_up();
-    outward_bounded_approximation(libm::asin(x), -half_pi_upper, half_pi_upper, direction)
+    if x == 1.0 {
+        return direction.constant_bound(FRAC_PI_2);
+    }
+    if x == -1.0 {
+        return -direction.opposite().constant_bound(FRAC_PI_2);
+    }
+    // asin(x) = atan(x / sqrt(1-x^2))
+    let square_lower = sqr(x, Direction::Down);
+    let square_upper = sqr(x, Direction::Up);
+    let radicand_lower = sub(1.0, square_upper, Direction::Down);
+    let radicand_upper = sub(1.0, square_lower, Direction::Up);
+    let denominator_lower = sqrt(radicand_lower, Direction::Down);
+    let denominator_upper = sqrt(radicand_upper, Direction::Up);
+    let ratio = match direction {
+        Direction::Down => f64::min(
+            div(x, denominator_lower, Direction::Down),
+            div(x, denominator_upper, Direction::Down),
+        ),
+        Direction::Up => f64::max(
+            div(x, denominator_lower, Direction::Up),
+            div(x, denominator_upper, Direction::Up),
+        ),
+    };
+    atan(ratio, direction)
 }
 
 pub(crate) fn acos(x: f64, direction: Direction) -> f64 {
@@ -777,10 +1000,9 @@ pub(crate) fn acos(x: f64, direction: Direction) -> f64 {
     if x == 1.0 {
         return direction.exact_zero();
     }
-    outward_bounded_approximation(
-        libm::acos(x),
-        -0.0,
-        core::f64::consts::PI.next_up(),
+    sub(
+        direction.constant_bound(FRAC_PI_2),
+        asin(x, direction.opposite()),
         direction,
     )
 }
@@ -792,19 +1014,135 @@ pub(crate) fn atan(x: f64, direction: Direction) -> f64 {
     if x == 0.0 {
         return direction.exact_zero();
     }
-    let half_pi_upper = core::f64::consts::FRAC_PI_2.next_up();
-    outward_bounded_approximation(libm::atan(x), -half_pi_upper, half_pi_upper, direction)
+    let magnitude_direction = if x.is_sign_negative() {
+        direction.opposite()
+    } else {
+        direction
+    };
+    let result = atan_positive(x.abs(), magnitude_direction);
+    if x.is_sign_negative() {
+        -result
+    } else {
+        result
+    }
+}
+
+fn atan_positive(x: f64, direction: Direction) -> f64 {
+    debug_assert!(x >= 0.0);
+    if x.is_infinite() {
+        return direction.constant_bound(FRAC_PI_2);
+    }
+    if x <= 0.5 {
+        return atan_series_positive(x, direction);
+    }
+    let reverse = direction.opposite();
+    if x <= 1.0 {
+        // atan(x) = pi/4 - atan((1-x)/(1+x)). The transformed argument is
+        // in [0, 1/3], and its bound must be opposite to the result direction.
+        let numerator = sub(1.0, x, reverse);
+        let denominator = add(1.0, x, direction);
+        let reduced = div(numerator, denominator, reverse);
+        return sub(
+            direction.constant_bound(FRAC_PI_4),
+            atan_series_positive(reduced, reverse),
+            direction,
+        );
+    }
+    // atan(x) = pi/2 - atan(1/x)
+    let reduced = div(1.0, x, reverse);
+    sub(
+        direction.constant_bound(FRAC_PI_2),
+        atan_positive(reduced, reverse),
+        direction,
+    )
+}
+
+fn atan_series_positive(x: f64, direction: Direction) -> f64 {
+    debug_assert!((0.0..=0.5).contains(&x));
+    let square_lower = mul(x, x, Direction::Down);
+    let square_upper = mul(x, x, Direction::Up);
+    let mut power_lower = x;
+    let mut power_upper = x;
+    let mut lower = 0.0;
+    let mut upper = 0.0;
+    // atan(x) = x - x^3/3 + x^5/5 - ... . On [0, 1/2] the term
+    // magnitudes decrease. Enclose 28 terms, then use the magnitude of the
+    // next term as the alternating-series remainder bound.
+    for index in 0..28 {
+        let denominator = f64::from((2 * index + 1) as u32);
+        let term_lower = div(power_lower, denominator, Direction::Down);
+        let term_upper = div(power_upper, denominator, Direction::Up);
+        if index & 1 == 0 {
+            lower = add(lower, term_lower, Direction::Down);
+            upper = add(upper, term_upper, Direction::Up);
+        } else {
+            lower = sub(lower, term_upper, Direction::Down);
+            upper = sub(upper, term_lower, Direction::Up);
+        }
+        power_lower = mul(power_lower, square_lower, Direction::Down);
+        power_upper = mul(power_upper, square_upper, Direction::Up);
+    }
+    // The next (positive) term can only raise the 28-term partial sum.
+    let remainder = div(power_upper, 57.0, Direction::Up);
+    upper = add(upper, remainder, Direction::Up);
+    match direction {
+        Direction::Down => lower,
+        Direction::Up => upper,
+    }
 }
 
 pub(crate) fn atan2(y: f64, x: f64, direction: Direction) -> f64 {
     if x.is_nan() || y.is_nan() || (x == 0.0 && y == 0.0) {
         return f64::NAN;
     }
-    if y == 0.0 && x > 0.0 {
-        return direction.exact_zero();
+    let signed_constant = |value: f64, negative: bool, direction: Direction| {
+        if negative {
+            -direction.opposite().constant_bound(value)
+        } else {
+            direction.constant_bound(value)
+        }
+    };
+    if y.is_infinite() {
+        if x.is_infinite() {
+            let magnitude_direction = if y.is_sign_negative() {
+                direction.opposite()
+            } else {
+                direction
+            };
+            let quarter = magnitude_direction.constant_bound(FRAC_PI_4);
+            let magnitude = if x.is_sign_negative() {
+                mul(quarter, 3.0, magnitude_direction)
+            } else {
+                quarter
+            };
+            return if y.is_sign_negative() {
+                -magnitude
+            } else {
+                magnitude
+            };
+        }
+        return signed_constant(FRAC_PI_2, y.is_sign_negative(), direction);
     }
-    let pi_upper = core::f64::consts::PI.next_up();
-    outward_bounded_approximation(libm::atan2(y, x), -pi_upper, pi_upper, direction)
+    if x.is_infinite() {
+        if x.is_sign_positive() {
+            return direction.exact_zero();
+        }
+        return signed_constant(PI, y < 0.0, direction);
+    }
+    if x == 0.0 {
+        return signed_constant(FRAC_PI_2, y < 0.0, direction);
+    }
+    if x > 0.0 {
+        return atan(div(y, x, direction), direction);
+    }
+    if y < 0.0 {
+        let angle = atan(div(y.abs(), x.abs(), direction), direction);
+        add(signed_constant(PI, true, direction), angle, direction)
+    } else {
+        let reverse = direction.opposite();
+        let angle = atan(div(y, x.abs(), reverse), reverse);
+        sub(direction.constant_bound(PI), angle, direction)
+    }
 }
 
 // Hyperbolic functions.
@@ -819,20 +1157,54 @@ pub(crate) fn sinh(x: f64, direction: Direction) -> f64 {
     if x.is_infinite() {
         return x;
     }
-    let value = libm::sinh(x);
-    if value == f64::INFINITY {
-        return match direction {
-            Direction::Down => f64::MAX,
-            Direction::Up => f64::INFINITY,
-        };
+    let magnitude_direction = if x.is_sign_negative() {
+        direction.opposite()
+    } else {
+        direction
+    };
+    let magnitude = x.abs();
+    let result = if magnitude <= 1.0 {
+        sinh_series_positive(magnitude, magnitude_direction)
+    } else {
+        // Outside the cancellation-prone region, use
+        // sinh(x) = (exp(x) - exp(-x)) / 2.
+        let positive = exp(magnitude, magnitude_direction);
+        let negative = exp(-magnitude, magnitude_direction.opposite());
+        mul(
+            sub(positive, negative, magnitude_direction),
+            0.5,
+            magnitude_direction,
+        )
+    };
+    if x.is_sign_negative() {
+        -result
+    } else {
+        result
     }
-    if value == f64::NEG_INFINITY {
-        return match direction {
-            Direction::Down => f64::NEG_INFINITY,
-            Direction::Up => -f64::MAX,
-        };
+}
+
+fn sinh_series_positive(x: f64, direction: Direction) -> f64 {
+    debug_assert!((0.0..=1.0).contains(&x));
+    // All terms of sinh(x) are nonnegative here. Directed recurrence through
+    // x^17/17! gives a lower or upper partial sum without cancellation.
+    let square = mul(x, x, direction);
+    let mut term = x;
+    let mut sum = x;
+    for index in 1..=8 {
+        let denominator = f64::from((2 * index * (2 * index + 1)) as u32);
+        term = div(mul(term, square, direction), denominator, direction);
+        sum = add(sum, term, direction);
     }
-    outward_finite_approximation(value, direction)
+    if direction == Direction::Down {
+        return sum;
+    }
+    // The omitted positive tail starts with x^19/19!. Each later term is at
+    // most 1/420 of its predecessor for x <= 1, so a geometric majorant is
+    // rigorous and adds less than one binary64 ulp near x = 1.
+    let next = div(mul(term, square, Direction::Up), 18.0 * 19.0, Direction::Up);
+    let ratio = div(square, 20.0 * 21.0, Direction::Up);
+    let tail = div(next, sub(1.0, ratio, Direction::Down), Direction::Up);
+    add(sum, tail, Direction::Up)
 }
 
 pub(crate) fn cosh(x: f64, direction: Direction) -> f64 {
@@ -845,10 +1217,16 @@ pub(crate) fn cosh(x: f64, direction: Direction) -> f64 {
     if x == 0.0 {
         return 1.0;
     }
-    f64::max(
-        outward_positive_approximation(libm::cosh(x), direction),
-        1.0,
-    )
+    let magnitude = x.abs();
+    // cosh(x) = (exp(|x|) + exp(-|x|)) / 2. Each operand and operation is
+    // rounded in the requested direction, so the composition inherits the
+    // enclosure guarantee of exp without relying on a separate cosh kernel.
+    let sum = add(
+        exp(magnitude, direction),
+        exp(-magnitude, direction),
+        direction,
+    );
+    f64::max(mul(sum, 0.5, direction), 1.0)
 }
 
 pub(crate) fn tanh(x: f64, direction: Direction) -> f64 {
@@ -864,7 +1242,26 @@ pub(crate) fn tanh(x: f64, direction: Direction) -> f64 {
     if x == f64::INFINITY {
         return 1.0;
     }
-    outward_bounded_approximation(libm::tanh(x), -1.0, 1.0, direction)
+    let magnitude_direction = if x.is_sign_negative() {
+        direction.opposite()
+    } else {
+        direction
+    };
+    let magnitude = x.abs();
+    let result = div(
+        sinh(magnitude, magnitude_direction),
+        cosh(magnitude, magnitude_direction.opposite()),
+        magnitude_direction,
+    );
+    let result = match magnitude_direction {
+        Direction::Down => f64::max(result, 0.0),
+        Direction::Up => f64::min(result, 1.0),
+    };
+    if x.is_sign_negative() {
+        -result
+    } else {
+        result
+    }
 }
 
 pub(crate) fn asinh(x: f64, direction: Direction) -> f64 {
@@ -877,7 +1274,36 @@ pub(crate) fn asinh(x: f64, direction: Direction) -> f64 {
     if x.is_infinite() {
         return x;
     }
-    outward_finite_approximation(libm::asinh(x), direction)
+    let magnitude_direction = if x.is_sign_negative() {
+        direction.opposite()
+    } else {
+        direction
+    };
+    let magnitude = x.abs();
+    let result = if magnitude <= 1.0 {
+        let square = sqr(magnitude, magnitude_direction);
+        let root = sqrt(add(1.0, square, magnitude_direction), magnitude_direction);
+        log(
+            add(magnitude, root, magnitude_direction),
+            magnitude_direction,
+        )
+    } else {
+        // asinh(x) = log(x) + log(1 + sqrt(1 + 1/x^2)); this form avoids
+        // overflow in x^2 for large x.
+        let inverse = div(1.0, magnitude, magnitude_direction);
+        let square = sqr(inverse, magnitude_direction);
+        let root = sqrt(add(1.0, square, magnitude_direction), magnitude_direction);
+        add(
+            log(magnitude, magnitude_direction),
+            log(add(1.0, root, magnitude_direction), magnitude_direction),
+            magnitude_direction,
+        )
+    };
+    if x.is_sign_negative() {
+        -result
+    } else {
+        result
+    }
 }
 
 pub(crate) fn acosh(x: f64, direction: Direction) -> f64 {
@@ -890,7 +1316,18 @@ pub(crate) fn acosh(x: f64, direction: Direction) -> f64 {
     if x == f64::INFINITY {
         return f64::INFINITY;
     }
-    outward_finite_approximation(libm::acosh(x), direction)
+    // acosh(x) = log(x) + log(1 + sqrt(1 - 1/x^2)). The reciprocal is
+    // evaluated oppositely because it is subtracted inside the square root.
+    let reverse = direction.opposite();
+    let inverse = div(1.0, x, reverse);
+    let square = sqr(inverse, reverse);
+    let radicand = sub(1.0, square, direction);
+    let root = sqrt(radicand, direction);
+    add(
+        log(x, direction),
+        log(add(1.0, root, direction), direction),
+        direction,
+    )
 }
 
 pub(crate) fn atanh(x: f64, direction: Direction) -> f64 {
@@ -906,7 +1343,21 @@ pub(crate) fn atanh(x: f64, direction: Direction) -> f64 {
     if x == 0.0 {
         return direction.exact_zero();
     }
-    outward_finite_approximation(libm::atanh(x), direction)
+    let magnitude_direction = if x.is_sign_negative() {
+        direction.opposite()
+    } else {
+        direction
+    };
+    let magnitude = x.abs();
+    let numerator = add(1.0, magnitude, magnitude_direction);
+    let denominator = sub(1.0, magnitude, magnitude_direction.opposite());
+    let ratio = div(numerator, denominator, magnitude_direction);
+    let result = mul(log(ratio, magnitude_direction), 0.5, magnitude_direction);
+    if x.is_sign_negative() {
+        -result
+    } else {
+        result
+    }
 }
 
 // NOTE: The required tightest integer-valued functions are all basically just direct libm
@@ -1469,58 +1920,49 @@ fn contains_periodic_point(
 }
 
 pub(crate) fn contains_sin_maximum(inf: f64, sup: f64) -> bool {
-    let phase = core::f64::consts::FRAC_PI_2;
-    let period = core::f64::consts::TAU;
     contains_periodic_point(
         inf,
         sup,
-        phase.next_down(),
-        phase.next_up(),
-        period.next_down(),
-        period.next_up(),
+        FRAC_PI_2.next_down(),
+        FRAC_PI_2.next_up(),
+        TAU.next_down(),
+        TAU.next_up(),
     )
 }
 
 pub(crate) fn contains_sin_minimum(inf: f64, sup: f64) -> bool {
-    let phase = core::f64::consts::FRAC_PI_2;
-    let period = core::f64::consts::TAU;
     contains_periodic_point(
         inf,
         sup,
-        -phase.next_up(),
-        -phase.next_down(),
-        period.next_down(),
-        period.next_up(),
+        -FRAC_PI_2.next_up(),
+        -FRAC_PI_2.next_down(),
+        TAU.next_down(),
+        TAU.next_up(),
     )
 }
 
 pub(crate) fn contains_cos_maximum(inf: f64, sup: f64) -> bool {
-    let period = core::f64::consts::TAU;
-    contains_periodic_point(inf, sup, -0.0, 0.0, period.next_down(), period.next_up())
+    contains_periodic_point(inf, sup, -0.0, 0.0, TAU.next_down(), TAU.next_up())
 }
 
 pub(crate) fn contains_cos_minimum(inf: f64, sup: f64) -> bool {
-    let phase = core::f64::consts::PI;
-    let period = core::f64::consts::TAU;
     contains_periodic_point(
         inf,
         sup,
-        phase.next_down(),
-        phase.next_up(),
-        period.next_down(),
-        period.next_up(),
+        PI.next_down(),
+        PI.next_up(),
+        TAU.next_down(),
+        TAU.next_up(),
     )
 }
 
 pub(crate) fn contains_tan_pole(inf: f64, sup: f64) -> bool {
-    let phase = core::f64::consts::FRAC_PI_2;
-    let period = core::f64::consts::PI;
     contains_periodic_point(
         inf,
         sup,
-        phase.next_down(),
-        phase.next_up(),
-        period.next_down(),
-        period.next_up(),
+        FRAC_PI_2.next_down(),
+        FRAC_PI_2.next_up(),
+        PI.next_down(),
+        PI.next_up(),
     )
 }

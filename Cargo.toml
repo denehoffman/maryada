@@ -3,7 +3,7 @@ name = "maryada"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.87"
-description = "No-std binary64 interval arithmetic based on IEEE 1788.1"
+description = "No-std binary64 real interval arithmetic conforming to IEEE 1788.1"
 documentation = "https://docs.rs/maryada"
 readme = "README.md"
 repository = "https://github.com/denehoffman/maryada"
@@ -13,5 +13,5 @@ categories = ["mathematics", "no-std", "science"]
 
 [dependencies]
 impl_ops = "0.1.1"
-libm = { version = "0.2.16", default-features = false }
+libm = { version = "=0.2.16", default-features = false }
 num-complex = { version = "0.4.6", default-features = false }

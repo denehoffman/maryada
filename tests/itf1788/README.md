@@ -13,11 +13,12 @@ decimal interval text as exact real input requiring outward enclosure, which is
 different from ITL's already-rounded endpoint semantics. Hexadecimal tokens do
 delegate to maryada's interval parser.
 
-The upstream vectors specify tight results. maryada currently promises valid
-outward enclosures, so interval assertions require the upstream expected result
-to be contained in maryada's result. Decorations may be conservatively weaker
-than the upstream expectation. Empty intervals, NaI, Boolean results, and
-numeric results remain exact checks.
+The upstream vectors specify tight results. Tests for the basic, integer, and
+absmax operation groups require exact bounds and decorations because IEEE
+1788.1 requires these operations to be tightest. Tests for the remaining
+elementary functions require the tight reference result to be contained in
+maryada's result and permit a conservatively weaker decoration. Empty
+intervals, NaI, Boolean results, and numeric results are also exact checks.
 
 The `libieeep1788_*` fixtures retain their Apache-2.0 headers and license. The
 `atan2.itl` file retains its original permissive notice. LGPL-derived C-XSC and

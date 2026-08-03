@@ -4,7 +4,7 @@
 pub enum Signal {
     /// The operation is undefined for the supplied input.
     UndefinedOperation = 1 << 0,
-    /// The operation may be undefined for part of the input interval.
+    /// An accuracy-relaxed text constructor may have produced a wider result.
     PossiblyUndefinedOperation = 1 << 1,
     /// The interval part of NaI was requested.
     IntvlPartOfNaI = 1 << 2,

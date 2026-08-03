@@ -337,6 +337,10 @@ pub fn sup<T: IntervalDatum>(x: T) -> f64 {
 }
 
 /// Returns a representative midpoint, or NaN for an empty interval or NaI.
+///
+/// For finite bounded inputs this uses the overflow-safe binary64 midpoint,
+/// rounded to nearest. Unbounded inputs follow the cases prescribed by IEEE
+/// 1788.1 section 6.7.6.
 pub fn mid<T: IntervalDatum>(x: T) -> f64 {
     if x.__is_nai() {
         f64::NAN
@@ -593,11 +597,61 @@ fn recip_interval(x: Interval) -> Interval {
     }
 }
 
+fn div_interval(x: Interval, y: Interval) -> Interval {
+    if x.is_empty_raw() || y.is_empty_raw() {
+        return Interval::EMPTY;
+    }
+    let x_inf = x.inf_raw();
+    let x_sup = x.sup_raw();
+    let y_inf = y.inf_raw();
+    let y_sup = y.sup_raw();
+    if y_inf == 0.0 && y_sup == 0.0 {
+        return Interval::EMPTY;
+    }
+    if x_inf == 0.0 && x_sup == 0.0 {
+        return Interval::ZERO;
+    }
+    let mut lower = f64::INFINITY;
+    let mut upper = f64::NEG_INFINITY;
+    for numerator in [x_inf, x_sup] {
+        for denominator in [y_inf, y_sup] {
+            if denominator == 0.0 {
+                continue;
+            }
+            let down = rounding::div(numerator, denominator, Direction::Down);
+            let up = rounding::div(numerator, denominator, Direction::Up);
+            if !down.is_nan() {
+                lower = lower.min(down);
+            }
+            if !up.is_nan() {
+                upper = upper.max(up);
+            }
+        }
+    }
+    if y_inf == 0.0 || (y_inf < 0.0 && y_sup > 0.0) {
+        if x_inf < 0.0 {
+            lower = f64::NEG_INFINITY;
+        }
+        if x_sup > 0.0 {
+            upper = f64::INFINITY;
+        }
+    }
+    if y_sup == 0.0 || (y_inf < 0.0 && y_sup > 0.0) {
+        if x_sup > 0.0 {
+            lower = f64::NEG_INFINITY;
+        }
+        if x_inf < 0.0 {
+            upper = f64::INFINITY;
+        }
+    }
+    Interval::from_valid_bounds(lower, upper)
+}
+
 fn div_bare(x: Interval, y: Interval) -> BareResult {
     if x.is_empty_raw() || y.is_empty_raw() {
         return empty_result();
     }
-    let interval = mul_interval(x, recip_interval(y));
+    let interval = div_interval(x, y);
     let local = if y.contains_raw(0.0) {
         Decoration::Trv
     } else {
@@ -1243,7 +1297,7 @@ fn sign_bare(x: Interval) -> BareResult {
     let interval = Interval::from_valid_bounds(sign_value(x.inf_raw()), sign_value(x.sup_raw()));
     BareResult {
         interval,
-        local: integer_function_decoration(x, interval, x.contains_raw(0.0)),
+        local: integer_function_decoration(x, interval, sign_discontinuity(x)),
     }
 }
 
@@ -1254,7 +1308,7 @@ fn ceil_bare(x: Interval) -> BareResult {
     let interval = Interval::from_valid_bounds(libm::ceil(x.inf_raw()), libm::ceil(x.sup_raw()));
     BareResult {
         interval,
-        local: integer_function_decoration(x, interval, contains_integer(x)),
+        local: integer_function_decoration(x, interval, ceil_discontinuity(x)),
     }
 }
 
@@ -1265,7 +1319,7 @@ fn floor_bare(x: Interval) -> BareResult {
     let interval = Interval::from_valid_bounds(libm::floor(x.inf_raw()), libm::floor(x.sup_raw()));
     BareResult {
         interval,
-        local: integer_function_decoration(x, interval, contains_integer(x)),
+        local: integer_function_decoration(x, interval, floor_discontinuity(x)),
     }
 }
 
@@ -1276,7 +1330,7 @@ fn trunc_bare(x: Interval) -> BareResult {
     let interval = Interval::from_valid_bounds(libm::trunc(x.inf_raw()), libm::trunc(x.sup_raw()));
     BareResult {
         interval,
-        local: integer_function_decoration(x, interval, contains_nonzero_integer(x)),
+        local: integer_function_decoration(x, interval, trunc_discontinuity(x)),
     }
 }
 
@@ -1288,7 +1342,7 @@ fn round_ties_to_even_bare(x: Interval) -> BareResult {
         Interval::from_valid_bounds(libm::roundeven(x.inf_raw()), libm::roundeven(x.sup_raw()));
     BareResult {
         interval,
-        local: integer_function_decoration(x, interval, contains_half_integer(x)),
+        local: integer_function_decoration(x, interval, round_ties_to_even_discontinuity(x)),
     }
 }
 
@@ -1299,7 +1353,7 @@ fn round_ties_to_away_bare(x: Interval) -> BareResult {
     let interval = Interval::from_valid_bounds(libm::round(x.inf_raw()), libm::round(x.sup_raw()));
     BareResult {
         interval,
-        local: integer_function_decoration(x, interval, contains_half_integer(x)),
+        local: integer_function_decoration(x, interval, round_ties_to_away_discontinuity(x)),
     }
 }
 
@@ -1593,31 +1647,125 @@ fn strict_or_same_infinity(left: f64, right: f64) -> bool {
 
 // Decoration helpers.
 
-fn contains_integer(x: Interval) -> bool {
-    libm::ceil(x.inf_raw()) <= libm::floor(x.sup_raw())
+fn sign_discontinuity(x: Interval) -> Option<Decoration> {
+    x.contains_raw(0.0)
+        .then_some(if x.inf_raw() == x.sup_raw() {
+            Decoration::Dac
+        } else {
+            Decoration::Def
+        })
 }
 
-fn contains_nonzero_integer(x: Interval) -> bool {
+fn ceil_discontinuity(x: Interval) -> Option<Decoration> {
+    let first = libm::ceil(x.inf_raw());
+    if first > x.sup_raw() {
+        None
+    } else if first < x.sup_raw() {
+        Some(Decoration::Def)
+    } else {
+        Some(Decoration::Dac)
+    }
+}
+
+fn floor_discontinuity(x: Interval) -> Option<Decoration> {
+    let last = libm::floor(x.sup_raw());
+    if last < x.inf_raw() {
+        None
+    } else if x.inf_raw() < last {
+        Some(Decoration::Def)
+    } else {
+        Some(Decoration::Dac)
+    }
+}
+
+fn trunc_discontinuity(x: Interval) -> Option<Decoration> {
     let first = libm::ceil(x.inf_raw());
     let last = libm::floor(x.sup_raw());
-    first <= last && (first < 0.0 || last > 0.0)
+    let contains_negative = first <= last && first < 0.0;
+    let contains_positive = first <= last && last > 0.0;
+    if (contains_negative && first < x.sup_raw()) || (contains_positive && x.inf_raw() < last) {
+        Some(Decoration::Def)
+    } else if contains_negative || contains_positive {
+        Some(Decoration::Dac)
+    } else {
+        None
+    }
 }
 
-fn contains_half_integer(x: Interval) -> bool {
-    // x contains k + 1/2 exactly when x - 1/2 contains an integer. Directed
-    // subtraction makes this conservative even when an endpoint is large.
-    let shifted_inf = rounding::sub(x.inf_raw(), 0.5, Direction::Down);
-    let shifted_sup = rounding::sub(x.sup_raw(), 0.5, Direction::Up);
-    libm::ceil(shifted_inf) <= libm::floor(shifted_sup)
+fn is_half_integer(value: f64) -> bool {
+    // 4_503_599_627_370_496 = 2^52 is the point where integers are no longer consecutive in f64s
+    value.is_finite() && value.abs() < 4_503_599_627_370_496.0 && libm::floor(value) + 0.5 == value
+}
+
+fn has_interior_half_integer(x: Interval) -> bool {
+    let inf = x.inf_raw();
+    let sup = x.sup_raw();
+    let width = sup - inf;
+    if !inf.is_finite() || !sup.is_finite() || width > 1.0 {
+        return true;
+    }
+    if width == 1.0 && !(is_half_integer(inf) && is_half_integer(sup)) {
+        return true;
+    }
+    let first = libm::ceil(inf - 0.5) + 0.5;
+    inf < first && first < sup
+}
+
+fn round_ties_to_even_discontinuity(x: Interval) -> Option<Decoration> {
+    let inf = x.inf_raw();
+    let sup = x.sup_raw();
+    let lower_tie = is_half_integer(inf);
+    let upper_tie = is_half_integer(sup);
+    if !lower_tie && !upper_tie && !has_interior_half_integer(x) {
+        return None;
+    }
+    if inf == sup {
+        return Some(Decoration::Dac);
+    }
+    if has_interior_half_integer(x) {
+        return Some(Decoration::Def);
+    }
+    // At k + 1/2, ties-to-even jumps to the right when k is even and
+    // from the left when k is odd.
+    let lower_jumps_right = lower_tie && libm::fmod(libm::floor(inf), 2.0) == 0.0;
+    let upper_jumps_left = upper_tie && libm::fmod(libm::floor(sup), 2.0) != 0.0;
+    Some(if lower_jumps_right || upper_jumps_left {
+        Decoration::Def
+    } else {
+        Decoration::Dac
+    })
+}
+
+fn round_ties_to_away_discontinuity(x: Interval) -> Option<Decoration> {
+    let inf = x.inf_raw();
+    let sup = x.sup_raw();
+    let lower_tie = is_half_integer(inf);
+    let upper_tie = is_half_integer(sup);
+    if !lower_tie && !upper_tie && !has_interior_half_integer(x) {
+        return None;
+    }
+    if inf == sup {
+        return Some(Decoration::Dac);
+    }
+    if has_interior_half_integer(x) {
+        return Some(Decoration::Def);
+    }
+    // Ties away from zero jump to the right on the negative half-line and
+    // from the left on the positive half-line.
+    Some(if (lower_tie && inf < 0.0) || (upper_tie && sup > 0.0) {
+        Decoration::Def
+    } else {
+        Decoration::Dac
+    })
 }
 
 fn integer_function_decoration(
     input: Interval,
     result: Interval,
-    contains_discontinuity: bool,
+    discontinuity: Option<Decoration>,
 ) -> Decoration {
-    if contains_discontinuity {
-        Decoration::Def
+    if let Some(decoration) = discontinuity {
+        decoration
     } else {
         continuous_unary_decoration(input, result)
     }

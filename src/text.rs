@@ -154,7 +154,6 @@ pub fn interval_to_text<T: IntervalDatum>(
 // - uncertain forms m?r, m?ru, m??d, and exponent forms;
 // - [empty], [];
 // - [entire];
-// - [nai] with bare value Empty.
 //
 // Decorated literals:
 // - bare_literal_trv;
@@ -235,7 +234,7 @@ fn number_kind(value: &str) -> NumberKind {
 
 fn parse_bracket_literal(inner: &str) -> Result<ParsedBare, ()> {
     let inner = trim_ascii_space(inner);
-    if inner.is_empty() || eq_ascii_case(inner, "empty") || eq_ascii_case(inner, "nai") {
+    if inner.is_empty() || eq_ascii_case(inner, "empty") {
         return Ok(ParsedBare {
             interval: Interval::EMPTY,
             source_bounded: true,

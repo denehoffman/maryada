@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.1](https://github.com/denehoffman/maryada/compare/v0.1.0...v0.1.1) (2026-08-03)
+
+
+### Bug fixes
+
+* Conform real interval operations to IEEE 1788.1 ([0b404b3](https://github.com/denehoffman/maryada/commit/0b404b3bb1f904607b1893df5de5b9ae3508ef76))
+
+
+### Documentation
+
+* Add badges to README.md ([0fa9f45](https://github.com/denehoffman/maryada/commit/0fa9f45155b79bbe78b247adf4df8313aa6aa044))
+* Add newline after badges ([7d1f396](https://github.com/denehoffman/maryada/commit/7d1f3962e790517b9cc9a63df1160fd63c23e2ac))
+* Document conformance and fix badge links ([74fb695](https://github.com/denehoffman/maryada/commit/74fb695bfd362035081b8cbc8bdc5117e08b6cf3))
+
 ## 0.1.0 (2026-08-02)
 
 

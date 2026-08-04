@@ -24,9 +24,6 @@ struct ParsedBare {
     /// Whether the Level 1 source interval was bounded before
     /// conversion to binary64.
     source_bounded: bool,
-
-    /// True for the accuracy-relaxed form defined in 6.7.5.
-    accuracy_relaxed: bool,
 }
 
 enum ParsedDecorated {
@@ -38,9 +35,14 @@ enum ParsedDecorated {
 }
 
 /// Bare IEEE textToInterval.
-pub(crate) fn text_to_interval<S: SignalSink>(s: &str, signals: &mut S) -> Interval {
-    match parse_bare_literal(s) {
-        Ok(parsed) => {
+#[allow(clippy::arithmetic_side_effects)]
+pub fn text_to_interval<S: SignalSink>(s: &str, signals: &mut S) -> Interval {
+    parse_bare_literal(s).map_or_else(
+        |()| {
+            signals.raise(Signal::UndefinedOperation);
+            Interval::EMPTY
+        },
+        |parsed| {
             // This implementation chooses the most accurate permitted
             // behavior for accuracy-relaxed input:
             //
@@ -49,19 +51,13 @@ pub(crate) fn text_to_interval<S: SignalSink>(s: &str, signals: &mut S) -> Inter
             //
             // Therefore PossiblyUndefinedOperation need not be raised.
             parsed.interval
-        }
-        Err(()) => {
-            signals.raise(Signal::UndefinedOperation);
-            Interval::EMPTY
-        }
-    }
+        },
+    )
 }
 
 /// Decorated IEEE textToInterval.
-pub(crate) fn text_to_decorated_interval<S: SignalSink>(
-    s: &str,
-    signals: &mut S,
-) -> DecoratedInterval {
+#[allow(clippy::arithmetic_side_effects)]
+pub fn text_to_decorated_interval<S: SignalSink>(s: &str, signals: &mut S) -> DecoratedInterval {
     match parse_decorated_literal(s) {
         Ok(ParsedDecorated::NaI) => DecoratedInterval::NAI,
         Ok(ParsedDecorated::Interval {
@@ -109,6 +105,11 @@ pub(crate) fn text_to_decorated_interval<S: SignalSink>(
 ///
 /// Returns the number of UTF-8/ASCII bytes written.
 ///
+/// # Errors
+///
+/// Returns [`TextError::BufferTooSmall`] when `output` cannot hold the
+/// complete representation.
+///
 /// # Example
 ///
 /// ```
@@ -119,12 +120,12 @@ pub(crate) fn text_to_decorated_interval<S: SignalSink>(
 /// assert_eq!(core::str::from_utf8(&output[..length]).unwrap(), "[0x1p+0,0x1p+1]");
 /// # Ok::<(), maryada::TextError>(())
 /// ```
+#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
 pub fn interval_to_text<T: IntervalDatum>(
     x: T,
-    cs: Option<&str>,
+    _cs: Option<&str>,
     output: &mut [u8],
 ) -> Result<usize, TextError> {
-    let _specifier_valid = matches!(cs, None | Some("") | Some("hex"));
     let mut text = [0u8; 64];
     if x.__is_nai() {
         return write_ascii(output, b"[nai]");
@@ -164,6 +165,7 @@ pub fn interval_to_text<T: IntervalDatum>(
 //
 // Alphabetic matching is case-insensitive.
 
+#[allow(clippy::arithmetic_side_effects, clippy::string_slice)]
 fn parse_bare_literal(s: &str) -> Result<ParsedBare, ()> {
     let s = trim_ascii_space(s);
     if s.starts_with('[') && s.ends_with(']') {
@@ -172,6 +174,7 @@ fn parse_bare_literal(s: &str) -> Result<ParsedBare, ()> {
     parse_uncertain_literal(s)
 }
 
+#[allow(clippy::arithmetic_side_effects, clippy::string_slice)]
 fn parse_decorated_literal(s: &str) -> Result<ParsedDecorated, ()> {
     let s = trim_ascii_space(s);
     if eq_ascii_case(s, "[nai]") {
@@ -196,7 +199,6 @@ fn parse_decorated_literal(s: &str) -> Result<ParsedDecorated, ()> {
             return Err(());
         }
     }
-    let _accuracy_relaxed = bare.accuracy_relaxed;
     Ok(ParsedDecorated::Interval { bare, decoration })
 }
 
@@ -223,8 +225,11 @@ fn number_kind(value: &str) -> NumberKind {
     } else if value.as_bytes().contains(&b'/') {
         NumberKind::Rational
     } else if unsigned.len() >= 2
-        && unsigned.as_bytes()[0] == b'0'
-        && unsigned.as_bytes()[1].eq_ignore_ascii_case(&b'x')
+        && unsigned.as_bytes().first() == Some(&b'0')
+        && unsigned
+            .as_bytes()
+            .get(1)
+            .is_some_and(|byte| byte.eq_ignore_ascii_case(&b'x'))
     {
         NumberKind::Hexadecimal
     } else {
@@ -232,20 +237,23 @@ fn number_kind(value: &str) -> NumberKind {
     }
 }
 
+#[allow(
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::string_slice
+)]
 fn parse_bracket_literal(inner: &str) -> Result<ParsedBare, ()> {
     let inner = trim_ascii_space(inner);
     if inner.is_empty() || eq_ascii_case(inner, "empty") {
         return Ok(ParsedBare {
             interval: Interval::EMPTY,
             source_bounded: true,
-            accuracy_relaxed: false,
         });
     }
     if eq_ascii_case(inner, "entire") {
         return Ok(ParsedBare {
             interval: Interval::ENTIRE,
             source_bounded: false,
-            accuracy_relaxed: false,
         });
     }
 
@@ -261,11 +269,10 @@ fn parse_bracket_literal(inner: &str) -> Result<ParsedBare, ()> {
         return Ok(ParsedBare {
             interval: Interval::from_valid_bounds(lower, upper),
             source_bounded: true,
-            accuracy_relaxed: kind == NumberKind::Rational,
         });
     }
 
-    let comma = comma.unwrap();
+    let comma = comma.ok_or(())?;
     if inner[comma + 1..].contains(',') {
         return Err(());
     }
@@ -307,20 +314,13 @@ fn parse_bracket_literal(inner: &str) -> Result<ParsedBare, ()> {
         && !upper_text.is_empty()
         && lower_kind != Some(NumberKind::Infinity)
         && upper_kind != Some(NumberKind::Infinity);
-    let accuracy_relaxed = lower_kind == Some(NumberKind::Rational)
-        || upper_kind == Some(NumberKind::Rational)
-        || matches!(
-            (lower_kind, upper_kind),
-            (Some(NumberKind::Decimal), Some(NumberKind::Hexadecimal))
-                | (Some(NumberKind::Hexadecimal), Some(NumberKind::Decimal))
-        );
     Ok(ParsedBare {
         interval: Interval::from_valid_bounds(lower_down, upper_up),
         source_bounded,
-        accuracy_relaxed,
     })
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn parse_u128_digits(value: &str) -> Option<u128> {
     if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
@@ -332,14 +332,16 @@ fn parse_u128_digits(value: &str) -> Option<u128> {
     })
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn parse_uncertain_mantissa(value: &str) -> Option<(i128, usize)> {
-    let (negative, unsigned) = if let Some(value) = value.strip_prefix('-') {
-        (true, value)
-    } else if let Some(value) = value.strip_prefix('+') {
-        (false, value)
-    } else {
-        (false, value)
-    };
+    let (negative, unsigned) = value.strip_prefix('-').map_or_else(
+        || {
+            value
+                .strip_prefix('+')
+                .map_or((false, value), |value| (false, value))
+        },
+        |value| (true, value),
+    );
     let mut point_seen = false;
     let mut fractional_digits = 0usize;
     let mut coefficient = 0u128;
@@ -362,23 +364,24 @@ fn parse_uncertain_mantissa(value: &str) -> Option<(i128, usize)> {
             return None;
         }
     }
-    if digit_count == 0 || coefficient > i128::MAX as u128 {
+    if digit_count == 0 || coefficient > u128::MAX / 2 {
         return None;
     }
-    let coefficient = coefficient as i128;
+    let coefficient = i128::try_from(coefficient).ok()?;
     Some((
         if negative { -coefficient } else { coefficient },
         fractional_digits,
     ))
 }
 
+#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
 fn write_i64_decimal(value: i64, output: &mut [u8]) -> Option<usize> {
     let negative = value < 0;
     let mut magnitude = value.unsigned_abs();
     let mut reversed = [0u8; 20];
     let mut count = 0;
     loop {
-        reversed[count] = b'0' + (magnitude % 10) as u8;
+        reversed[count] = b'0' + u8::try_from(magnitude % 10).ok()?;
         count += 1;
         magnitude /= 10;
         if magnitude == 0 {
@@ -401,6 +404,7 @@ fn write_i64_decimal(value: i64, output: &mut [u8]) -> Option<usize> {
     Some(cursor)
 }
 
+#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
 fn parse_scaled_half_integer(
     value_twice: i128,
     exponent: i64,
@@ -428,11 +432,12 @@ fn parse_scaled_half_integer(
     rounding::number_literal(literal, direction)
 }
 
+#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
 fn write_u128_decimal(mut value: u128, output: &mut [u8]) -> Option<usize> {
     let mut reversed = [0u8; 39];
     let mut count = 0;
     loop {
-        reversed[count] = b'0' + (value % 10) as u8;
+        reversed[count] = b'0' + u8::try_from(value % 10).ok()?;
         count += 1;
         value /= 10;
         if value == 0 {
@@ -448,6 +453,12 @@ fn write_u128_decimal(mut value: u128, output: &mut [u8]) -> Option<usize> {
     Some(count)
 }
 
+// The exponent is deliberately rounded to binary64 before directed scaling.
+#[allow(
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_precision_loss
+)]
 fn scaled_decimal_interval(value: &str, exponent: i64) -> Option<Interval> {
     let value_inf = parse_number_lower(value)?;
     let value_sup = parse_number_upper(value)?;
@@ -481,6 +492,13 @@ fn scaled_decimal_interval(value: &str, exponent: i64) -> Option<Interval> {
     Some(Interval::from_valid_bounds(lower, upper))
 }
 
+// Input lengths are bounded by the representable string slice and fit in
+// the exponent width used by the parser.
+#[allow(
+    clippy::arithmetic_side_effects,
+    clippy::expect_used,
+    clippy::unreachable
+)]
 fn fallback_uncertain_interval(
     mantissa: &str,
     radius: &str,
@@ -498,7 +516,9 @@ fn fallback_uncertain_interval(
         });
     }
     let radius = if radius.is_empty() { "0.5" } else { radius };
-    let radius_exponent = exponent.saturating_sub(fractional_digits as i64);
+    let radius_exponent = exponent.saturating_sub(
+        i64::try_from(fractional_digits).expect("fractional digit count fits in i64"),
+    );
     let radius = scaled_decimal_interval(radius, radius_exponent).ok_or(())?;
     if center.is_entire_raw() || radius.is_entire_raw() {
         return Ok(Interval::ENTIRE);
@@ -520,6 +540,64 @@ fn fallback_uncertain_interval(
     }
 }
 
+fn fallback_uncertain_literal(
+    mantissa: &str,
+    suffix: &str,
+    direction: Option<u8>,
+    exponent: i64,
+    fractional_digits: usize,
+) -> Result<ParsedBare, ()> {
+    // Validate the decimal mantissa and the radius before using the
+    // conservative, allocation-free fallback for very long literals.
+    parse_number_lower(mantissa).ok_or(())?;
+    if suffix != "?" && !suffix.is_empty() && !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(());
+    }
+    let interval =
+        fallback_uncertain_interval(mantissa, suffix, direction, exponent, fractional_digits)?;
+    Ok(ParsedBare {
+        interval,
+        source_bounded: suffix != "?",
+    })
+}
+
+#[allow(clippy::arithmetic_side_effects, clippy::string_slice)]
+fn parse_uncertain_suffix(suffix: &str) -> Result<(&str, i64, Option<u8>), ()> {
+    let mut suffix_without_exponent = suffix;
+    let exponent_index = suffix
+        .bytes()
+        .position(|byte| byte.eq_ignore_ascii_case(&b'e'));
+    let exponent = if let Some(index) = exponent_index {
+        let exponent = suffix.get(index + 1..).ok_or(())?;
+        suffix_without_exponent = suffix.get(..index).ok_or(())?;
+        parse_i64(exponent).ok_or(())?
+    } else {
+        0
+    };
+    let direction = match suffix_without_exponent.as_bytes().last().copied() {
+        Some(byte) if byte.eq_ignore_ascii_case(&b'u') => {
+            suffix_without_exponent = suffix_without_exponent
+                .get(..suffix_without_exponent.len() - 1)
+                .ok_or(())?;
+            Some(b'u')
+        }
+        Some(byte) if byte.eq_ignore_ascii_case(&b'd') => {
+            suffix_without_exponent = suffix_without_exponent
+                .get(..suffix_without_exponent.len() - 1)
+                .ok_or(())?;
+            Some(b'd')
+        }
+        _ => None,
+    };
+    Ok((suffix_without_exponent, exponent, direction))
+}
+
+#[allow(
+    clippy::arithmetic_side_effects,
+    clippy::expect_used,
+    clippy::string_slice,
+    clippy::unreachable
+)]
 fn parse_uncertain_literal(s: &str) -> Result<ParsedBare, ()> {
     if s.bytes().any(|byte| byte.is_ascii_whitespace()) {
         return Err(());
@@ -532,58 +610,29 @@ fn parse_uncertain_literal(s: &str) -> Result<ParsedBare, ()> {
     {
         return Err(());
     }
-    let mut suffix = &s[question + 1..];
-    let exponent_index = suffix
-        .bytes()
-        .position(|byte| byte.eq_ignore_ascii_case(&b'e'));
-    let exponent = if let Some(index) = exponent_index {
-        let exponent = &suffix[index + 1..];
-        suffix = &suffix[..index];
-        parse_i64(exponent).ok_or(())?
-    } else {
-        0
-    };
-    let direction = match suffix.as_bytes().last().copied() {
-        Some(byte) if byte.eq_ignore_ascii_case(&b'u') => {
-            suffix = &suffix[..suffix.len() - 1];
-            Some(b'u')
-        }
-        Some(byte) if byte.eq_ignore_ascii_case(&b'd') => {
-            suffix = &suffix[..suffix.len() - 1];
-            Some(b'd')
-        }
-        _ => None,
-    };
+    let (suffix, exponent, direction) = parse_uncertain_suffix(s.get(question + 1..).ok_or(())?)?;
 
     let fractional_digits = mantissa
         .split_once('.')
         .map_or(0, |(_, fraction)| fraction.len());
-    let parsed_center = parse_uncertain_mantissa(mantissa);
-    if parsed_center.is_none() {
-        // Validate the decimal mantissa and the radius before using the
-        // conservative, allocation-free fallback for very long literals.
-        parse_number_lower(mantissa).ok_or(())?;
-        if suffix != "?" && !suffix.is_empty() && !suffix.bytes().all(|byte| byte.is_ascii_digit())
-        {
-            return Err(());
-        }
-        let interval =
-            fallback_uncertain_interval(mantissa, suffix, direction, exponent, fractional_digits)?;
-        return Ok(ParsedBare {
-            interval,
-            source_bounded: suffix != "?",
-            accuracy_relaxed: false,
-        });
-    }
-    let (center, fractional_digits) = parsed_center.unwrap();
-    let decimal_exponent = exponent.saturating_sub(fractional_digits as i64);
+    let Some((center, fractional_digits)) = parse_uncertain_mantissa(mantissa) else {
+        return fallback_uncertain_literal(
+            mantissa,
+            suffix,
+            direction,
+            exponent,
+            fractional_digits,
+        );
+    };
+    let decimal_exponent = exponent.saturating_sub(
+        i64::try_from(fractional_digits).expect("fractional digit count fits in i64"),
+    );
     if center.checked_mul(2).is_none() {
         let interval =
             fallback_uncertain_interval(mantissa, suffix, direction, exponent, fractional_digits)?;
         return Ok(ParsedBare {
             interval,
             source_bounded: suffix != "?",
-            accuracy_relaxed: false,
         });
     }
     if suffix == "?" {
@@ -602,7 +651,6 @@ fn parse_uncertain_literal(s: &str) -> Result<ParsedBare, ()> {
         return Ok(ParsedBare {
             interval,
             source_bounded: false,
-            accuracy_relaxed: false,
         });
     }
 
@@ -614,15 +662,14 @@ fn parse_uncertain_literal(s: &str) -> Result<ParsedBare, ()> {
             .checked_mul(2)
             .ok_or(())?
     };
-    if radius_twice > i128::MAX as u128 {
+    if radius_twice > u128::MAX / 2 {
         return Ok(ParsedBare {
             interval: Interval::ENTIRE,
             source_bounded: true,
-            accuracy_relaxed: false,
         });
     }
     let center_twice = center * 2;
-    let radius_twice = radius_twice as i128;
+    let radius_twice = i128::try_from(radius_twice).map_err(|_| ())?;
     let lower_twice = if direction == Some(b'u') {
         Some(center_twice)
     } else {
@@ -637,7 +684,6 @@ fn parse_uncertain_literal(s: &str) -> Result<ParsedBare, ()> {
         return Ok(ParsedBare {
             interval: Interval::ENTIRE,
             source_bounded: true,
-            accuracy_relaxed: false,
         });
     };
     let lower = parse_scaled_half_integer(lower_twice, decimal_exponent, Direction::Down)
@@ -647,18 +693,19 @@ fn parse_uncertain_literal(s: &str) -> Result<ParsedBare, ()> {
     Ok(ParsedBare {
         interval: Interval::from_valid_bounds(lower, upper),
         source_bounded: true,
-        accuracy_relaxed: false,
     })
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn parse_i64(value: &str) -> Option<i64> {
-    let (negative, digits) = if let Some(value) = value.strip_prefix('-') {
-        (true, value)
-    } else if let Some(value) = value.strip_prefix('+') {
-        (false, value)
-    } else {
-        (false, value)
-    };
+    let (negative, digits) = value.strip_prefix('-').map_or_else(
+        || {
+            value
+                .strip_prefix('+')
+                .map_or((false, value), |value| (false, value))
+        },
+        |value| (true, value),
+    );
     if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
@@ -683,6 +730,7 @@ fn parse_number_upper(s: &str) -> Option<f64> {
     rounding::number_literal(s, Direction::Up)
 }
 
+#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
 fn write_bare_literal(interval: Interval, output: &mut [u8]) -> Result<usize, TextError> {
     if interval.is_empty_raw() {
         return write_ascii(output, b"[empty]");
@@ -707,6 +755,11 @@ fn write_bare_literal(interval: Interval, output: &mut [u8]) -> Result<usize, Te
 /// - `0x1.8p+1`
 /// - `-inf`
 /// - `inf`
+#[allow(
+    clippy::arithmetic_side_effects,
+    clippy::expect_used,
+    clippy::indexing_slicing
+)]
 fn write_f64_hex(value: f64, output: &mut [u8]) -> Result<usize, TextError> {
     debug_assert!(!value.is_nan());
     let mut text = [0u8; 32];
@@ -727,10 +780,10 @@ fn write_f64_hex(value: f64, output: &mut [u8]) -> Result<usize, TextError> {
     }
 
     let bits = value.to_bits();
-    let raw_exponent = ((bits >> 52) & 0x7ff) as i32;
+    let raw_exponent = i32::try_from((bits >> 52) & 0x7ff).expect("binary64 exponent fits in i32");
     let raw_fraction = bits & ((1u64 << 52) - 1);
     let (significand, exponent) = if raw_exponent == 0 {
-        let highest = 63 - raw_fraction.leading_zeros();
+        let highest = raw_fraction.ilog2();
         let shift = 52 - highest;
         (
             raw_fraction << shift,
@@ -746,12 +799,12 @@ fn write_f64_hex(value: f64, output: &mut [u8]) -> Result<usize, TextError> {
         text[cursor] = b'.';
         cursor += 1;
         let mut digits = 13usize;
-        while digits > 0 && ((fraction >> ((13 - digits) * 4)) & 0xf) == 0 {
+        while digits > 0 && (fraction >> ((13 - digits) * 4)).trailing_zeros() >= 4 {
             digits -= 1;
         }
         for index in 0..digits {
             let shift = (12 - index) * 4;
-            let digit = ((fraction >> shift) & 0xf) as u8;
+            let digit = u8::try_from((fraction >> shift) & 0xf).expect("hex digit fits in u8");
             text[cursor] = if digit < 10 {
                 b'0' + digit
             } else {
@@ -782,6 +835,7 @@ fn write_decoration(decoration: Decoration, output: &mut [u8]) -> Result<usize, 
     write_ascii(output, text)
 }
 
+#[allow(clippy::indexing_slicing)]
 fn write_ascii(output: &mut [u8], value: &[u8]) -> Result<usize, TextError> {
     if output.len() < value.len() {
         return Err(TextError::BufferTooSmall {

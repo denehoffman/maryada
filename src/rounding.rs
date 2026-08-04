@@ -4,37 +4,37 @@ use core::{
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Direction {
+pub enum Direction {
     Down,
     Up,
 }
 
 impl Direction {
     #[inline]
-    fn exact_zero(&self) -> f64 {
+    const fn exact_zero(self) -> f64 {
         match self {
-            Direction::Down => -0.0,
-            Direction::Up => 0.0,
+            Self::Down => -0.0,
+            Self::Up => 0.0,
         }
     }
 
-    fn opposite(&self) -> Direction {
+    const fn opposite(self) -> Self {
         match self {
-            Direction::Down => Direction::Up,
-            Direction::Up => Direction::Down,
+            Self::Down => Self::Up,
+            Self::Up => Self::Down,
         }
     }
 
-    fn constant_bound(&self, value: f64) -> f64 {
+    const fn constant_bound(self, value: f64) -> f64 {
         match self {
-            Direction::Down => value.next_down(),
-            Direction::Up => value.next_up(),
+            Self::Down => value.next_down(),
+            Self::Up => value.next_up(),
         }
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum FloatClass {
+pub enum FloatClass {
     Zero { negative: bool },
     Finite(Dyadic),
     Infinity { negative: bool },
@@ -42,7 +42,7 @@ pub(crate) enum FloatClass {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Dyadic {
+pub struct Dyadic {
     pub negative: bool,
     pub significand: u64,
     pub exponent: i32,
@@ -50,8 +50,9 @@ pub(crate) struct Dyadic {
 
 impl Dyadic {
     #[inline]
-    fn normalize(&self) -> Dyadic {
-        let mut value = Dyadic {
+    #[allow(clippy::arithmetic_side_effects)]
+    const fn normalize(&self) -> Self {
+        let mut value = Self {
             negative: self.negative,
             significand: self.significand,
             exponent: self.exponent,
@@ -59,7 +60,7 @@ impl Dyadic {
         let bits = 64 - value.significand.leading_zeros();
         let shift = 53 - bits;
         value.significand <<= shift;
-        value.exponent -= shift as i32;
+        value.exponent -= shift.cast_signed();
         value
     }
 }
@@ -89,6 +90,9 @@ impl From<Dyadic> for WideDyadic {
     }
 }
 
+// These checked conversions enforce exact-arithmetic representation
+// invariants; failure would indicate a bug in the preceding bounds proofs.
+#[allow(clippy::arithmetic_side_effects, clippy::expect_used)]
 impl WideDyadic {
     /// Central binary64 rounding and packing operation.
     ///
@@ -96,8 +100,8 @@ impl WideDyadic {
     /// supplied significand.
     fn pack(&self, sticky: bool, direction: Direction) -> f64 {
         #[inline]
-        fn overflow(negative: bool, direction: Direction) -> f64 {
-            let sign = (negative as u64) << 63;
+        const fn overflow(negative: bool, direction: Direction) -> f64 {
+            let sign = (if negative { 1_u64 } else { 0 }) << 63;
 
             let toward_infinity = match direction {
                 Direction::Down => negative,
@@ -138,7 +142,7 @@ impl WideDyadic {
                 };
             truncated + u128::from(increment_magnitude)
         }
-        let sign = (self.negative as u64) << 63;
+        let sign = u64::from(self.negative) << 63;
         assert!(
             self.significand != 0 || !sticky,
             "zero significand cannot have an unspecified nonzero tail",
@@ -171,7 +175,8 @@ impl WideDyadic {
         };
         if subnormal {
             debug_assert!(rounded <= 1u128 << 52);
-            return f64::from_bits(sign | rounded as u64);
+            let rounded = u64::try_from(rounded).expect("subnormal significand fits in u64");
+            return f64::from_bits(sign | rounded);
         }
         if rounded == 1u128 << 53 {
             rounded >>= 1;
@@ -183,10 +188,11 @@ impl WideDyadic {
         debug_assert!(((1u128 << 52)..(1u128 << 53)).contains(&rounded));
         let biased_exponent =
             u64::try_from(top_exponent + 1023).expect("validated binary64 exponent");
-        f64::from_bits(sign | (biased_exponent << 52) | ((rounded as u64) & ((1u64 << 52) - 1)))
+        let rounded = u64::try_from(rounded).expect("normal significand fits in u64");
+        f64::from_bits(sign | (biased_exponent << 52) | (rounded & ((1u64 << 52) - 1)))
     }
 
-    fn round_sum(x: WideDyadic, y: WideDyadic, direction: Direction) -> f64 {
+    fn round_sum(x: Self, y: Self, direction: Direction) -> f64 {
         if x.negative == y.negative {
             Self::round_same_sign_sum(x, y, direction)
         } else {
@@ -200,7 +206,7 @@ impl WideDyadic {
         }
     }
 
-    fn round_same_sign_sum(x: WideDyadic, y: WideDyadic, direction: Direction) -> f64 {
+    fn round_same_sign_sum(x: Self, y: Self, direction: Direction) -> f64 {
         // Retain a 127-bit fixed-point window. The operand with the
         // greatest top exponent is represented exactly; the other may
         // contribute a sticky tail.
@@ -209,7 +215,7 @@ impl WideDyadic {
         let (x_significand, x_sticky) = Self::project(x, quantum);
         let (y_significand, y_sticky) = Self::project(y, quantum);
         debug_assert!(!(x_sticky && y_sticky));
-        WideDyadic {
+        Self {
             negative: x.negative,
             significand: x_significand + y_significand,
             exponent: i32::try_from(quantum).expect("FMA exponent fits in i32"),
@@ -217,7 +223,7 @@ impl WideDyadic {
         .pack(x_sticky || y_sticky, direction)
     }
 
-    fn round_difference(larger: WideDyadic, smaller: WideDyadic, direction: Direction) -> f64 {
+    fn round_difference(larger: Self, smaller: Self, direction: Direction) -> f64 {
         debug_assert_eq!(Self::magnitude_cmp(larger, smaller), Ordering::Greater,);
         let quantum = larger.top_exponent() - 126;
         let (larger_significand, larger_sticky) = Self::project(larger, quantum);
@@ -234,7 +240,7 @@ impl WideDyadic {
             // This converts a negative discarded correction into the
             // positive-tail convention expected by pack().
             assert!(difference > 1);
-            WideDyadic {
+            Self {
                 negative: larger.negative,
                 significand: difference - 1,
                 exponent: i32::try_from(quantum).expect("FMA exponent fits in i32"),
@@ -242,7 +248,7 @@ impl WideDyadic {
             .pack(true, direction)
         } else {
             debug_assert_ne!(difference, 0);
-            WideDyadic {
+            Self {
                 negative: larger.negative,
                 significand: difference,
                 exponent: i32::try_from(quantum).expect("FMA exponent fits in i32"),
@@ -251,7 +257,7 @@ impl WideDyadic {
         }
     }
 
-    fn project(value: WideDyadic, quantum: i64) -> (u128, bool) {
+    fn project(value: Self, quantum: i64) -> (u128, bool) {
         let shift = i64::from(value.exponent) - quantum;
         if shift >= 0 {
             let shift = u32::try_from(shift).expect("projection shift fits in u32");
@@ -272,7 +278,7 @@ impl WideDyadic {
         }
     }
 
-    fn magnitude_cmp(x: WideDyadic, y: WideDyadic) -> Ordering {
+    fn magnitude_cmp(x: Self, y: Self) -> Ordering {
         match x.top_exponent().cmp(&y.top_exponent()) {
             Ordering::Equal => {}
             ordering => return ordering,
@@ -296,21 +302,28 @@ impl FloatClass {
     /// Exact binary64 decomposition.
     ///
     /// finite value = (-1)^negative * significand * 2^exponent
-    pub(crate) fn new(value: f64) -> FloatClass {
+    // The exponent field is masked to eleven bits before this conversion.
+    #[allow(
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
+    pub const fn new(value: f64) -> Self {
         let bits = value.to_bits();
         let negative = bits >> 63 != 0;
         let raw_exp = ((bits >> 52) & 0x7ff) as i32;
         let fraction = bits & ((1u64 << 52) - 1);
         match (raw_exp, fraction) {
-            (0, 0) => FloatClass::Zero { negative },
-            (0, _) => FloatClass::Finite(Dyadic {
+            (0, 0) => Self::Zero { negative },
+            (0, _) => Self::Finite(Dyadic {
                 negative,
                 significand: fraction,
                 exponent: -1074,
             }),
-            (0x7ff, 0) => FloatClass::Infinity { negative },
-            (0x7ff, _) => FloatClass::NaN,
-            _ => FloatClass::Finite(Dyadic {
+            (0x7ff, 0) => Self::Infinity { negative },
+            (0x7ff, _) => Self::NaN,
+            _ => Self::Finite(Dyadic {
                 negative,
                 significand: fraction | (1u64 << 52),
                 exponent: raw_exp - 1075,
@@ -320,22 +333,26 @@ impl FloatClass {
 }
 
 impl WideFloatClass {
+    #[allow(clippy::arithmetic_side_effects)]
     fn exact_product(x: f64, y: f64) -> Self {
         match (FloatClass::new(x), FloatClass::new(y)) {
-            (FloatClass::NaN, _) | (_, FloatClass::NaN) => Self::NaN,
-            (FloatClass::Zero { .. }, FloatClass::Infinity { .. })
+            (FloatClass::NaN, _)
+            | (_, FloatClass::NaN)
+            | (FloatClass::Zero { .. }, FloatClass::Infinity { .. })
             | (FloatClass::Infinity { .. }, FloatClass::Zero { .. }) => Self::NaN,
-            (FloatClass::Infinity { negative: x }, FloatClass::Infinity { negative: y })
-            | (
+            (
                 FloatClass::Infinity { negative: x },
-                FloatClass::Finite(Dyadic { negative: y, .. }),
+                FloatClass::Infinity { negative: y }
+                | FloatClass::Finite(Dyadic { negative: y, .. }),
             )
             | (
                 FloatClass::Finite(Dyadic { negative: x, .. }),
                 FloatClass::Infinity { negative: y },
             ) => Self::Infinity { negative: x ^ y },
-            (FloatClass::Zero { negative: x }, FloatClass::Zero { negative: y })
-            | (FloatClass::Zero { negative: x }, FloatClass::Finite(Dyadic { negative: y, .. }))
+            (
+                FloatClass::Zero { negative: x },
+                FloatClass::Zero { negative: y } | FloatClass::Finite(Dyadic { negative: y, .. }),
+            )
             | (FloatClass::Finite(Dyadic { negative: x, .. }), FloatClass::Zero { negative: y }) => {
                 Self::Zero { negative: x ^ y }
             }
@@ -365,17 +382,17 @@ fn finish(rounded: f64, error: f64, direction: Direction) -> f64 {
 }
 
 #[inline]
-fn signed_zero(negative: bool) -> f64 {
-    f64::from_bits((negative as u64) << 63)
+const fn signed_zero(negative: bool) -> f64 {
+    f64::from_bits((if negative { 1 } else { 0 }) << 63)
 }
 
 #[inline]
-fn infinity(negative: bool) -> f64 {
-    f64::from_bits(((negative as u64) << 63) | 0x7ff0_0000_0000_0000)
+const fn infinity(negative: bool) -> f64 {
+    f64::from_bits(((if negative { 1 } else { 0 }) << 63) | 0x7ff0_0000_0000_0000)
 }
 
 #[inline]
-fn overflow(negative: bool, direction: Direction) -> f64 {
+const fn overflow(negative: bool, direction: Direction) -> f64 {
     let outward = match direction {
         Direction::Down => negative,
         Direction::Up => !negative,
@@ -388,7 +405,7 @@ fn overflow(negative: bool, direction: Direction) -> f64 {
     }
 }
 
-fn add_zero(x_negative: bool, y_negative: bool, direction: Direction) -> f64 {
+const fn add_zero(x_negative: bool, y_negative: bool, direction: Direction) -> f64 {
     let negative = if x_negative == y_negative {
         x_negative
     } else {
@@ -397,11 +414,11 @@ fn add_zero(x_negative: bool, y_negative: bool, direction: Direction) -> f64 {
     signed_zero(negative)
 }
 
-pub(crate) fn neg(x: f64) -> f64 {
+pub fn neg(x: f64) -> f64 {
     -x
 }
 
-pub(crate) fn add(x: f64, y: f64, direction: Direction) -> f64 {
+pub fn add(x: f64, y: f64, direction: Direction) -> f64 {
     let sum = x + y;
     if sum.is_nan() {
         return sum;
@@ -420,22 +437,28 @@ pub(crate) fn add(x: f64, y: f64, direction: Direction) -> f64 {
     finish(sum, error, direction)
 }
 
-pub(crate) fn sub(x: f64, y: f64, direction: Direction) -> f64 {
+pub fn sub(x: f64, y: f64, direction: Direction) -> f64 {
     add(x, neg(y), direction)
 }
 
-pub(crate) fn mul(x: f64, y: f64, direction: Direction) -> f64 {
+#[allow(clippy::arithmetic_side_effects)]
+pub fn mul(x: f64, y: f64, direction: Direction) -> f64 {
     match (FloatClass::new(x), FloatClass::new(y)) {
-        (FloatClass::NaN, _) | (_, FloatClass::NaN) => f64::NAN,
-        (FloatClass::Zero { .. }, FloatClass::Infinity { .. })
+        (FloatClass::NaN, _)
+        | (_, FloatClass::NaN)
+        | (FloatClass::Zero { .. }, FloatClass::Infinity { .. })
         | (FloatClass::Infinity { .. }, FloatClass::Zero { .. }) => f64::NAN,
-        (FloatClass::Infinity { negative: a }, FloatClass::Infinity { negative: b })
-        | (FloatClass::Infinity { negative: a }, FloatClass::Finite(Dyadic { negative: b, .. }))
+        (
+            FloatClass::Infinity { negative: a },
+            FloatClass::Infinity { negative: b } | FloatClass::Finite(Dyadic { negative: b, .. }),
+        )
         | (FloatClass::Finite(Dyadic { negative: a, .. }), FloatClass::Infinity { negative: b }) => {
             infinity(a ^ b)
         }
-        (FloatClass::Zero { negative: a }, FloatClass::Zero { negative: b })
-        | (FloatClass::Zero { negative: a }, FloatClass::Finite(Dyadic { negative: b, .. }))
+        (
+            FloatClass::Zero { negative: a },
+            FloatClass::Zero { negative: b } | FloatClass::Finite(Dyadic { negative: b, .. }),
+        )
         | (FloatClass::Finite(Dyadic { negative: a, .. }), FloatClass::Zero { negative: b }) => {
             signed_zero(a ^ b)
         }
@@ -448,6 +471,7 @@ pub(crate) fn mul(x: f64, y: f64, direction: Direction) -> f64 {
     }
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn div_finite(numerator: Dyadic, denominator: Dyadic, direction: Direction) -> f64 {
     let numerator = numerator.normalize();
     let denominator = denominator.normalize();
@@ -463,19 +487,23 @@ fn div_finite(numerator: Dyadic, denominator: Dyadic, direction: Direction) -> f
     .pack(remainder != 0, direction)
 }
 
-pub(crate) fn div(x: f64, y: f64, direction: Direction) -> f64 {
+pub fn div(x: f64, y: f64, direction: Direction) -> f64 {
     match (FloatClass::new(x), FloatClass::new(y)) {
         (FloatClass::NaN, _)
         | (_, FloatClass::NaN)
         | (FloatClass::Zero { .. }, FloatClass::Zero { .. })
         | (FloatClass::Infinity { .. }, FloatClass::Infinity { .. }) => f64::NAN,
-        (FloatClass::Infinity { negative: a }, FloatClass::Zero { negative: b })
-        | (FloatClass::Infinity { negative: a }, FloatClass::Finite(Dyadic { negative: b, .. }))
+        (
+            FloatClass::Infinity { negative: a },
+            FloatClass::Zero { negative: b } | FloatClass::Finite(Dyadic { negative: b, .. }),
+        )
         | (FloatClass::Finite(Dyadic { negative: a, .. }), FloatClass::Zero { negative: b }) => {
             infinity(a ^ b)
         }
-        (FloatClass::Zero { negative: a }, FloatClass::Infinity { negative: b })
-        | (FloatClass::Zero { negative: a }, FloatClass::Finite(Dyadic { negative: b, .. }))
+        (
+            FloatClass::Zero { negative: a },
+            FloatClass::Infinity { negative: b } | FloatClass::Finite(Dyadic { negative: b, .. }),
+        )
         | (FloatClass::Finite(Dyadic { negative: a, .. }), FloatClass::Infinity { negative: b }) => {
             signed_zero(a ^ b)
         }
@@ -483,14 +511,15 @@ pub(crate) fn div(x: f64, y: f64, direction: Direction) -> f64 {
     }
 }
 
-pub(crate) fn recip(x: f64, direction: Direction) -> f64 {
+pub fn recip(x: f64, direction: Direction) -> f64 {
     div(1.0, x, direction)
 }
 
-pub(crate) fn sqr(x: f64, direction: Direction) -> f64 {
+pub fn sqr(x: f64, direction: Direction) -> f64 {
     mul(x, x, direction)
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn sqrt_finite(value: Dyadic, direction: Direction) -> f64 {
     let value = value.normalize();
     let mut significand = u128::from(value.significand);
@@ -510,18 +539,18 @@ fn sqrt_finite(value: Dyadic, direction: Direction) -> f64 {
     .pack(remainder != 0, direction)
 }
 
-pub(crate) fn sqrt(x: f64, direction: Direction) -> f64 {
+pub fn sqrt(x: f64, direction: Direction) -> f64 {
     match FloatClass::new(x) {
-        FloatClass::NaN => f64::NAN,
-        FloatClass::Infinity { negative: true } => f64::NAN,
+        FloatClass::NaN
+        | FloatClass::Infinity { negative: true }
+        | FloatClass::Finite(Dyadic { negative: true, .. }) => f64::NAN,
         FloatClass::Infinity { negative: false } => f64::INFINITY,
         FloatClass::Zero { negative } => signed_zero(negative),
-        FloatClass::Finite(Dyadic { negative: true, .. }) => f64::NAN,
         FloatClass::Finite(value) => sqrt_finite(value, direction),
     }
 }
 
-pub(crate) fn fma(x: f64, y: f64, z: f64, direction: Direction) -> f64 {
+pub fn fma(x: f64, y: f64, z: f64, direction: Direction) -> f64 {
     let product = WideFloatClass::exact_product(x, y);
     match (product, FloatClass::new(z)) {
         (WideFloatClass::NaN, _) | (_, FloatClass::NaN) => f64::NAN,
@@ -539,8 +568,9 @@ pub(crate) fn fma(x: f64, y: f64, z: f64, direction: Direction) -> f64 {
                 f64::NAN
             }
         }
-        (WideFloatClass::Infinity { negative }, _) => infinity(negative),
-        (_, FloatClass::Infinity { negative }) => infinity(negative),
+        (WideFloatClass::Infinity { negative }, _) | (_, FloatClass::Infinity { negative }) => {
+            infinity(negative)
+        }
         (
             WideFloatClass::Zero {
                 negative: product_negative,
@@ -561,7 +591,7 @@ pub(crate) fn fma(x: f64, y: f64, z: f64, direction: Direction) -> f64 {
 
 // Power functions.
 
-pub(crate) fn pown(x: f64, p: i32, direction: Direction) -> f64 {
+pub fn pown(x: f64, p: i32, direction: Direction) -> f64 {
     if p == 0 {
         return 1.0;
     }
@@ -623,7 +653,7 @@ fn outward_finite_approximation_ulps(mut value: f64, direction: Direction, ulps:
     value
 }
 
-pub(crate) fn exp(x: f64, direction: Direction) -> f64 {
+pub fn exp(x: f64, direction: Direction) -> f64 {
     if x.is_nan() {
         return f64::NAN;
     }
@@ -639,7 +669,15 @@ pub(crate) fn exp(x: f64, direction: Direction) -> f64 {
     outward_positive_approximation(libm::exp(x), direction)
 }
 
-pub(crate) fn exp2(x: f64, direction: Direction) -> f64 {
+#[allow(
+    clippy::as_conversions,
+    clippy::arithmetic_side_effects,
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::expect_used
+)]
+pub fn exp2(x: f64, direction: Direction) -> f64 {
     if x.is_nan() {
         return f64::NAN;
     }
@@ -650,10 +688,14 @@ pub(crate) fn exp2(x: f64, direction: Direction) -> f64 {
         return f64::INFINITY;
     }
     if (-1074.0..=-1023.0).contains(&x) && x == (x as i32) as f64 {
-        return f64::from_bits(1u64 << ((x as i32 + 1074) as u32));
+        return f64::from_bits(
+            1u64 << u32::try_from(x as i32 + 1074).expect("subnormal exponent is nonnegative"),
+        );
     }
     if (-1022.0..=1023.0).contains(&x) && x == (x as i32) as f64 {
-        return f64::from_bits(((x as i32 + 1023) as u64) << 52);
+        return f64::from_bits(
+            u64::try_from(x as i32 + 1023).expect("normal exponent is nonnegative") << 52,
+        );
     }
     let ln_2 = match (x.is_sign_negative(), direction) {
         (false, Direction::Down) | (true, Direction::Up) => LN_2.next_down(),
@@ -662,7 +704,12 @@ pub(crate) fn exp2(x: f64, direction: Direction) -> f64 {
     exp(mul(x, ln_2, direction), direction)
 }
 
-pub(crate) fn exp10(x: f64, direction: Direction) -> f64 {
+#[allow(
+    clippy::as_conversions,
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation
+)]
+pub fn exp10(x: f64, direction: Direction) -> f64 {
     if x.is_nan() {
         return f64::NAN;
     }
@@ -685,7 +732,7 @@ pub(crate) fn exp10(x: f64, direction: Direction) -> f64 {
     exp(mul(x, ln_10, direction), direction)
 }
 
-pub(crate) fn log(x: f64, direction: Direction) -> f64 {
+pub fn log(x: f64, direction: Direction) -> f64 {
     if x.is_nan() || x < 0.0 {
         return f64::NAN;
     }
@@ -701,7 +748,8 @@ pub(crate) fn log(x: f64, direction: Direction) -> f64 {
     outward_finite_approximation_ulps(libm::log(x), direction, 2)
 }
 
-pub(crate) fn log2(x: f64, direction: Direction) -> f64 {
+#[allow(clippy::arithmetic_side_effects)]
+pub fn log2(x: f64, direction: Direction) -> f64 {
     if x.is_nan() || x < 0.0 {
         return f64::NAN;
     }
@@ -714,7 +762,7 @@ pub(crate) fn log2(x: f64, direction: Direction) -> f64 {
     if let FloatClass::Finite(value) = FloatClass::new(x)
         && value.significand.is_power_of_two()
     {
-        let exponent = value.exponent + value.significand.trailing_zeros() as i32;
+        let exponent = value.exponent + value.significand.trailing_zeros().cast_signed();
         return if exponent == 0 {
             direction.exact_zero()
         } else {
@@ -724,7 +772,7 @@ pub(crate) fn log2(x: f64, direction: Direction) -> f64 {
     log_over_constant(x, LN_2, direction)
 }
 
-pub(crate) fn log10(x: f64, direction: Direction) -> f64 {
+pub fn log10(x: f64, direction: Direction) -> f64 {
     if x.is_nan() || x < 0.0 {
         return f64::NAN;
     }
@@ -761,7 +809,7 @@ fn log_over_constant(x: f64, constant: f64, direction: Direction) -> f64 {
 
 // Trigonometric functions.
 
-pub(crate) fn sin(x: f64, direction: Direction) -> f64 {
+pub fn sin(x: f64, direction: Direction) -> f64 {
     if !x.is_finite() {
         return f64::NAN;
     }
@@ -780,7 +828,7 @@ pub(crate) fn sin(x: f64, direction: Direction) -> f64 {
     }
 }
 
-pub(crate) fn cos(x: f64, direction: Direction) -> f64 {
+pub fn cos(x: f64, direction: Direction) -> f64 {
     if !x.is_finite() {
         return f64::NAN;
     }
@@ -799,7 +847,7 @@ pub(crate) fn cos(x: f64, direction: Direction) -> f64 {
     }
 }
 
-pub(crate) fn tan(x: f64, direction: Direction) -> f64 {
+pub fn tan(x: f64, direction: Direction) -> f64 {
     if !x.is_finite() {
         return f64::NAN;
     }
@@ -832,13 +880,16 @@ pub(crate) fn tan(x: f64, direction: Direction) -> f64 {
 
 type Bounds = (f64, f64);
 
+// The quotient is rounded to an exactly representable integer before this
+// conversion, and the bound limits it to the range of `i64`.
+#[allow(clippy::as_conversions, clippy::cast_possible_truncation)]
 fn reduced_trig_bounds(x: f64) -> Option<(Bounds, Bounds)> {
     debug_assert!(x.is_finite());
     // Any exactly represented integer multiple is valid for the reduction.
     // The subsequent remainder check rejects a quotient whose binary64
     // selection or pi enclosure is too imprecise.
     let multiple = libm::round(x / FRAC_PI_2);
-    if multiple.abs() > (1_u64 << 52) as f64 {
+    if multiple.abs() > 4_503_599_627_370_496.0 {
         return None;
     }
     let multiple_integer = multiple as i64;
@@ -884,6 +935,7 @@ fn reduced_trig_bounds(x: f64) -> Option<(Bounds, Bounds)> {
     })
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn sin_series(x: f64, direction: Direction) -> f64 {
     if x.is_sign_negative() {
         return -sin_series(-x, direction.opposite());
@@ -895,7 +947,7 @@ fn sin_series(x: f64, direction: Direction) -> f64 {
     let mut term_upper = x;
     let mut lower = 0.0;
     let mut upper = 0.0;
-    for index in 0..14 {
+    for index in 0_u32..14 {
         if index & 1 == 0 {
             lower = add(lower, term_lower, Direction::Down);
             upper = add(upper, term_upper, Direction::Up);
@@ -903,7 +955,7 @@ fn sin_series(x: f64, direction: Direction) -> f64 {
             lower = sub(lower, term_upper, Direction::Down);
             upper = sub(upper, term_lower, Direction::Up);
         }
-        let denominator = f64::from(((2 * index + 2) * (2 * index + 3)) as u32);
+        let denominator = f64::from((2 * index + 2) * (2 * index + 3));
         term_lower = div(
             mul(term_lower, square_lower, Direction::Down),
             denominator,
@@ -924,6 +976,7 @@ fn sin_series(x: f64, direction: Direction) -> f64 {
     }
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn cos_series(x: f64, direction: Direction) -> f64 {
     let x = x.abs();
     debug_assert!((0.0..=0.8).contains(&x));
@@ -933,7 +986,7 @@ fn cos_series(x: f64, direction: Direction) -> f64 {
     let mut term_upper = 1.0;
     let mut lower = 0.0;
     let mut upper = 0.0;
-    for index in 0..14 {
+    for index in 0_u32..14 {
         if index & 1 == 0 {
             lower = add(lower, term_lower, Direction::Down);
             upper = add(upper, term_upper, Direction::Up);
@@ -941,7 +994,7 @@ fn cos_series(x: f64, direction: Direction) -> f64 {
             lower = sub(lower, term_upper, Direction::Down);
             upper = sub(upper, term_lower, Direction::Up);
         }
-        let denominator = f64::from(((2 * index + 1) * (2 * index + 2)) as u32);
+        let denominator = f64::from((2 * index + 1) * (2 * index + 2));
         term_lower = div(
             mul(term_lower, square_lower, Direction::Down),
             denominator,
@@ -960,7 +1013,7 @@ fn cos_series(x: f64, direction: Direction) -> f64 {
     }
 }
 
-pub(crate) fn asin(x: f64, direction: Direction) -> f64 {
+pub fn asin(x: f64, direction: Direction) -> f64 {
     if x.is_nan() || !(-1.0..=1.0).contains(&x) {
         return f64::NAN;
     }
@@ -993,7 +1046,7 @@ pub(crate) fn asin(x: f64, direction: Direction) -> f64 {
     atan(ratio, direction)
 }
 
-pub(crate) fn acos(x: f64, direction: Direction) -> f64 {
+pub fn acos(x: f64, direction: Direction) -> f64 {
     if x.is_nan() || !(-1.0..=1.0).contains(&x) {
         return f64::NAN;
     }
@@ -1007,7 +1060,7 @@ pub(crate) fn acos(x: f64, direction: Direction) -> f64 {
     )
 }
 
-pub(crate) fn atan(x: f64, direction: Direction) -> f64 {
+pub fn atan(x: f64, direction: Direction) -> f64 {
     if x.is_nan() {
         return f64::NAN;
     }
@@ -1057,6 +1110,7 @@ fn atan_positive(x: f64, direction: Direction) -> f64 {
     )
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn atan_series_positive(x: f64, direction: Direction) -> f64 {
     debug_assert!((0.0..=0.5).contains(&x));
     let square_lower = mul(x, x, Direction::Down);
@@ -1068,8 +1122,8 @@ fn atan_series_positive(x: f64, direction: Direction) -> f64 {
     // atan(x) = x - x^3/3 + x^5/5 - ... . On [0, 1/2] the term
     // magnitudes decrease. Enclose 28 terms, then use the magnitude of the
     // next term as the alternating-series remainder bound.
-    for index in 0..28 {
-        let denominator = f64::from((2 * index + 1) as u32);
+    for index in 0_u32..28 {
+        let denominator = f64::from(2 * index + 1);
         let term_lower = div(power_lower, denominator, Direction::Down);
         let term_upper = div(power_upper, denominator, Direction::Up);
         if index & 1 == 0 {
@@ -1091,7 +1145,7 @@ fn atan_series_positive(x: f64, direction: Direction) -> f64 {
     }
 }
 
-pub(crate) fn atan2(y: f64, x: f64, direction: Direction) -> f64 {
+pub fn atan2(y: f64, x: f64, direction: Direction) -> f64 {
     if x.is_nan() || y.is_nan() || (x == 0.0 && y == 0.0) {
         return f64::NAN;
     }
@@ -1147,7 +1201,7 @@ pub(crate) fn atan2(y: f64, x: f64, direction: Direction) -> f64 {
 
 // Hyperbolic functions.
 
-pub(crate) fn sinh(x: f64, direction: Direction) -> f64 {
+pub fn sinh(x: f64, direction: Direction) -> f64 {
     if x.is_nan() {
         return f64::NAN;
     }
@@ -1183,6 +1237,7 @@ pub(crate) fn sinh(x: f64, direction: Direction) -> f64 {
     }
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn sinh_series_positive(x: f64, direction: Direction) -> f64 {
     debug_assert!((0.0..=1.0).contains(&x));
     // All terms of sinh(x) are nonnegative here. Directed recurrence through
@@ -1190,8 +1245,8 @@ fn sinh_series_positive(x: f64, direction: Direction) -> f64 {
     let square = mul(x, x, direction);
     let mut term = x;
     let mut sum = x;
-    for index in 1..=8 {
-        let denominator = f64::from((2 * index * (2 * index + 1)) as u32);
+    for index in 1_u32..=8 {
+        let denominator = f64::from(2 * index * (2 * index + 1));
         term = div(mul(term, square, direction), denominator, direction);
         sum = add(sum, term, direction);
     }
@@ -1207,7 +1262,7 @@ fn sinh_series_positive(x: f64, direction: Direction) -> f64 {
     add(sum, tail, Direction::Up)
 }
 
-pub(crate) fn cosh(x: f64, direction: Direction) -> f64 {
+pub fn cosh(x: f64, direction: Direction) -> f64 {
     if x.is_nan() {
         return f64::NAN;
     }
@@ -1229,7 +1284,7 @@ pub(crate) fn cosh(x: f64, direction: Direction) -> f64 {
     f64::max(mul(sum, 0.5, direction), 1.0)
 }
 
-pub(crate) fn tanh(x: f64, direction: Direction) -> f64 {
+pub fn tanh(x: f64, direction: Direction) -> f64 {
     if x.is_nan() {
         return f64::NAN;
     }
@@ -1264,7 +1319,7 @@ pub(crate) fn tanh(x: f64, direction: Direction) -> f64 {
     }
 }
 
-pub(crate) fn asinh(x: f64, direction: Direction) -> f64 {
+pub fn asinh(x: f64, direction: Direction) -> f64 {
     if x.is_nan() {
         return f64::NAN;
     }
@@ -1306,7 +1361,7 @@ pub(crate) fn asinh(x: f64, direction: Direction) -> f64 {
     }
 }
 
-pub(crate) fn acosh(x: f64, direction: Direction) -> f64 {
+pub fn acosh(x: f64, direction: Direction) -> f64 {
     if x.is_nan() || x < 1.0 {
         return f64::NAN;
     }
@@ -1330,7 +1385,7 @@ pub(crate) fn acosh(x: f64, direction: Direction) -> f64 {
     )
 }
 
-pub(crate) fn atanh(x: f64, direction: Direction) -> f64 {
+pub fn atanh(x: f64, direction: Direction) -> f64 {
     if x.is_nan() || !(-1.0..=1.0).contains(&x) {
         return f64::NAN;
     }
@@ -1365,7 +1420,7 @@ pub(crate) fn atanh(x: f64, direction: Direction) -> f64 {
 
 // Numeric interval queries.
 
-pub(crate) fn radius(inf: f64, sup: f64, midpoint: f64) -> f64 {
+pub fn radius(inf: f64, sup: f64, midpoint: f64) -> f64 {
     // Each distance must be rounded upward independently: rounding the
     // width first and then halving can underestimate after two roundings.
     let below = sub(midpoint, inf, Direction::Up);
@@ -1375,9 +1430,9 @@ pub(crate) fn radius(inf: f64, sup: f64, midpoint: f64) -> f64 {
 
 // Exact parsing of all required number literal forms.
 
-pub(crate) fn number_literal(literal: &str, direction: Direction) -> Option<f64> {
+pub fn number_literal(literal: &str, direction: Direction) -> Option<f64> {
     let bytes = literal.as_bytes();
-    if bytes.is_empty() || bytes.iter().any(|byte| byte.is_ascii_whitespace()) {
+    if bytes.is_empty() || bytes.iter().any(u8::is_ascii_whitespace) {
         return None;
     }
 
@@ -1393,7 +1448,12 @@ pub(crate) fn number_literal(literal: &str, direction: Direction) -> Option<f64>
     if bytes.contains(&b'/') {
         return parse_rational_literal(bytes, direction);
     }
-    if unsigned.len() >= 2 && unsigned[0] == b'0' && unsigned[1].eq_ignore_ascii_case(&b'x') {
+    if unsigned.len() >= 2
+        && unsigned.first() == Some(&b'0')
+        && unsigned
+            .get(1)
+            .is_some_and(|byte| byte.eq_ignore_ascii_case(&b'x'))
+    {
         return parse_hex_literal(bytes, direction);
     }
     parse_decimal_literal(literal, direction)
@@ -1425,9 +1485,9 @@ struct ExactDecimal {
 }
 
 fn strip_number_sign(bytes: &[u8]) -> Option<(bool, &[u8])> {
-    match bytes.first().copied()? {
-        b'-' => Some((true, &bytes[1..])),
-        b'+' => Some((false, &bytes[1..])),
+    match bytes.split_first()? {
+        (b'-', rest) => Some((true, rest)),
+        (b'+', rest) => Some((false, rest)),
         _ => Some((false, bytes)),
     }
 }
@@ -1440,6 +1500,7 @@ fn eq_ascii_case(left: &[u8], right: &[u8]) -> bool {
             .all(|(left, right)| left.eq_ignore_ascii_case(right))
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn parse_signed_decimal_exponent(bytes: &[u8]) -> Option<i64> {
     let (negative, digits) = strip_number_sign(bytes)?;
     if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
@@ -1458,6 +1519,7 @@ fn parse_signed_decimal_exponent(bytes: &[u8]) -> Option<i64> {
     })
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn analyze_decimal_literal(literal: &str) -> Option<DecimalLiteral<'_>> {
     let bytes = literal.as_bytes();
     let (negative, unsigned) = strip_number_sign(bytes)?;
@@ -1468,15 +1530,16 @@ fn analyze_decimal_literal(literal: &str) -> Option<DecimalLiteral<'_>> {
         .iter()
         .position(|byte| byte.eq_ignore_ascii_case(&b'e'));
     let (mantissa, exponent) = if let Some(index) = exponent_index {
-        if unsigned[index + 1..]
+        let exponent_text = unsigned.get(index + 1..)?;
+        if exponent_text
             .iter()
             .any(|byte| byte.eq_ignore_ascii_case(&b'e'))
         {
             return None;
         }
         (
-            &unsigned[..index],
-            parse_signed_decimal_exponent(&unsigned[index + 1..])?,
+            unsigned.get(..index)?,
+            parse_signed_decimal_exponent(exponent_text)?,
         )
     } else {
         (unsigned, 0)
@@ -1523,11 +1586,16 @@ fn analyze_decimal_literal(literal: &str) -> Option<DecimalLiteral<'_>> {
     })
 }
 
+#[allow(
+    clippy::arithmetic_side_effects,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::unreachable
+)]
 fn exact_decimal_from_float(value: f64) -> ExactDecimal {
     debug_assert!(value.is_finite() && value != 0.0);
-    let dyadic = match FloatClass::new(value.abs()) {
-        FloatClass::Finite(value) => value,
-        _ => unreachable!(),
+    let FloatClass::Finite(dyadic) = FloatClass::new(value.abs()) else {
+        unreachable!();
     };
     let mut result = ExactDecimal {
         digits: [0; 800],
@@ -1536,7 +1604,8 @@ fn exact_decimal_from_float(value: f64) -> ExactDecimal {
     };
     let mut significand = dyadic.significand;
     while significand != 0 {
-        result.digits[result.len] = (significand % 10) as u8;
+        result.digits[result.len] =
+            u8::try_from(significand % 10).expect("decimal digit fits in u8");
         result.len += 1;
         significand /= 10;
     }
@@ -1544,18 +1613,18 @@ fn exact_decimal_from_float(value: f64) -> ExactDecimal {
         result.shift = dyadic.exponent;
         (5, dyadic.exponent.unsigned_abs())
     } else {
-        (2, dyadic.exponent as u32)
+        (2, dyadic.exponent.cast_unsigned())
     };
     for _ in 0..count {
         let mut carry = 0u16;
         for digit in &mut result.digits[..result.len] {
             let product = u16::from(*digit) * factor + carry;
-            *digit = (product % 10) as u8;
+            *digit = u8::try_from(product % 10).expect("decimal digit fits in u8");
             carry = product / 10;
         }
         while carry != 0 {
             debug_assert!(result.len < result.digits.len());
-            result.digits[result.len] = (carry % 10) as u8;
+            result.digits[result.len] = u8::try_from(carry % 10).expect("decimal digit fits in u8");
             result.len += 1;
             carry /= 10;
         }
@@ -1563,6 +1632,13 @@ fn exact_decimal_from_float(value: f64) -> ExactDecimal {
     result
 }
 
+// Decimal lengths and positions are bounded by the representable input
+// slice and therefore fit in the arithmetic width used here.
+#[allow(
+    clippy::arithmetic_side_effects,
+    clippy::expect_used,
+    clippy::indexing_slicing
+)]
 fn compare_decimal_to_float(decimal: DecimalLiteral<'_>, value: f64) -> Ordering {
     if !decimal.nonzero {
         return if value == 0.0 {
@@ -1588,10 +1664,15 @@ fn compare_decimal_to_float(decimal: DecimalLiteral<'_>, value: f64) -> Ordering
     }
 
     let exact = exact_decimal_from_float(value);
-    let decimal_position = (decimal.digits_before_point as i64)
+    let decimal_position = i64::try_from(decimal.digits_before_point)
+        .expect("decimal position fits in i64")
         .saturating_add(decimal.exponent)
-        .saturating_sub(decimal.leading_zero_digits as i64);
-    let exact_position = exact.len as i64 + i64::from(exact.shift);
+        .saturating_sub(
+            i64::try_from(decimal.leading_zero_digits)
+                .expect("decimal leading-zero count fits in i64"),
+        );
+    let exact_position = i64::try_from(exact.len).expect("exact decimal length fits in i64")
+        + i64::from(exact.shift);
     let mut magnitude_order = decimal_position.cmp(&exact_position);
     if magnitude_order == Ordering::Equal {
         let mut input = decimal
@@ -1626,7 +1707,6 @@ fn compare_decimal_to_float(decimal: DecimalLiteral<'_>, value: f64) -> Ordering
 
 fn select_directed_neighbor(value: f64, exact_order: Ordering, direction: Direction) -> f64 {
     match (exact_order, direction) {
-        (Ordering::Equal, _) => value,
         (Ordering::Less, Direction::Down) | (Ordering::Greater, Direction::Up) => {
             if exact_order == Ordering::Less {
                 value.next_down()
@@ -1662,10 +1742,15 @@ fn parse_integer_literal(bytes: &[u8], allow_negative: bool) -> Option<IntegerLi
         .unwrap_or(unsigned.len());
     Some(IntegerLiteral {
         negative: negative && first_nonzero != unsigned.len(),
-        digits: &unsigned[first_nonzero..],
+        digits: unsigned.get(first_nonzero..)?,
     })
 }
 
+#[allow(
+    clippy::arithmetic_side_effects,
+    clippy::expect_used,
+    clippy::indexing_slicing
+)]
 fn product_digit(
     q: IntegerLiteral<'_>,
     value: &ExactDecimal,
@@ -1683,9 +1768,10 @@ fn product_digit(
         }
     }
     *carry = sum / 10;
-    (sum % 10) as u8
+    u8::try_from(sum % 10).expect("decimal digit fits in u8")
 }
 
+#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
 fn compare_integer_to_product(
     numerator: IntegerLiteral<'_>,
     numerator_shift: usize,
@@ -1725,6 +1811,7 @@ fn compare_integer_to_product(
     order
 }
 
+#[allow(clippy::arithmetic_side_effects, clippy::expect_used)]
 fn compare_rational_magnitude_to_float(
     numerator: IntegerLiteral<'_>,
     denominator: IntegerLiteral<'_>,
@@ -1746,11 +1833,18 @@ fn compare_rational_magnitude_to_float(
     }
     let exact = exact_decimal_from_float(value);
     if exact.shift >= 0 {
-        compare_integer_to_product(numerator, 0, denominator, &exact, exact.shift as usize)
+        compare_integer_to_product(
+            numerator,
+            0,
+            denominator,
+            &exact,
+            usize::try_from(exact.shift).expect("nonnegative decimal shift fits in usize"),
+        )
     } else {
         compare_integer_to_product(
             numerator,
-            exact.shift.unsigned_abs() as usize,
+            usize::try_from(exact.shift.unsigned_abs())
+                .expect("decimal shift magnitude fits in usize"),
             denominator,
             &exact,
             0,
@@ -1758,13 +1852,15 @@ fn compare_rational_magnitude_to_float(
     }
 }
 
+#[allow(clippy::arithmetic_side_effects)]
 fn parse_rational_literal(bytes: &[u8], direction: Direction) -> Option<f64> {
     let slash = bytes.iter().position(|&byte| byte == b'/')?;
-    if bytes[slash + 1..].contains(&b'/') {
+    let denominator_bytes = bytes.get(slash + 1..)?;
+    if denominator_bytes.contains(&b'/') {
         return None;
     }
-    let numerator = parse_integer_literal(&bytes[..slash], true)?;
-    let denominator = parse_integer_literal(&bytes[slash + 1..], false)?;
+    let numerator = parse_integer_literal(bytes.get(..slash)?, true)?;
+    let denominator = parse_integer_literal(denominator_bytes, false)?;
     if denominator.digits.is_empty() {
         return None;
     }
@@ -1800,23 +1896,8 @@ fn parse_rational_literal(bytes: &[u8], direction: Direction) -> Option<f64> {
     })
 }
 
-fn parse_hex_literal(bytes: &[u8], direction: Direction) -> Option<f64> {
-    let (negative, unsigned) = strip_number_sign(bytes)?;
-    if unsigned.len() < 4 || unsigned[0] != b'0' || !unsigned[1].eq_ignore_ascii_case(&b'x') {
-        return None;
-    }
-    let exponent_index = unsigned[2..]
-        .iter()
-        .position(|byte| byte.eq_ignore_ascii_case(&b'p'))?
-        + 2;
-    if unsigned[exponent_index + 1..]
-        .iter()
-        .any(|byte| byte.eq_ignore_ascii_case(&b'p'))
-    {
-        return None;
-    }
-    let exponent = parse_signed_decimal_exponent(&unsigned[exponent_index + 1..])?;
-    let mantissa = &unsigned[2..exponent_index];
+#[allow(clippy::arithmetic_side_effects)]
+fn parse_hex_mantissa(mantissa: &[u8]) -> Option<(u128, usize, usize, usize, bool, bool)> {
     let mut point_seen = false;
     let mut digit_count = 0usize;
     let mut fractional_digits = 0usize;
@@ -1856,16 +1937,64 @@ fn parse_hex_literal(bytes: &[u8], direction: Direction) -> Option<f64> {
             }
         }
     }
-    if digit_count == 0 {
+    (digit_count != 0).then_some((
+        significand,
+        fractional_digits,
+        significant_digits,
+        retained_digits,
+        sticky,
+        significant_started,
+    ))
+}
+
+#[allow(clippy::arithmetic_side_effects, clippy::expect_used)]
+fn parse_hex_literal(bytes: &[u8], direction: Direction) -> Option<f64> {
+    let (negative, unsigned) = strip_number_sign(bytes)?;
+    if unsigned.len() < 4
+        || unsigned.first() != Some(&b'0')
+        || !unsigned
+            .get(1)
+            .is_some_and(|byte| byte.eq_ignore_ascii_case(&b'x'))
+    {
         return None;
     }
+    let exponent_index = unsigned
+        .get(2..)?
+        .iter()
+        .position(|byte| byte.eq_ignore_ascii_case(&b'p'))?
+        + 2;
+    let exponent_text = unsigned.get(exponent_index + 1..)?;
+    if exponent_text
+        .iter()
+        .any(|byte| byte.eq_ignore_ascii_case(&b'p'))
+    {
+        return None;
+    }
+    let exponent = parse_signed_decimal_exponent(exponent_text)?;
+    let mantissa = unsigned.get(2..exponent_index)?;
+    let (
+        significand,
+        fractional_digits,
+        significant_digits,
+        retained_digits,
+        sticky,
+        significant_started,
+    ) = parse_hex_mantissa(mantissa)?;
     if !significant_started {
         return Some(if negative { -0.0 } else { 0.0 });
     }
     let omitted_digits = significant_digits - retained_digits;
     let binary_exponent = exponent
-        .saturating_sub((fractional_digits as i64).saturating_mul(4))
-        .saturating_add((omitted_digits as i64).saturating_mul(4));
+        .saturating_sub(
+            i64::try_from(fractional_digits)
+                .expect("fractional digit count fits in i64")
+                .saturating_mul(4),
+        )
+        .saturating_add(
+            i64::try_from(omitted_digits)
+                .expect("omitted digit count fits in i64")
+                .saturating_mul(4),
+        );
     if binary_exponent > 4096 {
         return Some(match (negative, direction) {
             (false, Direction::Down) => f64::MAX,
@@ -1886,7 +2015,7 @@ fn parse_hex_literal(bytes: &[u8], direction: Direction) -> Option<f64> {
         WideDyadic {
             negative,
             significand,
-            exponent: binary_exponent as i32,
+            exponent: i32::try_from(binary_exponent).expect("hex exponent fits in i32"),
         }
         .pack(sticky, direction),
     )
@@ -1919,7 +2048,7 @@ fn contains_periodic_point(
     libm::ceil(quotient_lower) <= libm::floor(quotient_upper)
 }
 
-pub(crate) fn contains_sin_maximum(inf: f64, sup: f64) -> bool {
+pub fn contains_sin_maximum(inf: f64, sup: f64) -> bool {
     contains_periodic_point(
         inf,
         sup,
@@ -1930,7 +2059,7 @@ pub(crate) fn contains_sin_maximum(inf: f64, sup: f64) -> bool {
     )
 }
 
-pub(crate) fn contains_sin_minimum(inf: f64, sup: f64) -> bool {
+pub fn contains_sin_minimum(inf: f64, sup: f64) -> bool {
     contains_periodic_point(
         inf,
         sup,
@@ -1941,11 +2070,11 @@ pub(crate) fn contains_sin_minimum(inf: f64, sup: f64) -> bool {
     )
 }
 
-pub(crate) fn contains_cos_maximum(inf: f64, sup: f64) -> bool {
+pub fn contains_cos_maximum(inf: f64, sup: f64) -> bool {
     contains_periodic_point(inf, sup, -0.0, 0.0, TAU.next_down(), TAU.next_up())
 }
 
-pub(crate) fn contains_cos_minimum(inf: f64, sup: f64) -> bool {
+pub fn contains_cos_minimum(inf: f64, sup: f64) -> bool {
     contains_periodic_point(
         inf,
         sup,
@@ -1956,7 +2085,7 @@ pub(crate) fn contains_cos_minimum(inf: f64, sup: f64) -> bool {
     )
 }
 
-pub(crate) fn contains_tan_pole(inf: f64, sup: f64) -> bool {
+pub fn contains_tan_pole(inf: f64, sup: f64) -> bool {
     contains_periodic_point(
         inf,
         sup,

@@ -1,3 +1,14 @@
+#![allow(missing_docs)]
+#![allow(
+    clippy::arithmetic_side_effects,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::option_if_let_else,
+    clippy::panic,
+    clippy::string_slice,
+    clippy::too_many_lines,
+    clippy::unwrap_used
+)]
 // Data-driven port of compatible tests shipped by IntervalArithmetic.jl.
 //
 // The test vectors in tests/itf1788 retain their original Apache-2.0 notices.
@@ -88,7 +99,7 @@ fn parse_itl_interval_operand(text: &str) -> (AnyInterval, &str) {
     }
 }
 
-fn same_number(actual: f64, expected: f64) -> bool {
+const fn same_number(actual: f64, expected: f64) -> bool {
     (actual.is_nan() && expected.is_nan()) || actual.to_bits() == expected.to_bits()
 }
 

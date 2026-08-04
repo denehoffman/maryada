@@ -25,8 +25,6 @@
 //! exception conditions accept a [`SignalSink`]; pass `&mut ()` to ignore them.
 
 #![no_std]
-#![deny(missing_docs)]
-#![deny(rustdoc::broken_intra_doc_links)]
 
 #[cfg(feature = "complex")]
 mod complex;

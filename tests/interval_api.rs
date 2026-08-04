@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+#![allow(clippy::too_many_lines, clippy::unwrap_used)]
 use core::cmp::Ordering;
 
 use maryada::{

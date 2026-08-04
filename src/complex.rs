@@ -23,6 +23,7 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Returns the singleton imaginary unit `i`.
+    #[must_use]
     pub fn i() -> Self {
         Self::new(crate::zero(), crate::singleton(1.0))
     }
@@ -69,21 +70,25 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Adds a real interval to the real component.
+    #[must_use]
     pub fn add_real(self, value: I) -> Self {
         Self::new(crate::add(self.re, value), self.im)
     }
 
     /// Subtracts a real interval from the real component.
+    #[must_use]
     pub fn sub_real(self, value: I) -> Self {
         Self::new(crate::sub(self.re, value), self.im)
     }
 
     /// Multiplies both components by a real interval.
+    #[must_use]
     pub fn scale(self, value: I) -> Self {
         Self::new(crate::mul(self.re, value), crate::mul(self.im, value))
     }
 
     /// Divides both components by a real interval.
+    #[must_use]
     pub fn div_real(self, value: I) -> Self {
         Self::new(crate::div(self.re, value), crate::div(self.im, value))
     }
@@ -97,6 +102,7 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Returns the complex conjugate.
+    #[must_use]
     pub fn conj(self) -> Self {
         Self::new(self.re, crate::neg(self.im))
     }
@@ -234,12 +240,13 @@ impl<I: IntervalDatum> ComplexBox<I> {
         crate::is_entire(self.re) && crate::is_entire(self.im)
     }
 
-    /// Returns whether either component is NaI.
+    /// Returns whether either component is `NaI`.
     pub fn is_nai(self) -> bool {
         self.re.__is_nai() || self.im.__is_nai()
     }
 
     /// Returns whether the box contains exactly one complex value.
+    #[allow(clippy::float_cmp)]
     pub fn is_singleton(self) -> bool {
         !self.is_nai()
             && !self.is_empty()
@@ -316,6 +323,7 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Returns the rectangular intersection of two boxes.
+    #[must_use]
     pub fn intersection(self, other: Self) -> Self {
         let result = Self::new(
             crate::intersection(self.re, other.re),
@@ -329,6 +337,7 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Returns the smallest rectangular box containing both operands.
+    #[must_use]
     pub fn convex_hull(self, other: Self) -> Self {
         if self.is_empty() {
             return other;
@@ -343,6 +352,7 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Encloses the complex reciprocal.
+    #[must_use]
     pub fn recip(self) -> Self {
         let denom = crate::add(crate::sqr(self.re), crate::sqr(self.im));
         Self::new(
@@ -352,6 +362,7 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Encloses the complex square.
+    #[must_use]
     pub fn sqr(self) -> Self {
         Self::new(
             crate::sub(crate::sqr(self.re), crate::sqr(self.im)),
@@ -360,11 +371,13 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Encloses the principal complex square root.
+    #[must_use]
     pub fn sqrt(self) -> Self {
         Self::from(0.5).mul_raw(self.log()).exp()
     }
 
     /// Encloses `self * y + z` componentwise using fused operations.
+    #[must_use]
     pub fn mul_add(self, y: Self, z: Self) -> Self {
         Self::new(
             crate::fma(self.re, y.re, crate::fma(crate::neg(self.im), y.im, z.re)),
@@ -373,6 +386,7 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Raises this box to an integer power by exponentiation by squaring.
+    #[must_use]
     pub fn pown(self, p: i32) -> Self {
         if self.is_empty_raw() {
             return Self::empty_raw();
@@ -389,23 +403,26 @@ impl<I: IntervalDatum> ComplexBox<I> {
             }
             exponent >>= 1;
             if exponent != 0 {
-                base = base.sqr()
+                base = base.sqr();
             }
         }
         result
     }
 
     /// Alias for [`ComplexBox::pown`].
+    #[must_use]
     pub fn powi(self, i: i32) -> Self {
         self.pown(i)
     }
 
     /// Encloses the principal complex power with exponents in `other`.
+    #[must_use]
     pub fn pow(self, other: Self) -> Self {
         other.mul_raw(self.log()).exp()
     }
 
     /// Encloses the complex exponential.
+    #[must_use]
     pub fn exp(self) -> Self {
         Self::new(
             crate::mul(crate::exp(self.re), crate::cos(self.im)),
@@ -414,35 +431,41 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Encloses the base-two complex exponential.
+    #[must_use]
     pub fn exp2(self) -> Self {
         self.mul_raw(Self::from(crate::log(crate::singleton::<I>(2.0))))
             .exp()
     }
 
     /// Encloses the base-ten complex exponential.
+    #[must_use]
     pub fn exp10(self) -> Self {
         self.mul_raw(Self::from(crate::log(crate::singleton::<I>(10.0))))
             .exp()
     }
 
     /// Encloses the principal complex logarithm.
+    #[must_use]
     pub fn log(self) -> Self {
         Self::new(crate::log(self.abs()), self.arg())
     }
 
     /// Encloses the principal base-two complex logarithm.
+    #[must_use]
     pub fn log2(self) -> Self {
         self.log()
             .div_raw(Self::from(crate::log(crate::singleton::<I>(2.0))))
     }
 
     /// Encloses the principal base-ten complex logarithm.
+    #[must_use]
     pub fn log10(self) -> Self {
         self.log()
             .div_raw(Self::from(crate::log(crate::singleton::<I>(10.0))))
     }
 
     /// Encloses the complex sine.
+    #[must_use]
     pub fn sin(self) -> Self {
         Self::new(
             crate::mul(crate::sin(self.re), crate::cosh(self.im)),
@@ -451,6 +474,7 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Encloses the complex cosine.
+    #[must_use]
     pub fn cos(self) -> Self {
         Self::new(
             crate::mul(crate::cos(self.re), crate::cosh(self.im)),
@@ -459,6 +483,7 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Encloses the complex tangent.
+    #[must_use]
     pub fn tan(self) -> Self {
         let denom = crate::add(
             crate::cos(crate::mul(crate::singleton(2.0), self.re)),
@@ -477,6 +502,7 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Encloses the principal complex inverse sine.
+    #[must_use]
     pub fn asin(self) -> Self {
         Self::i().neg_raw().mul_raw(Self::log(
             Self::i()
@@ -486,6 +512,7 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Encloses the principal complex inverse cosine.
+    #[must_use]
     pub fn acos(self) -> Self {
         Self::i().neg_raw().mul_raw(Self::log(
             self.add_raw(Self::i().mul_raw(Self::from(1.0).sub_raw(self.sqr()).sqrt())),
@@ -493,6 +520,7 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Encloses the principal complex inverse tangent.
+    #[must_use]
     pub fn atan(self) -> Self {
         let iz = Self::i().mul_raw(self);
         Self::i().div_raw(Self::from(2.0)).mul_raw(
@@ -504,6 +532,7 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Encloses the complex hyperbolic sine.
+    #[must_use]
     pub fn sinh(self) -> Self {
         Self::new(
             crate::mul(crate::sinh(self.re), crate::cos(self.im)),
@@ -512,6 +541,7 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Encloses the complex hyperbolic cosine.
+    #[must_use]
     pub fn cosh(self) -> Self {
         Self::new(
             crate::mul(crate::cosh(self.re), crate::cos(self.im)),
@@ -520,6 +550,7 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Encloses the complex hyperbolic tangent.
+    #[must_use]
     pub fn tanh(self) -> Self {
         let denom = crate::add(
             crate::cosh(crate::mul(crate::singleton(2.0), self.re)),
@@ -538,12 +569,14 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Encloses the principal complex inverse hyperbolic sine.
+    #[must_use]
     pub fn asinh(self) -> Self {
         self.add_raw((self.sqr().add_raw(Self::from(1.0))).sqrt())
             .log()
     }
 
     /// Encloses the principal complex inverse hyperbolic cosine.
+    #[must_use]
     pub fn acosh(self) -> Self {
         self.add_raw(
             self.sub_raw(Self::from(1.0))
@@ -554,6 +587,7 @@ impl<I: IntervalDatum> ComplexBox<I> {
     }
 
     /// Encloses the principal complex inverse hyperbolic tangent.
+    #[must_use]
     pub fn atanh(self) -> Self {
         Self::from(0.5).mul_raw(
             self.add_raw(Self::from(1.0))
@@ -677,6 +711,7 @@ impl ComplexBox<DecoratedInterval> {
     };
 
     /// Returns the weaker decoration of the real and imaginary components.
+    #[must_use]
     pub fn decoration(self) -> Decoration {
         core::cmp::min(self.re.decoration_raw(), self.im.decoration_raw())
     }

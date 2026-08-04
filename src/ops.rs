@@ -46,16 +46,19 @@ fn ternary<T: IntervalDatum>(
 }
 
 /// Constructs an interval datum with endpoints `inf` and `sup`.
+#[must_use]
 pub fn new<T: IntervalDatum>(inf: f64, sup: f64) -> T {
     T::__from_nums(inf, sup)
 }
 
 /// Constructs the singleton interval containing `value`.
+#[must_use]
 pub fn singleton<T: IntervalDatum>(value: f64) -> T {
     T::__from_nums(value, value)
 }
 
 /// Returns the singleton interval containing zero.
+#[must_use]
 pub fn zero<T: IntervalDatum>() -> T {
     T::__zero()
 }
@@ -63,11 +66,13 @@ pub fn zero<T: IntervalDatum>() -> T {
 // 6.7.1: interval constants.
 
 /// Returns the empty interval.
+#[must_use]
 pub fn empty<T: IntervalDatum>() -> T {
     T::__empty()
 }
 
 /// Returns the interval containing every real number.
+#[must_use]
 pub fn entire<T: IntervalDatum>() -> T {
     T::__entire()
 }
@@ -318,7 +323,7 @@ pub fn convex_hull<T: IntervalDatum>(x: T, y: T) -> T {
 
 // 6.7.6: numeric functions.
 
-/// Returns the lower endpoint, or NaN for NaI.
+/// Returns the lower endpoint, or `NaN` for `NaI`.
 pub fn inf<T: IntervalDatum>(x: T) -> f64 {
     if x.__is_nai() {
         f64::NAN
@@ -327,7 +332,7 @@ pub fn inf<T: IntervalDatum>(x: T) -> f64 {
     }
 }
 
-/// Returns the upper endpoint, or NaN for NaI.
+/// Returns the upper endpoint, or `NaN` for `NaI`.
 pub fn sup<T: IntervalDatum>(x: T) -> f64 {
     if x.__is_nai() {
         f64::NAN
@@ -336,7 +341,7 @@ pub fn sup<T: IntervalDatum>(x: T) -> f64 {
     }
 }
 
-/// Returns a representative midpoint, or NaN for an empty interval or NaI.
+/// Returns a representative midpoint, or `NaN` for an empty interval or `NaI`.
 ///
 /// For finite bounded inputs this uses the overflow-safe binary64 midpoint,
 /// rounded to nearest. Unbounded inputs follow the cases prescribed by IEEE
@@ -400,7 +405,7 @@ pub fn mid_rad<T: IntervalDatum>(x: T) -> (f64, f64) {
 
 // 6.7.7: boolean functions.
 
-/// Returns whether `x` is the empty interval; NaI is not empty.
+/// Returns whether `x` is the empty interval; `NaI` is not empty.
 pub fn is_empty<T: IntervalDatum>(x: T) -> bool {
     !x.__is_nai() && x.__interval().is_empty_raw()
 }
@@ -447,6 +452,7 @@ pub fn disjoint<T: IntervalDatum>(x: T, y: T) -> bool {
 }
 
 /// Returns whether a decorated interval is Not an Interval.
+#[must_use]
 pub fn is_nai(x: DecoratedInterval) -> bool {
     x.is_nai_raw()
 }
@@ -454,11 +460,12 @@ pub fn is_nai(x: DecoratedInterval) -> bool {
 // 6.7.8: operations on/with decorations.
 
 /// Attaches the strongest valid decoration to a bare interval.
+#[must_use]
 pub const fn new_dec(x: Interval) -> DecoratedInterval {
     DecoratedInterval::new_dec_raw(x)
 }
 
-/// Extracts the bare interval, signaling and returning empty for NaI.
+/// Extracts the bare interval, signaling and returning empty for `NaI`.
 pub fn interval_part<S: SignalSink>(x: DecoratedInterval, signals: &mut S) -> Interval {
     if x.is_nai_raw() {
         signals.raise(Signal::IntvlPartOfNaI);
@@ -469,11 +476,13 @@ pub fn interval_part<S: SignalSink>(x: DecoratedInterval, signals: &mut S) -> In
 }
 
 /// Returns the decoration component of a decorated interval.
+#[must_use]
 pub const fn decoration_part(x: DecoratedInterval) -> Decoration {
     x.decoration_raw()
 }
 
 /// Attaches `decoration`, weakening it when required by the interval.
+#[must_use]
 pub fn set_dec(x: Interval, decoration: Decoration) -> DecoratedInterval {
     DecoratedInterval::set_dec_raw(x, decoration)
 }
@@ -1282,9 +1291,6 @@ fn atanh_bare(x: Interval) -> BareResult {
 }
 
 fn sign_bare(x: Interval) -> BareResult {
-    if x.is_empty_raw() {
-        return empty_result();
-    }
     fn sign_value(value: f64) -> f64 {
         if value < 0.0 {
             -1.0
@@ -1293,6 +1299,9 @@ fn sign_bare(x: Interval) -> BareResult {
         } else {
             0.0
         }
+    }
+    if x.is_empty_raw() {
+        return empty_result();
     }
     let interval = Interval::from_valid_bounds(sign_value(x.inf_raw()), sign_value(x.sup_raw()));
     BareResult {
@@ -1637,6 +1646,7 @@ fn interior_bare(x: Interval, y: Interval) -> bool {
         && strict_or_same_infinity(x.sup_raw(), y.sup_raw())
 }
 
+#[allow(clippy::suspicious_operation_groupings)]
 fn disjoint_bare(x: Interval, y: Interval) -> bool {
     x.is_empty_raw() || y.is_empty_raw() || x.sup_raw() < y.inf_raw() || y.sup_raw() < x.inf_raw()
 }
@@ -1764,21 +1774,17 @@ fn integer_function_decoration(
     result: Interval,
     discontinuity: Option<Decoration>,
 ) -> Decoration {
-    if let Some(decoration) = discontinuity {
-        decoration
-    } else {
-        continuous_unary_decoration(input, result)
-    }
+    discontinuity.unwrap_or_else(|| continuous_unary_decoration(input, result))
 }
 
-fn empty_result() -> BareResult {
+const fn empty_result() -> BareResult {
     BareResult {
         interval: Interval::EMPTY,
         local: Decoration::Trv,
     }
 }
 
-fn continuous_unary_decoration(input: Interval, result: Interval) -> Decoration {
+const fn continuous_unary_decoration(input: Interval, result: Interval) -> Decoration {
     if input.is_empty_raw() {
         Decoration::Trv
     } else if input.is_bounded_raw() && result.is_bounded_raw() {
@@ -1788,7 +1794,7 @@ fn continuous_unary_decoration(input: Interval, result: Interval) -> Decoration 
     }
 }
 
-fn continuous_binary_decoration(x: Interval, y: Interval, result: Interval) -> Decoration {
+const fn continuous_binary_decoration(x: Interval, y: Interval, result: Interval) -> Decoration {
     if x.is_empty_raw() || y.is_empty_raw() {
         Decoration::Trv
     } else if x.is_bounded_raw() && y.is_bounded_raw() && result.is_bounded_raw() {
@@ -1798,7 +1804,7 @@ fn continuous_binary_decoration(x: Interval, y: Interval, result: Interval) -> D
     }
 }
 
-fn continuous_ternary_decoration(
+const fn continuous_ternary_decoration(
     x: Interval,
     y: Interval,
     z: Interval,

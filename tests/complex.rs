@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+#![allow(clippy::single_char_pattern, clippy::suboptimal_flops)]
 #![cfg(feature = "num-complex")]
 
 use maryada::{ComplexBox, DecoratedInterval, Decoration, Interval, decoration_part, set_dec};

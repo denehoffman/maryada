@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 #![cfg(feature = "complex")]
 
 use maryada::{ComplexBox, DecoratedInterval, Interval};

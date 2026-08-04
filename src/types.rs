@@ -41,13 +41,10 @@ impl Interval {
     /// Invalid bounds raise [`Signal::UndefinedOperation`] and return
     /// [`Interval::EMPTY`].
     pub fn nums_to_interval<S: SignalSink>(l: f64, u: f64, signals: &mut S) -> Self {
-        match Self::from_nums(l, u) {
-            Some(value) => value,
-            None => {
-                signals.raise(Signal::UndefinedOperation);
-                Self::EMPTY
-            }
-        }
+        Self::from_nums(l, u).unwrap_or_else(|| {
+            signals.raise(Signal::UndefinedOperation);
+            Self::EMPTY
+        })
     }
 
     /// Parses an IEEE 1788 interval literal.
@@ -98,7 +95,7 @@ impl Interval {
         self.inf == f64::NEG_INFINITY && self.sup == f64::INFINITY
     }
 
-    pub(crate) fn is_bounded_raw(self) -> bool {
+    pub(crate) const fn is_bounded_raw(self) -> bool {
         !self.is_empty_raw() && self.inf.is_finite() && self.sup.is_finite()
     }
 
@@ -122,7 +119,7 @@ const fn canonical_sup(value: f64) -> f64 {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[repr(u8)]
 pub enum Decoration {
-    /// Ill-formed: used only for Not an Interval (NaI).
+    /// Ill-formed: used only for Not an Interval (`NaI`).
     Ill = 0,
     /// Trivial: no continuity or definedness guarantee.
     Trv = 4,
@@ -155,7 +152,13 @@ impl TryFrom<u8> for Decoration {
 
 impl From<Decoration> for u8 {
     fn from(value: Decoration) -> Self {
-        value as u8
+        match value {
+            Decoration::Ill => 0,
+            Decoration::Trv => 4,
+            Decoration::Def => 8,
+            Decoration::Dac => 12,
+            Decoration::Com => 16,
+        }
     }
 }
 
@@ -222,20 +225,20 @@ impl DecoratedInterval {
 
     /// Constructs a decorated interval from binary64 endpoints.
     ///
-    /// Invalid bounds raise [`Signal::UndefinedOperation`] and return NaI.
+    /// Invalid bounds raise [`Signal::UndefinedOperation`] and return `NaI`.
     pub fn nums_to_interval<S: SignalSink>(l: f64, u: f64, signals: &mut S) -> Self {
-        match Interval::from_nums(l, u) {
-            Some(value) => Self::new_dec_raw(value),
-            None => {
+        Interval::from_nums(l, u).map_or_else(
+            || {
                 signals.raise(Signal::UndefinedOperation);
                 Self::NAI
-            }
-        }
+            },
+            Self::new_dec_raw,
+        )
     }
 
     /// Parses an IEEE 1788 decorated interval literal.
     ///
-    /// Invalid text raises the corresponding signal and returns NaI.
+    /// Invalid text raises the corresponding signal and returns `NaI`.
     pub fn text_to_interval<S: SignalSink>(s: &str, signals: &mut S) -> Self {
         text::text_to_decorated_interval(s, signals)
     }
@@ -322,12 +325,15 @@ pub trait IntervalDatum: sealed::Sealed + Copy {
     fn __entire() -> Self;
 
     #[doc(hidden)]
+    #[must_use]
     fn __unary_result(self, interval: Interval, local: Decoration) -> Self;
 
     #[doc(hidden)]
+    #[must_use]
     fn __binary_result(self, rhs: Self, interval: Interval, local: Decoration) -> Self;
 
     #[doc(hidden)]
+    #[must_use]
     fn __ternary_result(
         self,
         second: Self,

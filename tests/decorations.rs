@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use maryada::{
     DecoratedInterval, Decoration, Interval, add, ceil, decoration_part, fma, intersection, neg,
     new_dec, set_dec, sign, sqrt,

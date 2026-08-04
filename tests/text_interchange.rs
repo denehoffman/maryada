@@ -1,3 +1,10 @@
+#![allow(missing_docs)]
+#![allow(
+    clippy::float_cmp,
+    clippy::indexing_slicing,
+    clippy::too_many_lines,
+    clippy::unwrap_used
+)]
 use maryada::{
     DecoratedInterval, Decoration, Interval, Signal, SignalFlags, TextError, decoration_part,
     interval_to_text, set_dec, subset,
@@ -222,20 +229,20 @@ fn interchange_encoding_and_validation_match_the_standard_representation() {
         0x40, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // 3
         0x10, // com
     ];
-    let expected_le = [
+    let expected_little_endian = [
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0xbf, // -1
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x40, // 3
         0x10, // com
     ];
 
     assert_eq!(value.to_be_bytes(), expected_be);
-    assert_eq!(value.to_le_bytes(), expected_le);
+    assert_eq!(value.to_le_bytes(), expected_little_endian);
     assert_eq!(
         DecoratedInterval::from_be_bytes(&expected_be, &mut ()),
         value
     );
     assert_eq!(
-        DecoratedInterval::from_le_bytes(&expected_le, &mut ()),
+        DecoratedInterval::from_le_bytes(&expected_little_endian, &mut ()),
         value
     );
 
@@ -362,7 +369,7 @@ fn uncertain_literals_cover_long_input_and_checked_arithmetic_boundaries() {
     let long_center =
         Interval::text_to_interval("1234567890123456789012345678901234567890?1", &mut ());
     assert!(long_center.is_bounded());
-    assert!(long_center.contains(1.2345678901234568e39));
+    assert!(long_center.contains(1.234_567_890_123_456_8e39));
 
     let doubled_center_fallback =
         Interval::text_to_interval("170141183460469231731687303715884105727?1", &mut ());

@@ -33,6 +33,7 @@ mod ops;
 mod rounding;
 mod signals;
 mod text;
+mod traits;
 mod types;
 mod ux;
 
@@ -42,6 +43,7 @@ pub use interchange::*;
 pub use ops::*;
 pub use signals::{Signal, SignalFlags, SignalSink};
 pub use text::{ParseIntervalError, TextError, interval_to_text};
+pub use traits::{Conjugate, Enclosure, EnclosureArithmetic, Magnitude, Midpoint};
 pub use types::{DecoratedInterval, Decoration, Interval, IntervalDatum, InvalidDecoration};
 
 pub mod prelude {

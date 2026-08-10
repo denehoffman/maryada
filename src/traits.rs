@@ -23,6 +23,9 @@ pub trait Enclosure: sealed::Sealed + Copy {
     /// Returns the singleton zero enclosure.
     fn zero() -> Self;
 
+    /// Returns the singleton one enclosure.
+    fn one() -> Self;
+
     /// Returns whether this enclosure represents the empty set.
     fn is_empty(self) -> bool;
 
@@ -30,6 +33,9 @@ pub trait Enclosure: sealed::Sealed + Copy {
     ///
     /// Bare real intervals never contain `NaI`.
     fn is_nai(self) -> bool;
+
+    /// Convert an f64 into an enclosure.
+    fn from_f64(value: f64) -> Self;
 }
 
 /// Arithmetic operations that preserve the enclosure guarantee.
@@ -78,16 +84,40 @@ pub trait Midpoint: Enclosure {
     type Point: Copy;
 
     /// Returns a representative point midpoint.
-    fn midpoint(self) -> Self::Point;
+    fn mid(self) -> Self::Point;
 }
 
 /// An enclosure with scalar bounds on the modulus of its values.
 pub trait Magnitude: Enclosure {
+    /// Real enclosure containing every modulus represented by `Self`.
+    type Absolute: Enclosure;
+
+    /// Returns an enclosure of the modulus of every enclosed value.
+    fn abs(self) -> Self::Absolute;
+
     /// Returns an upper bound on the modulus of every enclosed value.
     fn mag(self) -> f64;
 
     /// Returns a lower bound on the modulus of every enclosed value.
     fn mig(self) -> f64;
+}
+
+/// An enclosure with radius and width measures.
+pub trait Radius: Enclosure {
+    /// Width representation produced by this enclosure.
+    ///
+    /// Real intervals use `f64`. Rectangular complex boxes use `Complex64`
+    /// containing the componentwise real and imaginary widths.
+    type Width: Copy;
+
+    /// Returns an upward-rounded radius of the enclosure.
+    fn rad(self) -> f64;
+
+    /// Returns an downward-rounded radius of the enclosure.
+    fn inner_rad(self) -> f64;
+
+    /// Returns the width of the enclosure.
+    fn wid(self) -> Self::Width;
 }
 
 macro_rules! impl_real_enclosure {
@@ -97,12 +127,20 @@ macro_rules! impl_real_enclosure {
                 crate::zero()
             }
 
+            fn one() -> Self {
+                crate::one()
+            }
+
             fn is_empty(self) -> bool {
                 crate::is_empty(self)
             }
 
             fn is_nai(self) -> bool {
                 self.__is_nai()
+            }
+
+            fn from_f64(value: f64) -> Self {
+                value.into()
             }
         }
 
@@ -141,18 +179,40 @@ macro_rules! impl_real_enclosure {
         impl Midpoint for $interval {
             type Point = f64;
 
-            fn midpoint(self) -> Self::Point {
+            fn mid(self) -> Self::Point {
                 crate::mid(self)
             }
         }
 
         impl Magnitude for $interval {
+            type Absolute = Self;
+
+            fn abs(self) -> Self::Absolute {
+                crate::abs(self)
+            }
+
             fn mag(self) -> f64 {
                 crate::mag(self)
             }
 
             fn mig(self) -> f64 {
                 crate::mig(self)
+            }
+        }
+
+        impl Radius for $interval {
+            type Width = f64;
+
+            fn rad(self) -> f64 {
+                crate::rad(self)
+            }
+
+            fn inner_rad(self) -> f64 {
+                crate::inner_rad(self)
+            }
+
+            fn wid(self) -> Self::Width {
+                crate::wid(self)
             }
         }
     };
@@ -167,12 +227,20 @@ impl<I: IntervalDatum> Enclosure for ComplexBox<I> {
         Self::new(crate::zero(), crate::zero())
     }
 
+    fn one() -> Self {
+        Self::new(crate::one(), crate::zero())
+    }
+
     fn is_empty(self) -> bool {
         self.is_empty()
     }
 
     fn is_nai(self) -> bool {
         self.is_nai()
+    }
+
+    fn from_f64(value: f64) -> Self {
+        value.into()
     }
 }
 
@@ -223,18 +291,41 @@ impl<I: IntervalDatum> Conjugate for ComplexBox<I> {
 impl<I: IntervalDatum> Midpoint for ComplexBox<I> {
     type Point = num_complex::Complex64;
 
-    fn midpoint(self) -> Self::Point {
+    fn mid(self) -> Self::Point {
         self.mid()
     }
 }
 
 #[cfg(feature = "complex")]
-impl<I: IntervalDatum> Magnitude for ComplexBox<I> {
+impl<I: Enclosure + IntervalDatum> Magnitude for ComplexBox<I> {
+    type Absolute = I;
+
+    fn abs(self) -> Self::Absolute {
+        self.abs()
+    }
+
     fn mag(self) -> f64 {
         self.mag()
     }
 
     fn mig(self) -> f64 {
         self.mig()
+    }
+}
+
+#[cfg(feature = "num-complex")]
+impl<I: IntervalDatum> Radius for ComplexBox<I> {
+    type Width = num_complex::Complex64;
+
+    fn rad(self) -> f64 {
+        self.rad()
+    }
+
+    fn inner_rad(self) -> f64 {
+        self.inner_rad()
+    }
+
+    fn wid(self) -> Self::Width {
+        self.wid()
     }
 }

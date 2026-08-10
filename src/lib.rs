@@ -29,6 +29,8 @@
 #[cfg(feature = "complex")]
 mod complex;
 mod interchange;
+#[cfg(feature = "linalg")]
+mod linalg;
 mod ops;
 mod rounding;
 mod signals;
@@ -40,10 +42,12 @@ mod ux;
 #[cfg(feature = "complex")]
 pub use complex::ComplexBox;
 pub use interchange::*;
+#[cfg(feature = "linalg")]
+pub use linalg::{IntervalMatrix, RegularityResult};
 pub use ops::*;
 pub use signals::{Signal, SignalFlags, SignalSink};
 pub use text::{ParseIntervalError, TextError, interval_to_text};
-pub use traits::{Conjugate, Enclosure, EnclosureArithmetic, Magnitude, Midpoint};
+pub use traits::{Conjugate, Enclosure, EnclosureArithmetic, Magnitude, Midpoint, Radius};
 pub use types::{DecoratedInterval, Decoration, Interval, IntervalDatum, InvalidDecoration};
 
 pub mod prelude {

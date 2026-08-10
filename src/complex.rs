@@ -156,6 +156,16 @@ impl<I: IntervalDatum> ComplexBox<I> {
         crate::sup(crate::hypot::<Interval>(re.into(), im.into()))
     }
 
+    /// Returns the Euclidean radius of the rectangular box rounded down
+    pub fn inner_rad(self) -> f64 {
+        let re = crate::inner_rad(self.re);
+        let im = crate::inner_rad(self.im);
+        if re.is_nan() || im.is_nan() {
+            return f64::NAN;
+        }
+        crate::sup(crate::hypot::<Interval>(re.into(), im.into()))
+    }
+
     /// Returns the Euclidean length of the box diagonal.
     pub fn diameter(self) -> f64 {
         let re = crate::wid(self.re);

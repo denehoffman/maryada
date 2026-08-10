@@ -1428,6 +1428,14 @@ pub fn radius(inf: f64, sup: f64, midpoint: f64) -> f64 {
     f64::max(below, above)
 }
 
+pub fn inner_radius(inf: f64, sup: f64, midpoint: f64) -> f64 {
+    // Each distance must be rounded upward independently: rounding the
+    // width first and then halving can underestimate after two roundings.
+    let below = sub(midpoint, inf, Direction::Down);
+    let above = sub(sup, midpoint, Direction::Down);
+    f64::max(below, above)
+}
+
 // Exact parsing of all required number literal forms.
 
 pub fn number_literal(literal: &str, direction: Direction) -> Option<f64> {

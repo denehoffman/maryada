@@ -2,6 +2,7 @@
 
 use maryada::{
     Conjugate, DecoratedInterval, Enclosure, EnclosureArithmetic, Interval, Magnitude, Midpoint,
+    Radius,
 };
 
 #[test]
@@ -15,9 +16,12 @@ fn real_enclosure_capabilities_forward_to_interval_operations() {
     assert_eq!(EnclosureArithmetic::add(x, y), x + y);
     assert_eq!(EnclosureArithmetic::mul_add(x, y, x), x.mul_add(y, x));
     assert_eq!(Conjugate::conj(x), x);
-    assert_eq!(Midpoint::midpoint(x), x.mid());
+    assert_eq!(Midpoint::mid(x), x.mid());
+    assert_eq!(Magnitude::abs(x), x.abs());
     assert_eq!(Magnitude::mag(x), x.mag());
     assert_eq!(Magnitude::mig(x), x.mig());
+    assert_eq!(Radius::rad(x), x.rad());
+    assert_eq!(Radius::wid(x), x.wid());
 }
 
 #[test]
@@ -43,6 +47,7 @@ fn complex_enclosure_capabilities_forward_to_box_operations() {
     assert!(!Enclosure::is_nai(x));
     assert_eq!(EnclosureArithmetic::mul(x, y), x * y);
     assert_eq!(Conjugate::conj(x), x.conj());
+    assert_eq!(Magnitude::abs(x), x.abs());
     assert_eq!(Magnitude::mag(x), x.mag());
     assert_eq!(Magnitude::mig(x), x.mig());
 }
@@ -55,5 +60,7 @@ fn complex_midpoint_uses_complex64() {
 
     let value = ComplexBox::<Interval>::new(Interval::new(1.0, 3.0), Interval::new(-2.0, 2.0));
 
-    assert_eq!(Midpoint::midpoint(value), Complex64::new(2.0, 0.0));
+    assert_eq!(Midpoint::mid(value), Complex64::new(2.0, 0.0));
+    assert_eq!(Radius::rad(value), value.rad());
+    assert_eq!(Radius::wid(value), value.wid());
 }

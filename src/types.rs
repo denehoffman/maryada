@@ -307,6 +307,9 @@ pub trait IntervalDatum: sealed::Sealed + Copy {
     fn __zero() -> Self;
 
     #[doc(hidden)]
+    fn __one() -> Self;
+
+    #[doc(hidden)]
     fn __from_nums(inf: f64, sup: f64) -> Self;
 
     #[doc(hidden)]
@@ -348,6 +351,10 @@ impl sealed::Sealed for Interval {}
 impl IntervalDatum for Interval {
     fn __zero() -> Self {
         Self::ZERO
+    }
+
+    fn __one() -> Self {
+        Self::ONE
     }
 
     fn __from_nums(inf: f64, sup: f64) -> Self {
@@ -392,6 +399,10 @@ impl sealed::Sealed for DecoratedInterval {}
 impl IntervalDatum for DecoratedInterval {
     fn __zero() -> Self {
         Self::ZERO
+    }
+
+    fn __one() -> Self {
+        Self::ONE
     }
 
     fn __from_nums(inf: f64, sup: f64) -> Self {

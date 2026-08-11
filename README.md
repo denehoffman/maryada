@@ -6,7 +6,7 @@ maryada is a `no_std` binary64 interval arithmetic library conforming to IEEE St
 The conformance claim applies to the real interval API. The rectangular complex interval extension is outside the scope of the standard. See [CONFORMANCE.md](CONFORMANCE.md) for the operation accuracy declarations, required features, implementation details, and test coverage.
 
 ```rust
-use maryada::Interval;
+use maryada::{Interval, IntervalOps};
 
 let x = Interval::new(1.0, 2.0);
 let y = x.sqr();

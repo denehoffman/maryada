@@ -1,8 +1,11 @@
-use core::{fmt, ops};
+use core::{
+    fmt,
+    ops::{self, Add, Div, Mul, Neg, Sub},
+};
 #[cfg(feature = "num-complex")]
 use num_complex::Complex64;
 
-use crate::{DecoratedInterval, Decoration, Interval, IntervalDatum, SignalSink};
+use crate::{DecoratedInterval, Decoration, Interval, IntervalOps, SignalSink};
 
 #[derive(Copy, Clone, Debug)]
 /// A rectangular complex interval with independent real and imaginary components.
@@ -16,105 +19,60 @@ pub struct ComplexBox<I> {
     pub im: I,
 }
 
-impl<I: IntervalDatum> ComplexBox<I> {
+impl<I: IntervalOps> ComplexBox<I> {
+    /// The empty bare complex box.
+    pub const EMPTY: Self = Self {
+        re: I::EMPTY,
+        im: I::EMPTY,
+    };
+    /// The box containing the entire complex plane.
+    pub const ENTIRE: Self = Self {
+        re: I::ENTIRE,
+        im: I::ENTIRE,
+    };
+    /// The singleton complex zero.
+    pub const ZERO: Self = Self {
+        re: I::ZERO,
+        im: I::ZERO,
+    };
+    /// The singleton complex one.
+    pub const ONE: Self = Self {
+        re: I::ONE,
+        im: I::ZERO,
+    };
+    /// The singleton imaginary unit.
+    pub const I: Self = Self {
+        re: I::ZERO,
+        im: I::ONE,
+    };
+
     /// Constructs a rectangular complex interval from its components.
     pub const fn new(re: I, im: I) -> Self {
         Self { re, im }
     }
 
-    /// Returns the singleton imaginary unit `i`.
-    #[must_use]
-    pub fn i() -> Self {
-        Self::new(crate::zero(), crate::singleton(1.0))
-    }
-
     fn is_empty_raw(self) -> bool {
-        crate::is_empty(self.re) || crate::is_empty(self.im)
+        self.re.is_empty() || self.im.is_empty()
     }
 
-    fn empty_raw() -> Self {
-        Self::new(I::__empty(), I::__empty())
-    }
-
-    fn neg_raw(self) -> Self {
-        Self::new(crate::neg(self.re), crate::neg(self.im))
-    }
-
-    fn add_raw(self, other: Self) -> Self {
-        Self::new(crate::add(self.re, other.re), crate::add(self.im, other.im))
-    }
-
-    fn sub_raw(self, other: Self) -> Self {
-        Self::new(crate::sub(self.re, other.re), crate::sub(self.im, other.im))
-    }
-
-    fn mul_raw(self, other: Self) -> Self {
-        Self::new(
-            crate::sub(crate::mul(self.re, other.re), crate::mul(self.im, other.im)),
-            crate::add(crate::mul(self.re, other.im), crate::mul(self.im, other.re)),
-        )
-    }
-
-    fn div_raw(self, other: Self) -> Self {
-        let denom = crate::add(crate::sqr(other.re), crate::sqr(other.im));
-        Self::new(
-            crate::div(
-                crate::add(crate::mul(self.re, other.re), crate::mul(self.im, other.im)),
-                denom,
-            ),
-            crate::div(
-                crate::sub(crate::mul(self.im, other.re), crate::mul(self.re, other.im)),
-                denom,
-            ),
-        )
-    }
-
-    /// Adds a real interval to the real component.
-    #[must_use]
-    pub fn add_real(self, value: I) -> Self {
-        Self::new(crate::add(self.re, value), self.im)
-    }
-
-    /// Subtracts a real interval from the real component.
-    #[must_use]
-    pub fn sub_real(self, value: I) -> Self {
-        Self::new(crate::sub(self.re, value), self.im)
-    }
-
-    /// Multiplies both components by a real interval.
-    #[must_use]
-    pub fn scale(self, value: I) -> Self {
-        Self::new(crate::mul(self.re, value), crate::mul(self.im, value))
-    }
-
-    /// Divides both components by a real interval.
-    #[must_use]
-    pub fn div_real(self, value: I) -> Self {
-        Self::new(crate::div(self.re, value), crate::div(self.im, value))
-    }
-
-    fn rsub_real(self, value: I) -> Self {
-        Self::from(value).sub_raw(self)
-    }
-
-    fn rdiv_real(self, value: I) -> Self {
-        Self::from(value).div_raw(self)
+    const fn empty_raw() -> Self {
+        Self::new(I::EMPTY, I::EMPTY)
     }
 
     /// Returns the complex conjugate.
     #[must_use]
     pub fn conj(self) -> Self {
-        Self::new(self.re, crate::neg(self.im))
+        Self::new(self.re, Neg::neg(self.im))
     }
 
     /// Encloses the squared modulus `re² + im²`.
     pub fn norm_sqr(self) -> I {
-        crate::add(crate::sqr(self.re), crate::sqr(self.im))
+        Add::add(self.re.sqr(), self.im.sqr())
     }
 
     /// Encloses the complex modulus.
     pub fn abs(self) -> I {
-        crate::hypot(self.re, self.im)
+        self.re.hypot(self.im)
     }
 
     /// Alias for [`ComplexBox::abs`].
@@ -125,13 +83,13 @@ impl<I: IntervalDatum> ComplexBox<I> {
     /// Returns the componentwise midpoint as a complex scalar.
     #[cfg(feature = "num-complex")]
     pub fn mid(self) -> Complex64 {
-        Complex64::new(crate::mid(self.re), crate::mid(self.im))
+        Complex64::new(self.re.mid(), self.im.mid())
     }
 
     /// Returns the componentwise interval widths.
     #[cfg(feature = "num-complex")]
     pub fn wid_box(self) -> Complex64 {
-        Complex64::new(crate::wid(self.re), crate::wid(self.im))
+        Complex64::new(self.re.wid(), self.im.wid())
     }
 
     /// Alias for [`ComplexBox::wid_box`].
@@ -143,52 +101,52 @@ impl<I: IntervalDatum> ComplexBox<I> {
     /// Returns the componentwise interval radii.
     #[cfg(feature = "num-complex")]
     pub fn rad_box(self) -> Complex64 {
-        Complex64::new(crate::rad(self.re), crate::rad(self.im))
+        Complex64::new(self.re.rad(), self.im.rad())
     }
 
     /// Returns the Euclidean radius of the rectangular box.
     pub fn rad(self) -> f64 {
-        let re = crate::rad(self.re);
-        let im = crate::rad(self.im);
+        let re = self.re.rad();
+        let im = self.im.rad();
         if re.is_nan() || im.is_nan() {
             return f64::NAN;
         }
-        crate::sup(crate::hypot::<Interval>(re.into(), im.into()))
+        I::from(re).hypot(I::from(im)).sup()
     }
 
     /// Returns the Euclidean radius of the rectangular box rounded down
     pub fn inner_rad(self) -> f64 {
-        let re = crate::inner_rad(self.re);
-        let im = crate::inner_rad(self.im);
+        let re = self.re.inner_rad();
+        let im = self.im.inner_rad();
         if re.is_nan() || im.is_nan() {
             return f64::NAN;
         }
-        crate::sup(crate::hypot::<Interval>(re.into(), im.into()))
+        I::from(re).hypot(I::from(im)).sup()
     }
 
     /// Returns the Euclidean length of the box diagonal.
     pub fn diameter(self) -> f64 {
-        let re = crate::wid(self.re);
-        let im = crate::wid(self.im);
+        let re = self.re.wid();
+        let im = self.im.wid();
         if re.is_nan() || im.is_nan() {
             return f64::NAN;
         }
-        crate::sup(crate::hypot::<Interval>(re.into(), im.into()))
+        I::from(re).hypot(I::from(im)).sup()
     }
 
     /// Returns an upper bound on the modulus of every represented value.
     pub fn mag(self) -> f64 {
-        crate::sup(self.abs())
+        self.abs().sup()
     }
 
     /// Returns a lower bound on the modulus of every represented value.
     pub fn mig(self) -> f64 {
-        crate::inf(self.abs())
+        self.abs().inf()
     }
 
     /// Encloses the complex argument in radians.
     pub fn arg(self) -> I {
-        crate::atan2(self.im, self.re)
+        self.im.atan2(self.re)
     }
 
     /// Returns modulus and argument interval enclosures.
@@ -198,27 +156,24 @@ impl<I: IntervalDatum> ComplexBox<I> {
 
     /// Encloses `cos(theta) + i sin(theta)`.
     pub fn cis(theta: I) -> Self {
-        Self::new(crate::cos(theta), crate::sin(theta))
+        Self::new(theta.cos(), theta.sin())
     }
 
     /// Constructs a rectangular enclosure from polar coordinates.
     pub fn from_polar(radius: I, theta: I) -> Self {
-        Self::new(
-            crate::mul(radius, crate::cos(theta)),
-            crate::mul(radius, crate::sin(theta)),
-        )
+        Self::new(Mul::mul(radius, theta.cos()), Mul::mul(radius, theta.sin()))
     }
 
     /// Returns the corner formed by both lower component endpoints.
     #[cfg(feature = "num-complex")]
     pub fn lower_corner(self) -> Complex64 {
-        Complex64::new(crate::inf(self.re), crate::inf(self.im))
+        Complex64::new(self.re.inf(), self.im.inf())
     }
 
     /// Returns the corner formed by both upper component endpoints.
     #[cfg(feature = "num-complex")]
     pub fn upper_corner(self) -> Complex64 {
-        Complex64::new(crate::sup(self.re), crate::sup(self.im))
+        Complex64::new(self.re.sup(), self.im.sup())
     }
 
     /// Returns all four corners of the rectangular box.
@@ -247,12 +202,12 @@ impl<I: IntervalDatum> ComplexBox<I> {
 
     /// Returns whether both components are entire intervals.
     pub fn is_entire(self) -> bool {
-        crate::is_entire(self.re) && crate::is_entire(self.im)
+        self.re.is_entire() && self.im.is_entire()
     }
 
     /// Returns whether either component is `NaI`.
     pub fn is_nai(self) -> bool {
-        self.re.__is_nai() || self.im.__is_nai()
+        self.re.is_nai() || self.im.is_nai()
     }
 
     /// Returns whether the box contains exactly one complex value.
@@ -260,29 +215,26 @@ impl<I: IntervalDatum> ComplexBox<I> {
     pub fn is_singleton(self) -> bool {
         !self.is_nai()
             && !self.is_empty()
-            && crate::inf(self.re) == crate::sup(self.re)
-            && crate::inf(self.im) == crate::sup(self.im)
+            && self.re.inf() == self.re.sup()
+            && self.im.inf() == self.im.sup()
     }
 
     /// Returns whether all component endpoints are finite.
     pub fn is_bounded(self) -> bool {
-        crate::inf(self.re).is_finite()
-            && crate::inf(self.im).is_finite()
-            && crate::sup(self.re).is_finite()
-            && crate::sup(self.im).is_finite()
+        self.re.inf().is_finite()
+            && self.im.inf().is_finite()
+            && self.re.sup().is_finite()
+            && self.im.sup().is_finite()
     }
 
     /// Returns whether this is the singleton complex zero.
     pub fn is_zero(self) -> bool {
-        self.is_singleton() && crate::inf(self.re) == 0.0 && crate::inf(self.im) == 0.0
+        self.is_singleton() && self.re.inf() == 0.0 && self.im.inf() == 0.0
     }
 
     /// Returns whether every represented value is real.
     pub fn is_real(self) -> bool {
-        !self.is_empty()
-            && !self.is_nai()
-            && crate::inf(self.im) == 0.0
-            && crate::sup(self.im) == 0.0
+        !self.is_empty() && !self.is_nai() && self.im.inf() == 0.0 && self.im.sup() == 0.0
     }
 
     /// Returns whether the finite complex scalar belongs to this box.
@@ -290,8 +242,8 @@ impl<I: IntervalDatum> ComplexBox<I> {
     pub fn contains(self, value: Complex64) -> bool {
         !value.re.is_nan()
             && !value.im.is_nan()
-            && crate::subset(crate::singleton(value.re), self.re)
-            && crate::subset(crate::singleton(value.im), self.im)
+            && I::from(value.re).subset(self.re)
+            && I::from(value.im).subset(self.im)
     }
 
     /// Returns whether this rectangular set is a subset of `other`.
@@ -305,7 +257,7 @@ impl<I: IntervalDatum> ComplexBox<I> {
         if other.is_empty() {
             return false;
         }
-        crate::subset(self.re, other.re) && crate::subset(self.im, other.im)
+        self.re.subset(other.re) && self.im.subset(other.im)
     }
 
     /// Returns whether this box lies in the interior of `other`.
@@ -319,12 +271,12 @@ impl<I: IntervalDatum> ComplexBox<I> {
         if other.is_empty() {
             return false;
         }
-        crate::interior(self.re, other.re) && crate::interior(self.im, other.im)
+        self.re.interior(other.re) && self.im.interior(other.im)
     }
 
     /// Returns whether the two boxes have no common complex value.
     pub fn disjoint(self, other: Self) -> bool {
-        crate::disjoint(self.re, other.re) || crate::disjoint(self.im, other.im)
+        self.re.disjoint(other.re) || self.im.disjoint(other.im)
     }
 
     /// Returns whether the two boxes share at least one complex value.
@@ -336,8 +288,8 @@ impl<I: IntervalDatum> ComplexBox<I> {
     #[must_use]
     pub fn intersection(self, other: Self) -> Self {
         let result = Self::new(
-            crate::intersection(self.re, other.re),
-            crate::intersection(self.im, other.im),
+            self.re.intersection(other.re),
+            self.im.intersection(other.im),
         );
         if result.is_empty() {
             Self::empty_raw()
@@ -355,43 +307,37 @@ impl<I: IntervalDatum> ComplexBox<I> {
         if other.is_empty() {
             return self;
         }
-        Self::new(
-            crate::convex_hull(self.re, other.re),
-            crate::convex_hull(self.im, other.im),
-        )
+        Self::new(self.re.convex_hull(other.re), self.im.convex_hull(other.im))
     }
 
     /// Encloses the complex reciprocal.
     #[must_use]
     pub fn recip(self) -> Self {
-        let denom = crate::add(crate::sqr(self.re), crate::sqr(self.im));
-        Self::new(
-            crate::div(self.re, denom),
-            crate::div(crate::neg(self.im), denom),
-        )
+        let denom = Add::add(self.re.sqr(), self.im.sqr());
+        Self::new(Div::div(self.re, denom), Div::div(Neg::neg(self.im), denom))
     }
 
     /// Encloses the complex square.
     #[must_use]
     pub fn sqr(self) -> Self {
         Self::new(
-            crate::sub(crate::sqr(self.re), crate::sqr(self.im)),
-            crate::mul(crate::singleton(2.0), crate::mul(self.re, self.im)),
+            Sub::sub(self.re.sqr(), self.im.sqr()),
+            Mul::mul(Mul::mul(self.re, self.im), 2.0),
         )
     }
 
     /// Encloses the principal complex square root.
     #[must_use]
     pub fn sqrt(self) -> Self {
-        Self::from(0.5).mul_raw(self.log()).exp()
+        Mul::mul(0.5, self.log()).exp()
     }
 
     /// Encloses `self * y + z` componentwise using fused operations.
     #[must_use]
     pub fn mul_add(self, y: Self, z: Self) -> Self {
         Self::new(
-            crate::fma(self.re, y.re, crate::fma(crate::neg(self.im), y.im, z.re)),
-            crate::fma(self.re, y.im, crate::fma(self.im, y.re, z.im)),
+            self.re.mul_add(y.re, self.im.mul_add(Neg::neg(y.im), z.re)),
+            self.re.mul_add(y.im, self.im.mul_add(y.re, z.im)),
         )
     }
 
@@ -409,7 +355,7 @@ impl<I: IntervalDatum> ComplexBox<I> {
         let mut result = Self::from(1.0);
         while exponent != 0 {
             if exponent & 1 != 0 {
-                result = result.mul_raw(base);
+                result = Mul::mul(result, base);
             }
             exponent >>= 1;
             if exponent != 0 {
@@ -428,58 +374,54 @@ impl<I: IntervalDatum> ComplexBox<I> {
     /// Encloses the principal complex power with exponents in `other`.
     #[must_use]
     pub fn pow(self, other: Self) -> Self {
-        other.mul_raw(self.log()).exp()
+        Mul::mul(other, self.log()).exp()
     }
 
     /// Encloses the complex exponential.
     #[must_use]
     pub fn exp(self) -> Self {
         Self::new(
-            crate::mul(crate::exp(self.re), crate::cos(self.im)),
-            crate::mul(crate::exp(self.re), crate::sin(self.im)),
+            Mul::mul(self.re.exp(), self.im.cos()),
+            Mul::mul(self.re.exp(), self.im.sin()),
         )
     }
 
     /// Encloses the base-two complex exponential.
     #[must_use]
     pub fn exp2(self) -> Self {
-        self.mul_raw(Self::from(crate::log(crate::singleton::<I>(2.0))))
-            .exp()
+        Mul::mul(self, Self::from(I::from(2.0).log())).exp()
     }
 
     /// Encloses the base-ten complex exponential.
     #[must_use]
     pub fn exp10(self) -> Self {
-        self.mul_raw(Self::from(crate::log(crate::singleton::<I>(10.0))))
-            .exp()
+        Mul::mul(self, Self::from(I::from(10.0).log())).exp()
     }
 
     /// Encloses the principal complex logarithm.
     #[must_use]
     pub fn log(self) -> Self {
-        Self::new(crate::log(self.abs()), self.arg())
+        Self::new(self.abs().log(), self.arg())
     }
 
     /// Encloses the principal base-two complex logarithm.
     #[must_use]
     pub fn log2(self) -> Self {
-        self.log()
-            .div_raw(Self::from(crate::log(crate::singleton::<I>(2.0))))
+        Div::div(self.log(), Self::from(I::from(2.0).log()))
     }
 
     /// Encloses the principal base-ten complex logarithm.
     #[must_use]
     pub fn log10(self) -> Self {
-        self.log()
-            .div_raw(Self::from(crate::log(crate::singleton::<I>(10.0))))
+        Div::div(self.log(), Self::from(I::from(10.0).log()))
     }
 
     /// Encloses the complex sine.
     #[must_use]
     pub fn sin(self) -> Self {
         Self::new(
-            crate::mul(crate::sin(self.re), crate::cosh(self.im)),
-            crate::mul(crate::cos(self.re), crate::sinh(self.im)),
+            Mul::mul(self.re.sin(), self.im.cosh()),
+            Mul::mul(self.re.cos(), self.im.sinh()),
         )
     }
 
@@ -487,66 +429,51 @@ impl<I: IntervalDatum> ComplexBox<I> {
     #[must_use]
     pub fn cos(self) -> Self {
         Self::new(
-            crate::mul(crate::cos(self.re), crate::cosh(self.im)),
-            crate::neg(crate::mul(crate::sin(self.re), crate::sinh(self.im))),
+            Mul::mul(self.re.cos(), self.im.cosh()),
+            Neg::neg(Mul::mul(self.re.sin(), self.im.sinh())),
         )
     }
 
     /// Encloses the complex tangent.
     #[must_use]
     pub fn tan(self) -> Self {
-        let denom = crate::add(
-            crate::cos(crate::mul(crate::singleton(2.0), self.re)),
-            crate::cosh(crate::mul(crate::singleton(2.0), self.im)),
-        );
+        let twice_re = Mul::mul(self.re, 2.0);
+        let twice_im = Mul::mul(self.im, 2.0);
+        let denom = Add::add(twice_re.cos(), twice_im.cosh());
         Self::new(
-            crate::div(
-                crate::sin(crate::mul(crate::singleton(2.0), self.re)),
-                denom,
-            ),
-            crate::div(
-                crate::sinh(crate::mul(crate::singleton(2.0), self.im)),
-                denom,
-            ),
+            Div::div(twice_re.sin(), denom),
+            Div::div(twice_im.sinh(), denom),
         )
     }
 
     /// Encloses the principal complex inverse sine.
     #[must_use]
     pub fn asin(self) -> Self {
-        Self::i().neg_raw().mul_raw(Self::log(
-            Self::i()
-                .mul_raw(self)
-                .add_raw((Self::from(1.0).sub_raw(self.sqr())).sqrt()),
-        ))
+        let argument = Add::add(Mul::mul(Self::I, self), Sub::sub(1.0, self.sqr()).sqrt());
+        Mul::mul(Neg::neg(Self::I), argument.log())
     }
 
     /// Encloses the principal complex inverse cosine.
     #[must_use]
     pub fn acos(self) -> Self {
-        Self::i().neg_raw().mul_raw(Self::log(
-            self.add_raw(Self::i().mul_raw(Self::from(1.0).sub_raw(self.sqr()).sqrt())),
-        ))
+        let argument = Add::add(self, Mul::mul(Self::I, Sub::sub(1.0, self.sqr()).sqrt()));
+        Mul::mul(Neg::neg(Self::I), argument.log())
     }
 
     /// Encloses the principal complex inverse tangent.
     #[must_use]
     pub fn atan(self) -> Self {
-        let iz = Self::i().mul_raw(self);
-        Self::i().div_raw(Self::from(2.0)).mul_raw(
-            Self::from(1.0)
-                .sub_raw(iz)
-                .log()
-                .sub_raw(Self::from(1.0).add_raw(iz).log()),
-        )
+        let iz = Mul::mul(Self::I, self);
+        let logarithms = Sub::sub(Sub::sub(1.0, iz).log(), Add::add(1.0, iz).log());
+        Mul::mul(Div::div(Self::I, 2.0), logarithms)
     }
 
     /// Encloses the complex hyperbolic sine.
     #[must_use]
     pub fn sinh(self) -> Self {
         Self::new(
-            crate::mul(crate::sinh(self.re), crate::cos(self.im)),
-            crate::mul(crate::cosh(self.re), crate::sin(self.im)),
+            Mul::mul(self.re.sinh(), self.im.cos()),
+            Mul::mul(self.re.cosh(), self.im.sin()),
         )
     }
 
@@ -554,44 +481,35 @@ impl<I: IntervalDatum> ComplexBox<I> {
     #[must_use]
     pub fn cosh(self) -> Self {
         Self::new(
-            crate::mul(crate::cosh(self.re), crate::cos(self.im)),
-            crate::mul(crate::sinh(self.re), crate::sin(self.im)),
+            Mul::mul(self.re.cosh(), self.im.cos()),
+            Mul::mul(self.re.sinh(), self.im.sin()),
         )
     }
 
     /// Encloses the complex hyperbolic tangent.
     #[must_use]
     pub fn tanh(self) -> Self {
-        let denom = crate::add(
-            crate::cosh(crate::mul(crate::singleton(2.0), self.re)),
-            crate::cos(crate::mul(crate::singleton(2.0), self.im)),
-        );
+        let twice_re = Mul::mul(self.re, 2.0);
+        let twice_im = Mul::mul(self.im, 2.0);
+        let denom = Add::add(twice_re.cosh(), twice_im.cos());
         Self::new(
-            crate::div(
-                crate::sinh(crate::mul(crate::singleton(2.0), self.re)),
-                denom,
-            ),
-            crate::div(
-                crate::sin(crate::mul(crate::singleton(2.0), self.im)),
-                denom,
-            ),
+            Div::div(twice_re.sinh(), denom),
+            Div::div(twice_im.sin(), denom),
         )
     }
 
     /// Encloses the principal complex inverse hyperbolic sine.
     #[must_use]
     pub fn asinh(self) -> Self {
-        self.add_raw((self.sqr().add_raw(Self::from(1.0))).sqrt())
-            .log()
+        Add::add(self, Add::add(self.sqr(), 1.0).sqrt()).log()
     }
 
     /// Encloses the principal complex inverse hyperbolic cosine.
     #[must_use]
     pub fn acosh(self) -> Self {
-        self.add_raw(
-            self.sub_raw(Self::from(1.0))
-                .sqrt()
-                .mul_raw(self.add_raw(Self::from(1.0)).sqrt()),
+        Add::add(
+            self,
+            Mul::mul(Sub::sub(self, 1.0).sqrt(), Add::add(self, 1.0).sqrt()),
         )
         .log()
     }
@@ -599,127 +517,498 @@ impl<I: IntervalDatum> ComplexBox<I> {
     /// Encloses the principal complex inverse hyperbolic tangent.
     #[must_use]
     pub fn atanh(self) -> Self {
-        Self::from(0.5).mul_raw(
-            self.add_raw(Self::from(1.0))
-                .log()
-                .sub_raw(Self::from(1.0).sub_raw(self).log()),
+        Mul::mul(
+            0.5,
+            Sub::sub(Add::add(1.0, self).log(), Sub::sub(1.0, self).log()),
         )
     }
 }
 
-impl<I: IntervalDatum> From<I> for ComplexBox<I> {
-    fn from(value: I) -> Self {
-        Self::new(value, crate::new(0.0, 0.0))
+impl<I: IntervalOps> Neg for ComplexBox<I> {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        Self::new(Neg::neg(self.re), Neg::neg(self.im))
     }
 }
 
-impl<I: IntervalDatum> From<&I> for ComplexBox<I> {
+fn add_complex_boxes<I: IntervalOps>(lhs: ComplexBox<I>, rhs: ComplexBox<I>) -> ComplexBox<I> {
+    ComplexBox::new(Add::add(lhs.re, rhs.re), Add::add(lhs.im, rhs.im))
+}
+
+fn sub_complex_boxes<I: IntervalOps>(lhs: ComplexBox<I>, rhs: ComplexBox<I>) -> ComplexBox<I> {
+    ComplexBox::new(Sub::sub(lhs.re, rhs.re), Sub::sub(lhs.im, rhs.im))
+}
+
+fn mul_complex_boxes<I: IntervalOps>(lhs: ComplexBox<I>, rhs: ComplexBox<I>) -> ComplexBox<I> {
+    ComplexBox::new(
+        Sub::sub(Mul::mul(lhs.re, rhs.re), Mul::mul(lhs.im, rhs.im)),
+        Add::add(Mul::mul(lhs.re, rhs.im), Mul::mul(lhs.im, rhs.re)),
+    )
+}
+
+fn div_complex_boxes<I: IntervalOps>(lhs: ComplexBox<I>, rhs: ComplexBox<I>) -> ComplexBox<I> {
+    let denominator = Add::add(rhs.re.sqr(), rhs.im.sqr());
+    ComplexBox::new(
+        Div::div(
+            Add::add(Mul::mul(lhs.re, rhs.re), Mul::mul(lhs.im, rhs.im)),
+            denominator,
+        ),
+        Div::div(
+            Sub::sub(Mul::mul(lhs.im, rhs.re), Mul::mul(lhs.re, rhs.im)),
+            denominator,
+        ),
+    )
+}
+
+fn add_complex_real<I: IntervalOps>(lhs: ComplexBox<I>, rhs: I) -> ComplexBox<I> {
+    ComplexBox::new(Add::add(lhs.re, rhs), lhs.im)
+}
+
+fn sub_complex_real<I: IntervalOps>(lhs: ComplexBox<I>, rhs: I) -> ComplexBox<I> {
+    ComplexBox::new(Sub::sub(lhs.re, rhs), lhs.im)
+}
+
+fn mul_complex_real<I: IntervalOps>(lhs: ComplexBox<I>, rhs: I) -> ComplexBox<I> {
+    ComplexBox::new(Mul::mul(lhs.re, rhs), Mul::mul(lhs.im, rhs))
+}
+
+fn div_complex_real<I: IntervalOps>(lhs: ComplexBox<I>, rhs: I) -> ComplexBox<I> {
+    ComplexBox::new(Div::div(lhs.re, rhs), Div::div(lhs.im, rhs))
+}
+
+macro_rules! impl_complex_box_op {
+    (
+        $op:ident,
+        $method:ident,
+        $assign_op:ident,
+        $assign_method:ident,
+        $function:path,
+        $real_function:path
+    ) => {
+        impl<I: IntervalOps> ops::$op for ComplexBox<I> {
+            type Output = Self;
+
+            fn $method(self, rhs: Self) -> Self::Output {
+                $function(self, rhs)
+            }
+        }
+
+        impl<I: IntervalOps> ops::$op<I> for ComplexBox<I> {
+            type Output = Self;
+
+            fn $method(self, rhs: I) -> Self::Output {
+                $real_function(self, rhs)
+            }
+        }
+
+        impl<I: IntervalOps> ops::$assign_op for ComplexBox<I> {
+            fn $assign_method(&mut self, rhs: Self) {
+                *self = $function(*self, rhs);
+            }
+        }
+
+        impl<I: IntervalOps> ops::$assign_op<I> for ComplexBox<I> {
+            fn $assign_method(&mut self, rhs: I) {
+                *self = $real_function(*self, rhs);
+            }
+        }
+    };
+}
+
+macro_rules! impl_complex_real_scalar_op {
+    (
+        $scalar:ty,
+        $op:ident,
+        $method:ident,
+        $assign_op:ident,
+        $assign_method:ident,
+        $function:path,
+        $real_function:path
+    ) => {
+        impl<I: IntervalOps> ops::$op<$scalar> for ComplexBox<I> {
+            type Output = Self;
+
+            fn $method(self, rhs: $scalar) -> Self::Output {
+                $real_function(self, I::from(rhs))
+            }
+        }
+
+        impl<I: IntervalOps> ops::$op<ComplexBox<I>> for $scalar {
+            type Output = ComplexBox<I>;
+
+            fn $method(self, rhs: ComplexBox<I>) -> Self::Output {
+                $function(ComplexBox::from(self), rhs)
+            }
+        }
+
+        impl<I: IntervalOps> ops::$assign_op<$scalar> for ComplexBox<I> {
+            fn $assign_method(&mut self, rhs: $scalar) {
+                *self = $real_function(*self, I::from(rhs));
+            }
+        }
+    };
+}
+
+#[cfg(feature = "num-complex")]
+macro_rules! impl_complex_scalar_op {
+    ($scalar:ty, $op:ident, $method:ident, $assign_op:ident, $assign_method:ident, $function:path) => {
+        impl<I: IntervalOps> ops::$op<$scalar> for ComplexBox<I> {
+            type Output = Self;
+
+            fn $method(self, rhs: $scalar) -> Self::Output {
+                $function(self, ComplexBox::from(rhs))
+            }
+        }
+
+        impl<I: IntervalOps> ops::$op<ComplexBox<I>> for $scalar {
+            type Output = ComplexBox<I>;
+
+            fn $method(self, rhs: ComplexBox<I>) -> Self::Output {
+                $function(ComplexBox::from(self), rhs)
+            }
+        }
+
+        impl<I: IntervalOps> ops::$assign_op<$scalar> for ComplexBox<I> {
+            fn $assign_method(&mut self, rhs: $scalar) {
+                *self = $function(*self, ComplexBox::from(rhs));
+            }
+        }
+    };
+}
+
+macro_rules! impl_promoting_complex_op {
+    (
+        $op:ident,
+        $method:ident,
+        $assign_op:ident,
+        $assign_method:ident,
+        $function:path,
+        $real_function:path
+    ) => {
+        impl ops::$op<ComplexBox<DecoratedInterval>> for ComplexBox<Interval> {
+            type Output = ComplexBox<DecoratedInterval>;
+
+            fn $method(self, rhs: ComplexBox<DecoratedInterval>) -> Self::Output {
+                $function(self.into(), rhs)
+            }
+        }
+
+        impl ops::$op<ComplexBox<Interval>> for ComplexBox<DecoratedInterval> {
+            type Output = ComplexBox<DecoratedInterval>;
+
+            fn $method(self, rhs: ComplexBox<Interval>) -> Self::Output {
+                $function(self, rhs.into())
+            }
+        }
+
+        impl ops::$op<ComplexBox<Interval>> for Interval {
+            type Output = ComplexBox<Interval>;
+
+            fn $method(self, rhs: ComplexBox<Interval>) -> Self::Output {
+                $function(ComplexBox::from(self), rhs)
+            }
+        }
+
+        impl ops::$op<ComplexBox<DecoratedInterval>> for DecoratedInterval {
+            type Output = ComplexBox<DecoratedInterval>;
+
+            fn $method(self, rhs: ComplexBox<DecoratedInterval>) -> Self::Output {
+                $function(ComplexBox::from(self), rhs)
+            }
+        }
+
+        impl ops::$op<DecoratedInterval> for ComplexBox<Interval> {
+            type Output = ComplexBox<DecoratedInterval>;
+
+            fn $method(self, rhs: DecoratedInterval) -> Self::Output {
+                $real_function(self.into(), rhs)
+            }
+        }
+
+        impl ops::$op<ComplexBox<Interval>> for DecoratedInterval {
+            type Output = ComplexBox<DecoratedInterval>;
+
+            fn $method(self, rhs: ComplexBox<Interval>) -> Self::Output {
+                $function(ComplexBox::from(self), rhs.into())
+            }
+        }
+
+        impl ops::$op<Interval> for ComplexBox<DecoratedInterval> {
+            type Output = ComplexBox<DecoratedInterval>;
+
+            fn $method(self, rhs: Interval) -> Self::Output {
+                $real_function(self, DecoratedInterval::from(rhs))
+            }
+        }
+
+        impl ops::$op<ComplexBox<DecoratedInterval>> for Interval {
+            type Output = ComplexBox<DecoratedInterval>;
+
+            fn $method(self, rhs: ComplexBox<DecoratedInterval>) -> Self::Output {
+                $function(ComplexBox::from(DecoratedInterval::from(self)), rhs)
+            }
+        }
+
+        impl ops::$assign_op<ComplexBox<Interval>> for ComplexBox<DecoratedInterval> {
+            fn $assign_method(&mut self, rhs: ComplexBox<Interval>) {
+                *self = $function(*self, rhs.into());
+            }
+        }
+
+        impl ops::$assign_op<Interval> for ComplexBox<DecoratedInterval> {
+            fn $assign_method(&mut self, rhs: Interval) {
+                *self = $real_function(*self, DecoratedInterval::from(rhs));
+            }
+        }
+    };
+}
+
+#[cfg(feature = "num-complex")]
+macro_rules! impl_num_complex_real_op {
+    ($complex:ty, $op:ident, $method:ident, $function:path) => {
+        impl ops::$op<$complex> for Interval {
+            type Output = ComplexBox<Interval>;
+
+            fn $method(self, rhs: $complex) -> Self::Output {
+                $function(ComplexBox::from(self), ComplexBox::from(rhs))
+            }
+        }
+
+        impl ops::$op<Interval> for $complex {
+            type Output = ComplexBox<Interval>;
+
+            fn $method(self, rhs: Interval) -> Self::Output {
+                $function(ComplexBox::from(self), ComplexBox::from(rhs))
+            }
+        }
+
+        impl ops::$op<$complex> for DecoratedInterval {
+            type Output = ComplexBox<DecoratedInterval>;
+
+            fn $method(self, rhs: $complex) -> Self::Output {
+                $function(ComplexBox::from(self), ComplexBox::from(rhs))
+            }
+        }
+
+        impl ops::$op<DecoratedInterval> for $complex {
+            type Output = ComplexBox<DecoratedInterval>;
+
+            fn $method(self, rhs: DecoratedInterval) -> Self::Output {
+                $function(ComplexBox::from(self), ComplexBox::from(rhs))
+            }
+        }
+    };
+}
+
+impl_complex_box_op!(
+    Add,
+    add,
+    AddAssign,
+    add_assign,
+    add_complex_boxes,
+    add_complex_real
+);
+impl_complex_box_op!(
+    Sub,
+    sub,
+    SubAssign,
+    sub_assign,
+    sub_complex_boxes,
+    sub_complex_real
+);
+impl_complex_box_op!(
+    Mul,
+    mul,
+    MulAssign,
+    mul_assign,
+    mul_complex_boxes,
+    mul_complex_real
+);
+impl_complex_box_op!(
+    Div,
+    div,
+    DivAssign,
+    div_assign,
+    div_complex_boxes,
+    div_complex_real
+);
+
+impl_complex_real_scalar_op!(
+    f64,
+    Add,
+    add,
+    AddAssign,
+    add_assign,
+    add_complex_boxes,
+    add_complex_real
+);
+impl_complex_real_scalar_op!(
+    f64,
+    Sub,
+    sub,
+    SubAssign,
+    sub_assign,
+    sub_complex_boxes,
+    sub_complex_real
+);
+impl_complex_real_scalar_op!(
+    f64,
+    Mul,
+    mul,
+    MulAssign,
+    mul_assign,
+    mul_complex_boxes,
+    mul_complex_real
+);
+impl_complex_real_scalar_op!(
+    f64,
+    Div,
+    div,
+    DivAssign,
+    div_assign,
+    div_complex_boxes,
+    div_complex_real
+);
+
+impl_promoting_complex_op!(
+    Add,
+    add,
+    AddAssign,
+    add_assign,
+    add_complex_boxes,
+    add_complex_real
+);
+impl_promoting_complex_op!(
+    Sub,
+    sub,
+    SubAssign,
+    sub_assign,
+    sub_complex_boxes,
+    sub_complex_real
+);
+impl_promoting_complex_op!(
+    Mul,
+    mul,
+    MulAssign,
+    mul_assign,
+    mul_complex_boxes,
+    mul_complex_real
+);
+impl_promoting_complex_op!(
+    Div,
+    div,
+    DivAssign,
+    div_assign,
+    div_complex_boxes,
+    div_complex_real
+);
+
+#[cfg(feature = "num-complex")]
+impl_complex_scalar_op!(
+    Complex64,
+    Add,
+    add,
+    AddAssign,
+    add_assign,
+    add_complex_boxes
+);
+#[cfg(feature = "num-complex")]
+impl_complex_scalar_op!(
+    Complex64,
+    Sub,
+    sub,
+    SubAssign,
+    sub_assign,
+    sub_complex_boxes
+);
+#[cfg(feature = "num-complex")]
+impl_complex_scalar_op!(
+    Complex64,
+    Mul,
+    mul,
+    MulAssign,
+    mul_assign,
+    mul_complex_boxes
+);
+#[cfg(feature = "num-complex")]
+impl_complex_scalar_op!(
+    Complex64,
+    Div,
+    div,
+    DivAssign,
+    div_assign,
+    div_complex_boxes
+);
+
+#[cfg(feature = "num-complex")]
+impl_num_complex_real_op!(Complex64, Add, add, add_complex_boxes);
+#[cfg(feature = "num-complex")]
+impl_num_complex_real_op!(Complex64, Sub, sub, sub_complex_boxes);
+#[cfg(feature = "num-complex")]
+impl_num_complex_real_op!(Complex64, Mul, mul, mul_complex_boxes);
+#[cfg(feature = "num-complex")]
+impl_num_complex_real_op!(Complex64, Div, div, div_complex_boxes);
+
+impl<I: IntervalOps> From<I> for ComplexBox<I> {
+    fn from(value: I) -> Self {
+        Self::new(value, I::ZERO)
+    }
+}
+
+impl<I: IntervalOps> From<&I> for ComplexBox<I> {
     fn from(value: &I) -> Self {
         (*value).into()
     }
 }
 
-impl<I: IntervalDatum> From<f64> for ComplexBox<I> {
+impl<I: IntervalOps> From<f64> for ComplexBox<I> {
     fn from(value: f64) -> Self {
-        Self::new(crate::new(value, value), crate::new(0.0, 0.0))
+        Self::new(I::singleton(value), I::ZERO)
     }
 }
 
-impl<I: IntervalDatum> From<&f64> for ComplexBox<I> {
+impl<I: IntervalOps> From<&f64> for ComplexBox<I> {
     fn from(value: &f64) -> Self {
         (*value).into()
     }
 }
 
 #[cfg(feature = "num-complex")]
-impl<I: IntervalDatum> From<Complex64> for ComplexBox<I> {
+impl<I: IntervalOps> From<Complex64> for ComplexBox<I> {
     fn from(value: Complex64) -> Self {
-        Self::new(crate::singleton(value.re), crate::singleton(value.im))
+        Self::new(I::singleton(value.re), I::singleton(value.im))
     }
 }
 
 #[cfg(feature = "num-complex")]
-impl<I: IntervalDatum> From<&Complex64> for ComplexBox<I> {
+impl<I: IntervalOps> From<&Complex64> for ComplexBox<I> {
     fn from(value: &Complex64) -> Self {
         (*value).into()
     }
 }
 
-impl<I: IntervalDatum> Default for ComplexBox<I> {
+impl<I: IntervalOps> Default for ComplexBox<I> {
     fn default() -> Self {
-        Self::new(I::__zero(), I::__zero())
+        Self::new(I::ZERO, I::ZERO)
     }
 }
 
-impl<I: IntervalDatum + PartialEq> PartialEq for ComplexBox<I> {
+impl<I: IntervalOps + PartialEq> PartialEq for ComplexBox<I> {
     fn eq(&self, other: &Self) -> bool {
         self.re == other.re && self.im == other.im
     }
 }
 
-impl<I: IntervalDatum + Eq> Eq for ComplexBox<I> {}
+impl<I: IntervalOps + Eq> Eq for ComplexBox<I> {}
 
-impl<I: IntervalDatum + fmt::Display> fmt::Display for ComplexBox<I> {
+impl<I: IntervalOps + fmt::Display> fmt::Display for ComplexBox<I> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "({}) + ({})i", self.re, self.im)
     }
 }
 
-impl ComplexBox<Interval> {
-    /// The empty bare complex box.
-    pub const EMPTY: Self = Self {
-        re: Interval::EMPTY,
-        im: Interval::EMPTY,
-    };
-    /// The box containing the entire complex plane.
-    pub const ENTIRE: Self = Self {
-        re: Interval::ENTIRE,
-        im: Interval::ENTIRE,
-    };
-    /// The singleton complex zero.
-    pub const ZERO: Self = Self {
-        re: Interval::ZERO,
-        im: Interval::ZERO,
-    };
-    /// The singleton complex one.
-    pub const ONE: Self = Self {
-        re: Interval::ONE,
-        im: Interval::ZERO,
-    };
-    /// The singleton imaginary unit.
-    pub const I: Self = Self {
-        re: Interval::ZERO,
-        im: Interval::ONE,
-    };
-}
-
 impl ComplexBox<DecoratedInterval> {
-    /// The empty decorated complex box.
-    pub const EMPTY: Self = Self {
-        re: DecoratedInterval::EMPTY,
-        im: DecoratedInterval::EMPTY,
-    };
-    /// The decorated box containing the entire complex plane.
-    pub const ENTIRE: Self = Self {
-        re: DecoratedInterval::ENTIRE,
-        im: DecoratedInterval::ENTIRE,
-    };
-    /// The decorated singleton complex zero.
-    pub const ZERO: Self = Self {
-        re: DecoratedInterval::ZERO,
-        im: DecoratedInterval::ZERO,
-    };
-    /// The decorated singleton complex one.
-    pub const ONE: Self = Self {
-        re: DecoratedInterval::ONE,
-        im: DecoratedInterval::ZERO,
-    };
-    /// The decorated singleton imaginary unit.
-    pub const I: Self = Self {
-        re: DecoratedInterval::ZERO,
-        im: DecoratedInterval::ONE,
-    };
-
     /// Returns the weaker decoration of the real and imaginary components.
     #[must_use]
     pub fn decoration(self) -> Decoration {
@@ -727,237 +1016,6 @@ impl ComplexBox<DecoratedInterval> {
     }
 }
 
-type BareBox = ComplexBox<Interval>;
-type DecoratedBox = ComplexBox<DecoratedInterval>;
-
-macro_rules! impl_complex_binary_op {
-    ($op:ident, $method:ident, $raw:ident, $real:ident, $reverse:ident) => {
-        impl ops::$op for BareBox {
-            type Output = BareBox;
-
-            fn $method(self, rhs: Self) -> Self::Output {
-                self.$raw(rhs)
-            }
-        }
-
-        impl ops::$op for DecoratedBox {
-            type Output = DecoratedBox;
-
-            fn $method(self, rhs: Self) -> Self::Output {
-                self.$raw(rhs)
-            }
-        }
-
-        impl ops::$op<DecoratedBox> for BareBox {
-            type Output = DecoratedBox;
-
-            fn $method(self, rhs: DecoratedBox) -> Self::Output {
-                DecoratedBox::from(self).$raw(rhs)
-            }
-        }
-
-        impl ops::$op<BareBox> for DecoratedBox {
-            type Output = DecoratedBox;
-
-            fn $method(self, rhs: BareBox) -> Self::Output {
-                self.$raw(rhs.into())
-            }
-        }
-
-        impl ops::$op<Interval> for BareBox {
-            type Output = BareBox;
-
-            fn $method(self, rhs: Interval) -> Self::Output {
-                self.$real(rhs)
-            }
-        }
-
-        impl ops::$op<BareBox> for Interval {
-            type Output = BareBox;
-
-            fn $method(self, rhs: BareBox) -> Self::Output {
-                rhs.$reverse(self)
-            }
-        }
-
-        impl ops::$op<DecoratedInterval> for BareBox {
-            type Output = DecoratedBox;
-
-            fn $method(self, rhs: DecoratedInterval) -> Self::Output {
-                DecoratedBox::from(self).$real(rhs)
-            }
-        }
-
-        impl ops::$op<BareBox> for DecoratedInterval {
-            type Output = DecoratedBox;
-
-            fn $method(self, rhs: BareBox) -> Self::Output {
-                DecoratedBox::from(rhs).$reverse(self)
-            }
-        }
-
-        impl ops::$op<Interval> for DecoratedBox {
-            type Output = DecoratedBox;
-
-            fn $method(self, rhs: Interval) -> Self::Output {
-                self.$real(rhs.into())
-            }
-        }
-
-        impl ops::$op<DecoratedBox> for Interval {
-            type Output = DecoratedBox;
-
-            fn $method(self, rhs: DecoratedBox) -> Self::Output {
-                rhs.$reverse(self.into())
-            }
-        }
-
-        impl ops::$op<DecoratedInterval> for DecoratedBox {
-            type Output = DecoratedBox;
-
-            fn $method(self, rhs: DecoratedInterval) -> Self::Output {
-                self.$real(rhs)
-            }
-        }
-
-        impl ops::$op<DecoratedBox> for DecoratedInterval {
-            type Output = DecoratedBox;
-
-            fn $method(self, rhs: DecoratedBox) -> Self::Output {
-                rhs.$reverse(self)
-            }
-        }
-
-        impl ops::$op<f64> for BareBox {
-            type Output = BareBox;
-
-            fn $method(self, rhs: f64) -> Self::Output {
-                self.$real(rhs.into())
-            }
-        }
-
-        impl ops::$op<BareBox> for f64 {
-            type Output = BareBox;
-
-            fn $method(self, rhs: BareBox) -> Self::Output {
-                rhs.$reverse(self.into())
-            }
-        }
-
-        impl ops::$op<f64> for DecoratedBox {
-            type Output = DecoratedBox;
-
-            fn $method(self, rhs: f64) -> Self::Output {
-                self.$real(rhs.into())
-            }
-        }
-
-        impl ops::$op<DecoratedBox> for f64 {
-            type Output = DecoratedBox;
-
-            fn $method(self, rhs: DecoratedBox) -> Self::Output {
-                rhs.$reverse(self.into())
-            }
-        }
-    };
-}
-
-impl_complex_binary_op!(Add, add, add_raw, add_real, add_real);
-impl_complex_binary_op!(Sub, sub, sub_raw, sub_real, rsub_real);
-impl_complex_binary_op!(Mul, mul, mul_raw, scale, scale);
-impl_complex_binary_op!(Div, div, div_raw, div_real, rdiv_real);
-
-macro_rules! impl_complex_neg {
-    ($($interval:ty),+ $(,)?) => {$(
-        impl ops::Neg for ComplexBox<$interval> {
-            type Output = Self;
-
-            fn neg(self) -> Self::Output {
-                self.neg_raw()
-            }
-        }
-    )+};
-}
-
-impl_complex_neg!(Interval, DecoratedInterval);
-
-#[cfg(feature = "num-complex")]
-macro_rules! impl_num_complex_binary_op {
-    ($op:ident, $method:ident, $raw:ident) => {
-        impl ops::$op<Complex64> for BareBox {
-            type Output = BareBox;
-
-            fn $method(self, rhs: Complex64) -> Self::Output {
-                self.$raw(rhs.into())
-            }
-        }
-
-        impl ops::$op<BareBox> for Complex64 {
-            type Output = BareBox;
-
-            fn $method(self, rhs: BareBox) -> Self::Output {
-                BareBox::from(self).$raw(rhs)
-            }
-        }
-
-        impl ops::$op<Complex64> for DecoratedBox {
-            type Output = DecoratedBox;
-
-            fn $method(self, rhs: Complex64) -> Self::Output {
-                self.$raw(rhs.into())
-            }
-        }
-
-        impl ops::$op<DecoratedBox> for Complex64 {
-            type Output = DecoratedBox;
-
-            fn $method(self, rhs: DecoratedBox) -> Self::Output {
-                DecoratedBox::from(self).$raw(rhs)
-            }
-        }
-
-        impl ops::$op<Complex64> for Interval {
-            type Output = BareBox;
-
-            fn $method(self, rhs: Complex64) -> Self::Output {
-                BareBox::from(self).$raw(rhs.into())
-            }
-        }
-
-        impl ops::$op<Interval> for Complex64 {
-            type Output = BareBox;
-
-            fn $method(self, rhs: Interval) -> Self::Output {
-                BareBox::from(self).$raw(rhs.into())
-            }
-        }
-
-        impl ops::$op<Complex64> for DecoratedInterval {
-            type Output = DecoratedBox;
-
-            fn $method(self, rhs: Complex64) -> Self::Output {
-                DecoratedBox::from(self).$raw(rhs.into())
-            }
-        }
-
-        impl ops::$op<DecoratedInterval> for Complex64 {
-            type Output = DecoratedBox;
-
-            fn $method(self, rhs: DecoratedInterval) -> Self::Output {
-                DecoratedBox::from(self).$raw(rhs.into())
-            }
-        }
-    };
-}
-
-#[cfg(feature = "num-complex")]
-impl_num_complex_binary_op!(Add, add, add_raw);
-#[cfg(feature = "num-complex")]
-impl_num_complex_binary_op!(Sub, sub, sub_raw);
-#[cfg(feature = "num-complex")]
-impl_num_complex_binary_op!(Mul, mul, mul_raw);
-#[cfg(feature = "num-complex")]
-impl_num_complex_binary_op!(Div, div, div_raw);
 impl ComplexBox<Interval> {
     /// Decorates both components, reporting construction signals to `signals`.
     pub fn decorate<S: SignalSink>(self, signals: &mut S) -> ComplexBox<DecoratedInterval> {

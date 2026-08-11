@@ -53,7 +53,7 @@ impl Interval {
     /// [`Interval::EMPTY`].
     ///
     /// ```
-    /// use maryada::{Interval, SignalFlags};
+    /// use maryada::{Interval, IntervalOps, SignalFlags};
     ///
     /// let mut signals = SignalFlags::NONE;
     /// let x = Interval::text_to_interval("[0.1, 0.2]", &mut signals);
@@ -304,15 +304,6 @@ mod sealed {
 /// defines exactly the bare and decorated binary64 interval types.
 pub trait IntervalDatum: sealed::Sealed + Copy {
     #[doc(hidden)]
-    fn __zero() -> Self;
-
-    #[doc(hidden)]
-    fn __one() -> Self;
-
-    #[doc(hidden)]
-    fn __from_nums(inf: f64, sup: f64) -> Self;
-
-    #[doc(hidden)]
     fn __interval(self) -> Interval;
 
     #[doc(hidden)]
@@ -349,18 +340,6 @@ pub trait IntervalDatum: sealed::Sealed + Copy {
 impl sealed::Sealed for Interval {}
 
 impl IntervalDatum for Interval {
-    fn __zero() -> Self {
-        Self::ZERO
-    }
-
-    fn __one() -> Self {
-        Self::ONE
-    }
-
-    fn __from_nums(inf: f64, sup: f64) -> Self {
-        Self::nums_to_interval(inf, sup, &mut ())
-    }
-
     fn __interval(self) -> Interval {
         self
     }
@@ -397,18 +376,6 @@ impl IntervalDatum for Interval {
 impl sealed::Sealed for DecoratedInterval {}
 
 impl IntervalDatum for DecoratedInterval {
-    fn __zero() -> Self {
-        Self::ZERO
-    }
-
-    fn __one() -> Self {
-        Self::ONE
-    }
-
-    fn __from_nums(inf: f64, sup: f64) -> Self {
-        Self::nums_to_interval(inf, sup, &mut ())
-    }
-
     fn __interval(self) -> Interval {
         self.interval
     }

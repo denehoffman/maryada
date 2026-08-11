@@ -3,16 +3,16 @@
 use core::cmp::Ordering;
 
 use maryada::{
-    DecoratedInterval, Decoration, Interval, Signal, SignalFlags, convex_hull, decoration_part,
-    disjoint, interior, intersection, set_dec, subset,
+    DecoratedInterval, Decoration, Interval, IntervalOps, Signal, SignalFlags, convex_hull,
+    decoration_part, disjoint, interior, intersection, set_dec, subset,
 };
 
 #[test]
 fn constructors_and_set_operations_follow_the_set_based_model() {
-    assert!(maryada::new::<Interval>(2.0, 1.0).is_empty());
-    assert!(maryada::singleton::<Interval>(f64::NAN).is_empty());
-    assert!(maryada::new::<DecoratedInterval>(2.0, 1.0).is_nai());
-    assert!(maryada::singleton::<DecoratedInterval>(f64::NAN).is_nai());
+    assert!(Interval::new(2.0, 1.0).is_empty());
+    assert!(Interval::singleton(f64::NAN).is_empty());
+    assert!(DecoratedInterval::new(2.0, 1.0).is_nai());
+    assert!(DecoratedInterval::singleton(f64::NAN).is_nai());
 
     let inner = Interval::new(1.0, 2.0);
     let outer = Interval::new(0.0, 3.0);

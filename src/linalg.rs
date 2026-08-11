@@ -7,7 +7,7 @@
 // <https://kam.mff.cuni.cz/~horacek/source/horacek_phdthesis.pdf>
 // I'll add a nice citation for this and associated papers later.
 
-use core::ops::{Add, Mul, Sub};
+use core::ops::{Add, Div, Mul, Sub};
 
 use nalgebra::{
     DefaultAllocator, Dim, DimMin, DimName, Matrix, MatrixSum, OMatrix, Scalar, Storage,
@@ -16,7 +16,7 @@ use nalgebra::{
 };
 
 use crate::{
-    DecoratedInterval, Enclosure, EnclosureArithmetic, Interval, Magnitude, Midpoint, Radius,
+    IntervalOps,
     rounding::{self, Direction},
 };
 
@@ -39,20 +39,20 @@ impl<M> IntervalMatrix<M> {
 
 impl<T, R, C, S> From<Matrix<f64, R, C, S>> for IntervalMatrix<OMatrix<T, R, C>>
 where
-    T: Enclosure + Scalar,
+    T: IntervalOps + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<f64, R, C>,
     DefaultAllocator: Allocator<R, C>,
 {
     fn from(value: Matrix<f64, R, C, S>) -> Self {
-        Self(value.map(T::from_f64))
+        Self(value.map(T::from))
     }
 }
 
 fn enclose<T, R, C, S>(mat: Matrix<f64, R, C, S>) -> IntervalMatrix<OMatrix<T, R, C>>
 where
-    T: Enclosure + Scalar,
+    T: IntervalOps + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<f64, R, C>,
@@ -63,7 +63,7 @@ where
 
 impl<T, R, C, S> IntervalMatrix<Matrix<T, R, C, S>>
 where
-    T: Enclosure + Scalar,
+    T: IntervalOps + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
@@ -101,7 +101,7 @@ where
 
 impl<T, R1, C1, SA> IntervalMatrix<Matrix<T, R1, C1, SA>>
 where
-    T: EnclosureArithmetic + Scalar,
+    T: IntervalOps + Scalar,
     R1: Dim,
     C1: Dim,
     SA: Storage<T, R1, C1>,
@@ -129,7 +129,7 @@ where
             .iter()
             .copied()
             .zip(rhs.0.iter().copied())
-            .map(|(lhs, rhs)| EnclosureArithmetic::mul(lhs, rhs));
+            .map(|(lhs, rhs)| Mul::mul(lhs, rhs));
 
         IntervalMatrix(Matrix::from_iterator_generic(nrows, ncols, elements))
     }
@@ -157,7 +157,7 @@ where
             .iter()
             .copied()
             .zip(rhs.0.iter().copied())
-            .map(|(lhs, rhs)| EnclosureArithmetic::div(lhs, rhs));
+            .map(|(lhs, rhs)| Div::div(lhs, rhs));
 
         IntervalMatrix(Matrix::from_iterator_generic(nrows, ncols, elements))
     }
@@ -171,10 +171,7 @@ where
         IntervalMatrix(Matrix::from_iterator_generic(
             nrows,
             ncols,
-            self.0
-                .iter()
-                .copied()
-                .map(|a| EnclosureArithmetic::mul(a, value)),
+            self.0.iter().copied().map(|a| Mul::mul(a, value)),
         ))
     }
 
@@ -187,10 +184,7 @@ where
         IntervalMatrix(Matrix::from_iterator_generic(
             nrows,
             ncols,
-            self.0
-                .iter()
-                .copied()
-                .map(|a| EnclosureArithmetic::div(a, value)),
+            self.0.iter().copied().map(|a| Div::div(a, value)),
         ))
     }
 }
@@ -203,7 +197,7 @@ pub enum RegularityResult {
 
 impl<T, D, S> IntervalMatrix<Matrix<T, D, D, S>>
 where
-    T: EnclosureArithmetic + Magnitude + Midpoint<Point = f64> + Radius + Scalar,
+    T: IntervalOps + Scalar,
     D: DimMin<D, Output = D> + DimName,
     S: Storage<T, D, D>,
     DefaultAllocator: Allocator<D, D> + Allocator<D>,
@@ -227,10 +221,10 @@ where
         // Beeck
         let id: IntervalMatrix<OMatrix<T, D, D>> =
             IntervalMatrix::from_inner(Matrix::from_fn_generic(nrows, ncols, |i, j| {
-                if i == j { T::one() } else { T::zero() }
+                if i == j { T::ONE } else { T::ZERO }
             }));
-        let preconditioned = &inv_enc * self;
-        let residual = &id - &preconditioned;
+        let preconditioned = Mul::mul(&inv_enc, self);
+        let residual = Sub::sub(&id, &preconditioned);
         let bound = residual.inf_norm();
         if bound.is_finite() && bound < 1.0 {
             return RegularityResult::ProvenRegular;
@@ -243,47 +237,47 @@ where
 
 impl<T, R, C, S> IntervalMatrix<Matrix<T, R, C, S>>
 where
-    T: Radius + Scalar,
+    T: IntervalOps + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
     DefaultAllocator: Allocator<R, C>,
 {
     pub fn rad(&self) -> OMatrix<f64, R, C> {
-        self.0.map(Radius::rad)
+        self.0.map(IntervalOps::rad)
     }
     pub fn inner_rad(&self) -> OMatrix<f64, R, C> {
-        self.0.map(Radius::inner_rad)
+        self.0.map(IntervalOps::inner_rad)
     }
 }
 
 impl<T, R, C, S> IntervalMatrix<Matrix<T, R, C, S>>
 where
-    T: Midpoint<Point = f64> + Scalar,
+    T: IntervalOps + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
     DefaultAllocator: Allocator<R, C>,
 {
     pub fn mid(&self) -> OMatrix<f64, R, C> {
-        self.0.map(Midpoint::mid)
+        self.0.map(IntervalOps::mid)
     }
 }
 
 impl<T, R, C, S> IntervalMatrix<Matrix<T, R, C, S>>
 where
-    T: Magnitude + Scalar,
+    T: IntervalOps + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
     DefaultAllocator: Allocator<R, C>,
 {
     pub fn mag(&self) -> OMatrix<f64, R, C> {
-        self.0.map(Magnitude::mag)
+        self.0.map(IntervalOps::mag)
     }
 
     pub fn mig(&self) -> OMatrix<f64, R, C> {
-        self.0.map(Magnitude::mig)
+        self.0.map(IntervalOps::mig)
     }
 
     pub fn norm1(&self) -> f64 {
@@ -320,7 +314,7 @@ where
 impl<'a, 'b, T, R1, C1, R2, C2, SA, SB> Add<&'b IntervalMatrix<Matrix<T, R2, C2, SB>>>
     for &'a IntervalMatrix<Matrix<T, R1, C1, SA>>
 where
-    T: EnclosureArithmetic + Scalar,
+    T: IntervalOps + Scalar,
     R1: Dim,
     C1: Dim,
     R2: Dim,
@@ -345,7 +339,7 @@ where
             .iter()
             .copied()
             .zip(rhs.0.iter().copied())
-            .map(|(lhs, rhs)| EnclosureArithmetic::add(lhs, rhs));
+            .map(|(lhs, rhs)| Add::add(lhs, rhs));
 
         IntervalMatrix(Matrix::from_iterator_generic(nrows, ncols, elements))
     }
@@ -354,7 +348,7 @@ where
 impl<'a, 'b, T, R1, C1, R2, C2, SA, SB> Sub<&'b IntervalMatrix<Matrix<T, R2, C2, SB>>>
     for &'a IntervalMatrix<Matrix<T, R1, C1, SA>>
 where
-    T: EnclosureArithmetic + Scalar,
+    T: IntervalOps + Scalar,
     R1: Dim,
     C1: Dim,
     R2: Dim,
@@ -379,7 +373,7 @@ where
             .iter()
             .copied()
             .zip(rhs.0.iter().copied())
-            .map(|(lhs, rhs)| EnclosureArithmetic::sub(lhs, rhs));
+            .map(|(lhs, rhs)| Sub::sub(lhs, rhs));
 
         IntervalMatrix(Matrix::from_iterator_generic(nrows, ncols, elements))
     }
@@ -388,7 +382,7 @@ where
 impl<'a, 'b, T, R1, C1, R2, C2, SA, SB> Mul<&'b IntervalMatrix<Matrix<T, R2, C2, SB>>>
     for &'a IntervalMatrix<Matrix<T, R1, C1, SA>>
 where
-    T: EnclosureArithmetic + Scalar,
+    T: IntervalOps + Scalar,
     R1: Dim,
     C1: Dim,
     R2: Dim,
@@ -409,15 +403,13 @@ where
         );
         let (nrows, _) = self.0.shape_generic();
         let (_, ncols) = rhs.0.shape_generic();
-        let mut output =
-            OMatrix::<T, R1, C2>::from_element_generic(nrows, ncols, <T as Enclosure>::zero());
+        let mut output = OMatrix::<T, R1, C2>::from_element_generic(nrows, ncols, T::ZERO);
         for (mut output_column, rhs_column) in output.column_iter_mut().zip(rhs.0.column_iter()) {
             for (lhs_column, rhs_entry) in self.0.column_iter().zip(rhs_column.iter().copied()) {
                 for (output_entry, lhs_entry) in
                     output_column.iter_mut().zip(lhs_column.iter().copied())
                 {
-                    *output_entry =
-                        EnclosureArithmetic::mul_add(lhs_entry, rhs_entry, *output_entry);
+                    *output_entry = lhs_entry.mul_add(rhs_entry, *output_entry);
                 }
             }
         }

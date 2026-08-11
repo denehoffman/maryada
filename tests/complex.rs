@@ -2,7 +2,9 @@
 #![allow(clippy::single_char_pattern, clippy::suboptimal_flops)]
 #![cfg(feature = "num-complex")]
 
-use maryada::{ComplexBox, DecoratedInterval, Decoration, Interval, decoration_part, set_dec};
+use maryada::{
+    ComplexBox, DecoratedInterval, Decoration, Interval, IntervalOps, decoration_part, set_dec,
+};
 use num_complex::Complex64;
 
 fn assert_contains(interval: Interval, value: f64) {
@@ -83,7 +85,6 @@ fn decorations_conversions_and_constants_preserve_semantics() {
     assert_eq!(ComplexBox::<Interval>::from(decorated_owned), converted);
     assert!(ComplexBox::<Interval>::ZERO.is_zero());
     assert!(ComplexBox::<Interval>::ONE.is_real());
-    assert_eq!(ComplexBox::<Interval>::I, ComplexBox::i());
 }
 
 #[test]
@@ -101,10 +102,10 @@ fn arithmetic_operators_polar_forms_and_powers_enclose_reference_values() {
         (2.0 - z, Complex64::new(0.0, -1.0)),
         (z * 2.0, Complex64::new(4.0, 2.0)),
         (2.0 / z, Complex64::new(0.8, -0.4)),
-        (z.add_real(1.0.into()), Complex64::new(3.0, 1.0)),
-        (z.sub_real(1.0.into()), Complex64::new(1.0, 1.0)),
-        (z.scale(2.0.into()), Complex64::new(4.0, 2.0)),
-        (z.div_real(2.0.into()), Complex64::new(1.0, 0.5)),
+        (z + 1.0f64, Complex64::new(3.0, 1.0)),
+        (z - 1.0f64, Complex64::new(1.0, 1.0)),
+        (z * 2.0f64, Complex64::new(4.0, 2.0)),
+        (z / 2.0f64, Complex64::new(1.0, 0.5)),
         (z.conj(), Complex64::new(2.0, -1.0)),
         (z.recip(), Complex64::new(0.4, -0.2)),
         (z.pown(0), Complex64::new(1.0, 0.0)),
@@ -167,6 +168,27 @@ fn complex_scalar_operators_cover_interval_and_box_combinations() {
     check_op!(-);
     check_op!(*);
     check_op!(/);
+}
+
+#[test]
+fn complex_scalar_assignment_operators_are_feature_guarded() {
+    type BareBox = ComplexBox<Interval>;
+    type DecoratedBox = ComplexBox<DecoratedInterval>;
+
+    macro_rules! check_assign_op {
+        ($op:tt) => {{
+            let scalar = Complex64::new(2.0, 1.0);
+            let mut bare_box = BareBox::from(3.0);
+            let mut decorated_box = DecoratedBox::from(4.0);
+            bare_box $op scalar;
+            decorated_box $op scalar;
+        }};
+    }
+
+    check_assign_op!(+=);
+    check_assign_op!(-=);
+    check_assign_op!(*=);
+    check_assign_op!(/=);
 }
 
 #[test]

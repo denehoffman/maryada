@@ -6,13 +6,13 @@
 //! maryada provides [`Interval`] and [`DecoratedInterval`] for outward-rounded
 //! real interval arithmetic, `ComplexBox` for rectangular complex intervals
 //! when the `complex` feature is enabled, and text and binary interchange operations. Most arithmetic functions are
-//! generic over [`IntervalDatum`], so the same free-function API works with
-//! bare and decorated intervals.
+//! generic over [`IntervalDatum`], so the same standards-oriented free-function
+//! API works with bare and decorated intervals.
 //!
-//! The inherent methods offer the same operations in a chaining-friendly form:
+//! [`IntervalOps`] offers the same operations in a chaining-friendly form:
 //!
 //! ```
-//! use maryada::Interval;
+//! use maryada::{Interval, IntervalOps};
 //!
 //! let x = Interval::new(1.0, 2.0);
 //! let y = x.sqr();
@@ -35,7 +35,6 @@ mod ops;
 mod rounding;
 mod signals;
 mod text;
-mod traits;
 mod types;
 mod ux;
 
@@ -47,11 +46,11 @@ pub use linalg::{IntervalMatrix, RegularityResult};
 pub use ops::*;
 pub use signals::{Signal, SignalFlags, SignalSink};
 pub use text::{ParseIntervalError, TextError, interval_to_text};
-pub use traits::{Conjugate, Enclosure, EnclosureArithmetic, Magnitude, Midpoint, Radius};
 pub use types::{DecoratedInterval, Decoration, Interval, IntervalDatum, InvalidDecoration};
+pub use ux::IntervalOps;
 
 pub mod prelude {
     //! Common interval types for glob imports.
 
-    pub use crate::types::{DecoratedInterval, Decoration, Interval};
+    pub use crate::{DecoratedInterval, Decoration, Interval, IntervalOps};
 }

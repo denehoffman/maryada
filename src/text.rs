@@ -113,7 +113,7 @@ pub fn text_to_decorated_interval<S: SignalSink>(s: &str, signals: &mut S) -> De
 /// # Example
 ///
 /// ```
-/// use maryada::{Interval, interval_to_text};
+/// use maryada::{Interval, IntervalOps, interval_to_text};
 ///
 /// let mut output = [0_u8; 64];
 /// let length = interval_to_text(Interval::new(1.0, 2.0), None, &mut output)?;

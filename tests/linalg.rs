@@ -1,7 +1,7 @@
 //! Compile-time coverage for the public nalgebra storage aliases.
 #![cfg(feature = "linalg")]
 
-use maryada::{Interval, IntervalMatrix, RegularityResult, empty, entire};
+use maryada::{Interval, IntervalMatrix, IntervalOps, RegularityResult, empty, entire};
 use nalgebra::SMatrix;
 
 #[test]

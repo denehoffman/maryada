@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(feature = "complex")]
 
-use maryada::{ComplexBox, DecoratedInterval, Interval};
+use maryada::{ComplexBox, DecoratedInterval, Interval, IntervalOps};
 
 #[test]
 fn complex_boxes_work_without_num_complex() {
@@ -56,4 +56,31 @@ fn complex_operators_cover_real_and_box_combinations() {
     check_op!(-);
     check_op!(*);
     check_op!(/);
+}
+
+#[test]
+fn complex_assignment_operators_cover_non_promoting_combinations() {
+    type BareBox = ComplexBox<Interval>;
+    type DecoratedBox = ComplexBox<DecoratedInterval>;
+
+    macro_rules! check_assign_op {
+        ($op:tt) => {{
+            let mut bare_box = BareBox::from(8.0);
+            bare_box $op BareBox::from(2.0);
+            bare_box $op Interval::from(2.0);
+            bare_box $op 2.0;
+
+            let mut decorated_box = DecoratedBox::from(8.0);
+            decorated_box $op BareBox::from(2.0);
+            decorated_box $op DecoratedBox::from(2.0);
+            decorated_box $op Interval::from(2.0);
+            decorated_box $op DecoratedInterval::from(2.0);
+            decorated_box $op 2.0;
+        }};
+    }
+
+    check_assign_op!(+=);
+    check_assign_op!(-=);
+    check_assign_op!(*=);
+    check_assign_op!(/=);
 }

@@ -1,5 +1,5 @@
 //! An example which estimates the constant π
-use maryada::Interval;
+use maryada::{Interval, IntervalOps};
 
 /// The Basel problem says that π can be found from an infinite sum:
 ///

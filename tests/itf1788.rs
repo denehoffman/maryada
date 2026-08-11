@@ -15,7 +15,7 @@
 // This harness is a Rust adaptation and intentionally exercises only operations
 // that are part of maryada's current public API.
 
-use maryada::{DecoratedInterval, Decoration, Interval};
+use maryada::{DecoratedInterval, Decoration, Interval, IntervalOps};
 
 #[derive(Clone, Copy, Debug)]
 enum AnyInterval {

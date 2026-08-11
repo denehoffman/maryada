@@ -1,66 +1,93 @@
-//! Tests for the sealed scalar capability traits.
+//! Tests for the sealed real-interval convenience trait.
+
+use core::fmt::Debug;
 
 use maryada::{
-    Conjugate, DecoratedInterval, Enclosure, EnclosureArithmetic, Interval, Magnitude, Midpoint,
-    Radius,
+    DecoratedInterval, Decoration, Interval, IntervalOps, add, decoration_part, set_dec, sqr,
 };
 
+fn exercise_common_api<T>()
+where
+    T: IntervalOps + Debug + PartialEq,
+{
+    let x = T::new(1.0, 2.0);
+    let y = T::new(3.0, 4.0);
+
+    assert_eq!(T::ZERO.bounds(), (0.0, 0.0));
+    assert_eq!(T::ONE.bounds(), (1.0, 1.0));
+    assert!(T::EMPTY.is_empty());
+    assert!(T::ENTIRE.is_entire());
+    assert_eq!(T::singleton(2.0).bounds(), (2.0, 2.0));
+
+    assert_eq!((x + y).bounds(), (4.0, 6.0));
+    assert_eq!((y - x).bounds(), (1.0, 3.0));
+    assert_eq!((x * y).bounds(), (3.0, 8.0));
+    assert_eq!((y / x).bounds(), (1.5, 4.0));
+    assert_eq!((-x).bounds(), (-2.0, -1.0));
+
+    let mut assigned = T::from(8.0);
+    assigned += T::from(2.0);
+    assert_eq!(assigned.bounds(), (10.0, 10.0));
+    assigned -= T::from(2.0);
+    assert_eq!(assigned.bounds(), (8.0, 8.0));
+    assigned *= T::from(2.0);
+    assert_eq!(assigned.bounds(), (16.0, 16.0));
+    assigned /= T::from(2.0);
+    assert_eq!(assigned.bounds(), (8.0, 8.0));
+    assigned += 2.0;
+    assigned -= 2.0;
+    assigned *= 2.0;
+    assigned /= 2.0;
+    assert_eq!(assigned.bounds(), (8.0, 8.0));
+
+    assert_eq!(x.sqr(), sqr(x));
+    assert_eq!(x.powi(2), x.sqr());
+    assert_eq!(x.mul_add(y, T::ONE), x * y + T::ONE);
+    assert_eq!(x.hypot(T::ZERO), x.abs());
+    assert_eq!(x.inner_rad(), 0.5);
+    assert!(x.equal(T::new(1.0, 2.0)));
+    assert!(x.subset(x.convex_hull(y)));
+    assert_eq!(x.hull_value(4.0).bounds(), (1.0, 4.0));
+    assert!(x.contains(1.5));
+    assert!(T::ONE.is_singleton());
+    assert!(x.is_bounded());
+    assert!(x.intersects(y.convex_hull(x)));
+
+    let (left, right) = x.bisect();
+    assert_eq!(left.bounds(), (1.0, 1.5));
+    assert_eq!(right.bounds(), (1.5, 2.0));
+}
+
 #[test]
-fn real_enclosure_capabilities_forward_to_interval_operations() {
+fn common_api_is_generic_over_bare_and_decorated_intervals() {
+    exercise_common_api::<Interval>();
+    exercise_common_api::<DecoratedInterval>();
+}
+
+#[test]
+fn methods_match_standard_free_functions() {
     let x = Interval::new(1.0, 2.0);
     let y = Interval::new(3.0, 4.0);
 
-    assert_eq!(<Interval as Enclosure>::zero(), Interval::from(0.0));
-    assert!(!Enclosure::is_empty(x));
-    assert!(!Enclosure::is_nai(x));
-    assert_eq!(EnclosureArithmetic::add(x, y), x + y);
-    assert_eq!(EnclosureArithmetic::mul_add(x, y, x), x.mul_add(y, x));
-    assert_eq!(Conjugate::conj(x), x);
-    assert_eq!(Midpoint::mid(x), x.mid());
-    assert_eq!(Magnitude::abs(x), x.abs());
-    assert_eq!(Magnitude::mag(x), x.mag());
-    assert_eq!(Magnitude::mig(x), x.mig());
-    assert_eq!(Radius::rad(x), x.rad());
-    assert_eq!(Radius::wid(x), x.wid());
+    assert_eq!(x + y, add(x, y));
+    assert_eq!(x.sqr(), sqr(x));
+    assert_eq!(x.mid_rad(), maryada::mid_rad(x));
+    assert_eq!(x.cancel_plus(y), maryada::cancel_plus(x, y));
 }
 
 #[test]
-fn decorated_enclosure_capabilities_preserve_nai() {
+fn decorated_methods_preserve_nai_and_decorations() {
     let nai = DecoratedInterval::NAI;
+    assert!(nai.is_nai());
+    assert!(nai.sqr().is_nai());
+    assert!(!nai.intersects(DecoratedInterval::ENTIRE));
+    let (left, right) = nai.bisect();
+    assert!(left.is_nai());
+    assert!(right.is_nai());
 
-    assert!(Enclosure::is_nai(nai));
-    assert!(Enclosure::is_nai(EnclosureArithmetic::add(
-        nai,
-        DecoratedInterval::from(1.0),
-    )));
-}
-
-#[cfg(feature = "complex")]
-#[test]
-fn complex_enclosure_capabilities_forward_to_box_operations() {
-    use maryada::ComplexBox;
-
-    let x = ComplexBox::<Interval>::new(Interval::new(1.0, 2.0), Interval::from(1.0));
-    let y = ComplexBox::<Interval>::new(Interval::from(2.0), Interval::new(-1.0, 1.0));
-
-    assert!(!Enclosure::is_empty(x));
-    assert!(!Enclosure::is_nai(x));
-    assert_eq!(EnclosureArithmetic::mul(x, y), x * y);
-    assert_eq!(Conjugate::conj(x), x.conj());
-    assert_eq!(Magnitude::abs(x), x.abs());
-    assert_eq!(Magnitude::mag(x), x.mag());
-    assert_eq!(Magnitude::mig(x), x.mig());
-}
-
-#[cfg(feature = "num-complex")]
-#[test]
-fn complex_midpoint_uses_complex64() {
-    use maryada::ComplexBox;
-    use num_complex::Complex64;
-
-    let value = ComplexBox::<Interval>::new(Interval::new(1.0, 3.0), Interval::new(-2.0, 2.0));
-
-    assert_eq!(Midpoint::mid(value), Complex64::new(2.0, 0.0));
-    assert_eq!(Radius::rad(value), value.rad());
-    assert_eq!(Radius::wid(value), value.wid());
+    let value = set_dec(Interval::new(1.0, 3.0), Decoration::Def);
+    assert_eq!(decoration_part(value.sqr()), Decoration::Def);
+    let (left, right) = value.bisect();
+    assert_eq!(decoration_part(left), Decoration::Def);
+    assert_eq!(decoration_part(right), Decoration::Def);
 }

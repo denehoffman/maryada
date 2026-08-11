@@ -1,13 +1,11 @@
 use core::{cmp::Ordering, fmt, ops, str::FromStr};
 
-use crate::{DecoratedInterval, Interval, ParseIntervalError, Signal, SignalFlags, SignalSink};
+use crate::{
+    DecoratedInterval, Decoration, Interval, IntervalDatum, ParseIntervalError, Signal,
+    SignalFlags, SignalSink,
+};
 
 impl Interval {
-    /// Constructs an interval from binary64 endpoints, returning empty for invalid bounds.
-    #[must_use]
-    pub fn new(inf: f64, sup: f64) -> Self {
-        Self::nums_to_interval(inf, sup, &mut ())
-    }
     /// Converts this bare interval to a decorated interval.
     pub fn decorate<S: SignalSink>(self, signals: &mut S) -> DecoratedInterval {
         Self::from_nums(self.inf_raw(), self.sup_raw()).map_or_else(
@@ -44,7 +42,7 @@ impl Interval {
 
 impl From<f64> for Interval {
     fn from(value: f64) -> Self {
-        Self::new(value, value)
+        Self::nums_to_interval(value, value, &mut ())
     }
 }
 
@@ -79,12 +77,6 @@ impl From<DecoratedInterval> for Interval {
 }
 
 impl DecoratedInterval {
-    /// Constructs a decorated interval, returning `NaI` for invalid bounds.
-    #[must_use]
-    pub fn new(inf: f64, sup: f64) -> Self {
-        Self::nums_to_interval(inf, sup, &mut ())
-    }
-
     /// Encodes this decorated interval in the big-endian interchange format.
     #[must_use]
     pub fn to_be_bytes(self) -> [u8; crate::DECORATED_INTERVAL_ENCODED_LEN] {
@@ -106,11 +98,17 @@ impl DecoratedInterval {
     pub fn from_le_bytes<S: SignalSink>(bytes: &[u8], signals: &mut S) -> Self {
         crate::decorated_interval_from_le_bytes(bytes, signals)
     }
+
+    /// Returns this interval's decoration.
+    #[must_use]
+    pub const fn decoration(self) -> crate::Decoration {
+        crate::decoration_part(self)
+    }
 }
 
 impl From<f64> for DecoratedInterval {
     fn from(value: f64) -> Self {
-        Self::new(value, value)
+        Self::nums_to_interval(value, value, &mut ())
     }
 }
 
@@ -121,10 +119,7 @@ impl From<&f64> for DecoratedInterval {
 }
 
 #[allow(clippy::indexing_slicing)]
-fn display_interval<T: crate::IntervalDatum>(
-    value: T,
-    formatter: &mut fmt::Formatter<'_>,
-) -> fmt::Result {
+fn display_interval<T: IntervalDatum>(value: T, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
     let mut output = [0u8; 128];
     let len = crate::interval_to_text(value, None, &mut output).map_err(|_| fmt::Error)?;
     let text = core::str::from_utf8(&output[..len]).map_err(|_| fmt::Error)?;
@@ -174,7 +169,7 @@ impl FromStr for DecoratedInterval {
 }
 
 macro_rules! impl_interval_binary_op {
-    ($op:ident, $method:ident, $function:path) => {
+    ($op:ident, $method:ident, $assign_op:ident, $assign_method:ident, $function:path) => {
         impl ops::$op<f64> for Interval {
             type Output = Interval;
 
@@ -238,13 +233,43 @@ macro_rules! impl_interval_binary_op {
                 $function(self, rhs)
             }
         }
+
+        impl ops::$assign_op for Interval {
+            fn $assign_method(&mut self, rhs: Self) {
+                *self = $function(*self, rhs);
+            }
+        }
+
+        impl ops::$assign_op<f64> for Interval {
+            fn $assign_method(&mut self, rhs: f64) {
+                *self = $function(*self, rhs.into());
+            }
+        }
+
+        impl ops::$assign_op for DecoratedInterval {
+            fn $assign_method(&mut self, rhs: Self) {
+                *self = $function(*self, rhs);
+            }
+        }
+
+        impl ops::$assign_op<Interval> for DecoratedInterval {
+            fn $assign_method(&mut self, rhs: Interval) {
+                *self = $function(*self, rhs.into());
+            }
+        }
+
+        impl ops::$assign_op<f64> for DecoratedInterval {
+            fn $assign_method(&mut self, rhs: f64) {
+                *self = $function(*self, rhs.into());
+            }
+        }
     };
 }
 
-impl_interval_binary_op!(Add, add, crate::add);
-impl_interval_binary_op!(Sub, sub, crate::sub);
-impl_interval_binary_op!(Mul, mul, crate::mul);
-impl_interval_binary_op!(Div, div, crate::div);
+impl_interval_binary_op!(Add, add, AddAssign, add_assign, crate::add);
+impl_interval_binary_op!(Sub, sub, SubAssign, sub_assign, crate::sub);
+impl_interval_binary_op!(Mul, mul, MulAssign, mul_assign, crate::mul);
+impl_interval_binary_op!(Div, div, DivAssign, div_assign, crate::div);
 
 macro_rules! impl_interval_neg {
     ($($interval:ty),+ $(,)?) => {$(
@@ -260,360 +285,460 @@ macro_rules! impl_interval_neg {
 
 impl_interval_neg!(Interval, DecoratedInterval);
 
-impl Interval {
-    /// Returns the reciprocal enclosure; see [`crate::recip`].
+/// Chaining-friendly operations shared by bare and decorated real intervals.
+///
+/// This trait is sealed transitively through [`IntervalDatum`]. It can be used
+/// as a public generic bound, but external crates cannot implement it.
+pub trait IntervalOps:
+    IntervalDatum
+    + From<f64>
+    + ops::Neg<Output = Self>
+    + ops::Add<Output = Self>
+    + ops::Sub<Output = Self>
+    + ops::Mul<Output = Self>
+    + ops::Div<Output = Self>
+    + ops::Add<f64, Output = Self>
+    + ops::Sub<f64, Output = Self>
+    + ops::Mul<f64, Output = Self>
+    + ops::Div<f64, Output = Self>
+    + ops::AddAssign
+    + ops::SubAssign
+    + ops::MulAssign
+    + ops::DivAssign
+    + ops::AddAssign<f64>
+    + ops::SubAssign<f64>
+    + ops::MulAssign<f64>
+    + ops::DivAssign<f64>
+{
+    /// The singleton interval containing zero.
+    const ZERO: Self;
+    /// The singleton interval containing one.
+    const ONE: Self;
+    /// The empty interval.
+    const EMPTY: Self;
+    /// The interval containing every real number.
+    const ENTIRE: Self;
+
+    /// Constructs an interval from binary64 endpoints without reporting signals.
     #[must_use]
-    pub fn recip(self) -> Self {
+    fn new(inf: f64, sup: f64) -> Self;
+
+    /// Constructs a singleton interval without reporting signals.
+    #[must_use]
+    fn singleton(value: f64) -> Self {
+        Self::from(value)
+    }
+
+    /// Returns the reciprocal enclosure.
+    #[must_use]
+    fn recip(self) -> Self {
         crate::recip(self)
     }
 
-    /// Returns the square enclosure; see [`crate::sqr`].
+    /// Returns the square enclosure.
     #[must_use]
-    pub fn sqr(self) -> Self {
+    fn sqr(self) -> Self {
         crate::sqr(self)
     }
 
-    /// Returns the square-root enclosure; see [`crate::sqrt`].
+    /// Returns the square-root enclosure.
     #[must_use]
-    pub fn sqrt(self) -> Self {
+    fn sqrt(self) -> Self {
         crate::sqrt(self)
     }
 
-    /// Encloses `self * y + z` using fused interval arithmetic.
+    /// Encloses `self * rhs + addend` using fused interval arithmetic.
     #[must_use]
-    pub fn mul_add(self, y: Self, z: Self) -> Self {
-        crate::fma(self, y, z)
+    fn mul_add(self, rhs: Self, addend: Self) -> Self {
+        crate::fma(self, rhs, addend)
     }
 
-    /// Raises this interval to the integer power `p`.
+    /// Raises this interval to an integer power.
     #[must_use]
-    pub fn pown(self, p: i32) -> Self {
-        crate::pown(self, p)
+    fn pown(self, exponent: i32) -> Self {
+        crate::pown(self, exponent)
     }
 
-    /// Alias for [`Interval::pown`].
+    /// Alias for [`IntervalOps::pown`].
     #[must_use]
-    pub fn powi(self, i: i32) -> Self {
-        self.pown(i)
+    fn powi(self, exponent: i32) -> Self {
+        self.pown(exponent)
     }
 
     /// Encloses powers with bases in `self` and exponents in `other`.
     #[must_use]
-    pub fn pow(self, other: Self) -> Self {
+    fn pow(self, other: Self) -> Self {
         crate::pow(self, other)
     }
 
     /// Applies the natural exponential function.
     #[must_use]
-    pub fn exp(self) -> Self {
+    fn exp(self) -> Self {
         crate::exp(self)
     }
 
     /// Applies the base-two exponential function.
     #[must_use]
-    pub fn exp2(self) -> Self {
+    fn exp2(self) -> Self {
         crate::exp2(self)
     }
 
     /// Applies the base-ten exponential function.
     #[must_use]
-    pub fn exp10(self) -> Self {
+    fn exp10(self) -> Self {
         crate::exp10(self)
     }
 
     /// Applies the natural logarithm on its real domain.
     #[must_use]
-    pub fn log(self) -> Self {
+    fn log(self) -> Self {
         crate::log(self)
     }
 
     /// Applies the base-two logarithm on its real domain.
     #[must_use]
-    pub fn log2(self) -> Self {
+    fn log2(self) -> Self {
         crate::log2(self)
     }
 
     /// Applies the base-ten logarithm on its real domain.
     #[must_use]
-    pub fn log10(self) -> Self {
+    fn log10(self) -> Self {
         crate::log10(self)
     }
 
     /// Returns the sine enclosure.
     #[must_use]
-    pub fn sin(self) -> Self {
+    fn sin(self) -> Self {
         crate::sin(self)
     }
 
     /// Returns the cosine enclosure.
     #[must_use]
-    pub fn cos(self) -> Self {
+    fn cos(self) -> Self {
         crate::cos(self)
     }
 
     /// Returns the tangent enclosure over defined values.
     #[must_use]
-    pub fn tan(self) -> Self {
+    fn tan(self) -> Self {
         crate::tan(self)
     }
 
-    /// Returns the inverse-sine enclosure on `[-1, 1]`.
+    /// Returns the inverse-sine enclosure.
     #[must_use]
-    pub fn asin(self) -> Self {
+    fn asin(self) -> Self {
         crate::asin(self)
     }
 
-    /// Returns the inverse-cosine enclosure on `[-1, 1]`.
+    /// Returns the inverse-cosine enclosure.
     #[must_use]
-    pub fn acos(self) -> Self {
+    fn acos(self) -> Self {
         crate::acos(self)
     }
 
     /// Returns the inverse-tangent enclosure.
     #[must_use]
-    pub fn atan(self) -> Self {
+    fn atan(self) -> Self {
         crate::atan(self)
     }
 
     /// Returns the two-argument angle enclosure `atan2(self, x)`.
     #[must_use]
-    pub fn atan2(self, x: Self) -> Self {
+    fn atan2(self, x: Self) -> Self {
         crate::atan2(self, x)
     }
 
     /// Returns the hyperbolic-sine enclosure.
     #[must_use]
-    pub fn sinh(self) -> Self {
+    fn sinh(self) -> Self {
         crate::sinh(self)
     }
 
     /// Returns the hyperbolic-cosine enclosure.
     #[must_use]
-    pub fn cosh(self) -> Self {
+    fn cosh(self) -> Self {
         crate::cosh(self)
     }
 
     /// Returns the hyperbolic-tangent enclosure.
     #[must_use]
-    pub fn tanh(self) -> Self {
+    fn tanh(self) -> Self {
         crate::tanh(self)
     }
 
     /// Returns the inverse-hyperbolic-sine enclosure.
     #[must_use]
-    pub fn asinh(self) -> Self {
+    fn asinh(self) -> Self {
         crate::asinh(self)
     }
 
-    /// Returns inverse hyperbolic cosine on its real domain.
+    /// Returns the inverse-hyperbolic-cosine enclosure.
     #[must_use]
-    pub fn acosh(self) -> Self {
+    fn acosh(self) -> Self {
         crate::acosh(self)
     }
 
-    /// Returns inverse hyperbolic tangent on its real domain.
+    /// Returns the inverse-hyperbolic-tangent enclosure.
     #[must_use]
-    pub fn atanh(self) -> Self {
+    fn atanh(self) -> Self {
         crate::atanh(self)
     }
 
     /// Maps values to their signs.
     #[must_use]
-    pub fn sign(self) -> Self {
+    fn sign(self) -> Self {
         crate::sign(self)
     }
 
     /// Applies the ceiling function pointwise.
     #[must_use]
-    pub fn ceil(self) -> Self {
+    fn ceil(self) -> Self {
         crate::ceil(self)
     }
 
     /// Applies the floor function pointwise.
     #[must_use]
-    pub fn floor(self) -> Self {
+    fn floor(self) -> Self {
         crate::floor(self)
     }
 
     /// Applies truncation toward zero pointwise.
     #[must_use]
-    pub fn trunc(self) -> Self {
+    fn trunc(self) -> Self {
         crate::trunc(self)
     }
 
     /// Rounds pointwise to nearest integers with ties to even.
     #[must_use]
-    pub fn round_ties_to_even(self) -> Self {
+    fn round_ties_to_even(self) -> Self {
         crate::round_ties_to_even(self)
     }
 
     /// Rounds pointwise to nearest integers with ties away from zero.
     #[must_use]
-    pub fn round_ties_to_away(self) -> Self {
+    fn round_ties_to_away(self) -> Self {
         crate::round_ties_to_away(self)
     }
 
     /// Returns the absolute-value enclosure.
     #[must_use]
-    pub fn abs(self) -> Self {
+    fn abs(self) -> Self {
         crate::abs(self)
     }
 
-    /// Returns the pointwise-minimum enclosure with `other`.
+    /// Returns the pointwise-minimum enclosure.
     #[must_use]
-    pub fn min(self, other: Self) -> Self {
+    fn min(self, other: Self) -> Self {
         crate::min(self, other)
     }
 
-    /// Returns the pointwise-maximum enclosure with `other`.
+    /// Returns the pointwise-maximum enclosure.
     #[must_use]
-    pub fn max(self, other: Self) -> Self {
+    fn max(self, other: Self) -> Self {
         crate::max(self, other)
     }
 
     /// Encloses `sqrt(self² + other²)`.
     #[must_use]
-    pub fn hypot(self, other: Self) -> Self {
-        crate::hypot(self, other)
+    fn hypot(self, other: Self) -> Self {
+        crate::sqrt(crate::add(crate::sqr(self), crate::sqr(other)))
+    }
+
+    /// Computes cancellative subtraction `self ⊖ other`.
+    #[must_use]
+    fn cancel_minus(self, other: Self) -> Self {
+        crate::cancel_minus(self, other)
+    }
+
+    /// Computes cancellative addition `self ⊕ other`.
+    #[must_use]
+    fn cancel_plus(self, other: Self) -> Self {
+        crate::cancel_plus(self, other)
     }
 
     /// Returns the set intersection with `other`.
     #[must_use]
-    pub fn intersection(self, other: Self) -> Self {
+    fn intersection(self, other: Self) -> Self {
         crate::intersection(self, other)
     }
 
     /// Returns the smallest interval containing both operands.
     #[must_use]
-    pub fn convex_hull(self, other: Self) -> Self {
+    fn convex_hull(self, other: Self) -> Self {
         crate::convex_hull(self, other)
     }
 
     /// Extends this interval's hull to include `value`.
     #[must_use]
-    pub fn hull_value(self, value: f64) -> Self {
-        crate::convex_hull(self, Self::from(value))
+    fn hull_value(self, value: f64) -> Self {
+        self.convex_hull(Self::from(value))
     }
 
     /// Splits the interval at its midpoint into two covering intervals.
     #[must_use]
-    pub fn bisect(self) -> (Self, Self) {
-        if self.is_empty() {
+    fn bisect(self) -> (Self, Self) {
+        if self.is_nai() || self.is_empty() {
             return (self, self);
         }
         let midpoint = self.mid();
+        let left = Self::new(self.inf(), midpoint);
+        let right = Self::new(midpoint, self.sup());
         (
-            Self::new(self.inf(), midpoint),
-            Self::new(midpoint, self.sup()),
+            self.__unary_result(left.__interval(), Decoration::Com),
+            self.__unary_result(right.__interval(), Decoration::Com),
         )
     }
 
-    /// Returns whether this interval is a subset of `other`.
+    /// Returns the lower endpoint, or `NaN` for `NaI`.
     #[must_use]
-    pub fn subset(self, other: Self) -> bool {
-        crate::subset(self, other)
-    }
-
-    /// Returns whether this interval lies in the interior of `other`.
-    #[must_use]
-    pub fn interior(self, other: Self) -> bool {
-        crate::interior(self, other)
-    }
-
-    /// Returns whether this interval and `other` are disjoint.
-    #[must_use]
-    pub fn disjoint(self, other: Self) -> bool {
-        crate::disjoint(self, other)
-    }
-
-    /// Returns the lower endpoint.
-    #[must_use]
-    pub fn inf(self) -> f64 {
+    fn inf(self) -> f64 {
         crate::inf(self)
     }
 
-    /// Returns the upper endpoint.
+    /// Returns the upper endpoint, or `NaN` for `NaI`.
     #[must_use]
-    pub fn sup(self) -> f64 {
+    fn sup(self) -> f64 {
         crate::sup(self)
     }
 
     /// Returns `(lower, upper)` endpoints.
     #[must_use]
-    pub fn bounds(self) -> (f64, f64) {
+    fn bounds(self) -> (f64, f64) {
         (self.inf(), self.sup())
     }
 
-    /// Returns whether the finite scalar `value` belongs to this interval.
+    /// Returns whether finite `value` belongs to this interval.
     #[must_use]
-    pub fn contains(self, value: f64) -> bool {
-        value.is_finite() && crate::subset(Self::from(value), self)
+    fn contains(self, value: f64) -> bool {
+        value.is_finite() && Self::from(value).subset(self)
     }
 
     /// Returns a representative midpoint.
     #[must_use]
-    pub fn mid(self) -> f64 {
+    fn mid(self) -> f64 {
         crate::mid(self)
     }
 
     /// Returns the upward-rounded width.
     #[must_use]
-    pub fn wid(self) -> f64 {
+    fn wid(self) -> f64 {
         crate::wid(self)
     }
 
     /// Returns the upward-rounded radius.
     #[must_use]
-    pub fn rad(self) -> f64 {
+    fn rad(self) -> f64 {
         crate::rad(self)
+    }
+
+    /// Returns the downward-rounded radius.
+    #[must_use]
+    fn inner_rad(self) -> f64 {
+        if self.is_nai() || self.is_empty() {
+            return f64::NAN;
+        }
+        crate::rounding::inner_radius(self.inf(), self.sup(), self.mid())
     }
 
     /// Returns the greatest absolute value in this interval.
     #[must_use]
-    pub fn mag(self) -> f64 {
+    fn mag(self) -> f64 {
         crate::mag(self)
     }
 
     /// Returns the least absolute value in this interval.
     #[must_use]
-    pub fn mig(self) -> f64 {
+    fn mig(self) -> f64 {
         crate::mig(self)
     }
 
-    /// Returns a midpoint and radius that enclose this interval.
+    /// Returns a midpoint and radius enclosing this interval.
     #[must_use]
-    pub fn mid_rad(self) -> (f64, f64) {
+    fn mid_rad(self) -> (f64, f64) {
         crate::mid_rad(self)
     }
 
-    /// Returns whether this is the empty interval.
+    /// Returns whether this is the empty interval; `NaI` is not empty.
     #[must_use]
-    pub fn is_empty(self) -> bool {
+    fn is_empty(self) -> bool {
         crate::is_empty(self)
     }
 
     /// Returns whether this is the entire interval.
     #[must_use]
-    pub fn is_entire(self) -> bool {
+    fn is_entire(self) -> bool {
         crate::is_entire(self)
+    }
+
+    /// Returns whether this value is Not an Interval.
+    #[must_use]
+    fn is_nai(self) -> bool {
+        self.__is_nai()
     }
 
     /// Returns whether this interval contains exactly one real value.
     #[must_use]
-    pub fn is_singleton(self) -> bool {
-        !self.is_empty() && self.inf() == self.sup()
+    fn is_singleton(self) -> bool {
+        !self.is_nai() && !self.is_empty() && self.inf() == self.sup()
     }
 
     /// Returns whether this interval is nonempty with finite endpoints.
     #[must_use]
-    pub fn is_bounded(self) -> bool {
-        self.inf().is_finite() && self.sup().is_finite()
+    fn is_bounded(self) -> bool {
+        !self.is_nai() && self.inf().is_finite() && self.sup().is_finite()
+    }
+
+    /// Returns whether this interval denotes the same set as `other`.
+    #[must_use]
+    fn equal(self, other: Self) -> bool {
+        crate::equal(self, other)
+    }
+
+    /// Returns whether this interval is a subset of `other`.
+    #[must_use]
+    fn subset(self, other: Self) -> bool {
+        crate::subset(self, other)
+    }
+
+    /// Returns whether this interval lies in the interior of `other`.
+    #[must_use]
+    fn interior(self, other: Self) -> bool {
+        crate::interior(self, other)
+    }
+
+    /// Returns whether this interval and `other` are disjoint.
+    #[must_use]
+    fn disjoint(self, other: Self) -> bool {
+        crate::disjoint(self, other)
     }
 
     /// Returns whether this interval has a nonempty intersection with `other`.
     #[must_use]
-    pub fn intersects(self, other: Self) -> bool {
-        !crate::disjoint(self, other)
+    fn intersects(self, other: Self) -> bool {
+        !self.is_nai() && !other.is_nai() && !self.disjoint(other)
+    }
+}
+
+impl IntervalOps for Interval {
+    const ZERO: Self = Self::ZERO;
+    const ONE: Self = Self::ONE;
+    const EMPTY: Self = Self::EMPTY;
+    const ENTIRE: Self = Self::ENTIRE;
+
+    fn new(inf: f64, sup: f64) -> Self {
+        Self::nums_to_interval(inf, sup, &mut ())
+    }
+}
+
+impl IntervalOps for DecoratedInterval {
+    const ZERO: Self = Self::ZERO;
+    const ONE: Self = Self::ONE;
+    const EMPTY: Self = Self::EMPTY;
+    const ENTIRE: Self = Self::ENTIRE;
+
+    fn new(inf: f64, sup: f64) -> Self {
+        Self::nums_to_interval(inf, sup, &mut ())
     }
 }
 
@@ -636,378 +761,6 @@ impl PartialOrd for Interval {
         } else {
             None
         }
-    }
-}
-
-impl DecoratedInterval {
-    /// Returns the reciprocal enclosure and propagates decorations.
-    #[must_use]
-    pub fn recip(self) -> Self {
-        crate::recip(self)
-    }
-
-    /// Returns the square enclosure and propagates decorations.
-    #[must_use]
-    pub fn sqr(self) -> Self {
-        crate::sqr(self)
-    }
-
-    /// Returns the square-root enclosure and propagates decorations.
-    #[must_use]
-    pub fn sqrt(self) -> Self {
-        crate::sqrt(self)
-    }
-
-    /// Encloses `self * y + z` and propagates decorations.
-    #[must_use]
-    pub fn mul_add(self, y: Self, z: Self) -> Self {
-        crate::fma(self, y, z)
-    }
-
-    /// Raises this interval to the integer power `p`.
-    #[must_use]
-    pub fn pown(self, p: i32) -> Self {
-        crate::pown(self, p)
-    }
-
-    /// Alias for [`DecoratedInterval::pown`].
-    #[must_use]
-    pub fn powi(self, i: i32) -> Self {
-        self.pown(i)
-    }
-
-    /// Encloses powers with exponents in `other`.
-    #[must_use]
-    pub fn pow(self, other: Self) -> Self {
-        crate::pow(self, other)
-    }
-
-    /// Applies the natural exponential function.
-    #[must_use]
-    pub fn exp(self) -> Self {
-        crate::exp(self)
-    }
-
-    /// Applies the base-two exponential function.
-    #[must_use]
-    pub fn exp2(self) -> Self {
-        crate::exp2(self)
-    }
-
-    /// Applies the base-ten exponential function.
-    #[must_use]
-    pub fn exp10(self) -> Self {
-        crate::exp10(self)
-    }
-
-    /// Applies the natural logarithm on its real domain.
-    #[must_use]
-    pub fn log(self) -> Self {
-        crate::log(self)
-    }
-
-    /// Applies the base-two logarithm on its real domain.
-    #[must_use]
-    pub fn log2(self) -> Self {
-        crate::log2(self)
-    }
-
-    /// Applies the base-ten logarithm on its real domain.
-    #[must_use]
-    pub fn log10(self) -> Self {
-        crate::log10(self)
-    }
-
-    /// Returns the sine enclosure.
-    #[must_use]
-    pub fn sin(self) -> Self {
-        crate::sin(self)
-    }
-
-    /// Returns the cosine enclosure.
-    #[must_use]
-    pub fn cos(self) -> Self {
-        crate::cos(self)
-    }
-
-    /// Returns the tangent enclosure over defined values.
-    #[must_use]
-    pub fn tan(self) -> Self {
-        crate::tan(self)
-    }
-
-    /// Returns the inverse-sine enclosure on `[-1, 1]`.
-    #[must_use]
-    pub fn asin(self) -> Self {
-        crate::asin(self)
-    }
-
-    /// Returns the inverse-cosine enclosure on `[-1, 1]`.
-    #[must_use]
-    pub fn acos(self) -> Self {
-        crate::acos(self)
-    }
-
-    /// Returns the inverse-tangent enclosure.
-    #[must_use]
-    pub fn atan(self) -> Self {
-        crate::atan(self)
-    }
-
-    /// Returns the two-argument angle enclosure `atan2(self, x)`.
-    #[must_use]
-    pub fn atan2(self, x: Self) -> Self {
-        crate::atan2(self, x)
-    }
-
-    /// Returns the hyperbolic-sine enclosure.
-    #[must_use]
-    pub fn sinh(self) -> Self {
-        crate::sinh(self)
-    }
-
-    /// Returns the hyperbolic-cosine enclosure.
-    #[must_use]
-    pub fn cosh(self) -> Self {
-        crate::cosh(self)
-    }
-
-    /// Returns the hyperbolic-tangent enclosure.
-    #[must_use]
-    pub fn tanh(self) -> Self {
-        crate::tanh(self)
-    }
-
-    /// Returns the inverse-hyperbolic-sine enclosure.
-    #[must_use]
-    pub fn asinh(self) -> Self {
-        crate::asinh(self)
-    }
-
-    /// Returns inverse hyperbolic cosine on its real domain.
-    #[must_use]
-    pub fn acosh(self) -> Self {
-        crate::acosh(self)
-    }
-
-    /// Returns inverse hyperbolic tangent on its real domain.
-    #[must_use]
-    pub fn atanh(self) -> Self {
-        crate::atanh(self)
-    }
-
-    /// Maps values to their signs.
-    #[must_use]
-    pub fn sign(self) -> Self {
-        crate::sign(self)
-    }
-
-    /// Applies the ceiling function pointwise.
-    #[must_use]
-    pub fn ceil(self) -> Self {
-        crate::ceil(self)
-    }
-
-    /// Applies the floor function pointwise.
-    #[must_use]
-    pub fn floor(self) -> Self {
-        crate::floor(self)
-    }
-
-    /// Applies truncation toward zero pointwise.
-    #[must_use]
-    pub fn trunc(self) -> Self {
-        crate::trunc(self)
-    }
-
-    /// Rounds pointwise to nearest integers with ties to even.
-    #[must_use]
-    pub fn round_ties_to_even(self) -> Self {
-        crate::round_ties_to_even(self)
-    }
-
-    /// Rounds pointwise to nearest integers with ties away from zero.
-    #[must_use]
-    pub fn round_ties_to_away(self) -> Self {
-        crate::round_ties_to_away(self)
-    }
-
-    /// Returns the absolute-value enclosure.
-    #[must_use]
-    pub fn abs(self) -> Self {
-        crate::abs(self)
-    }
-
-    /// Returns the pointwise-minimum enclosure with `other`.
-    #[must_use]
-    pub fn min(self, other: Self) -> Self {
-        crate::min(self, other)
-    }
-
-    /// Returns the pointwise-maximum enclosure with `other`.
-    #[must_use]
-    pub fn max(self, other: Self) -> Self {
-        crate::max(self, other)
-    }
-
-    /// Encloses `sqrt(self² + other²)`.
-    #[must_use]
-    pub fn hypot(self, other: Self) -> Self {
-        crate::hypot(self, other)
-    }
-
-    /// Returns the set intersection with `other`.
-    #[must_use]
-    pub fn intersection(self, other: Self) -> Self {
-        crate::intersection(self, other)
-    }
-
-    /// Returns the smallest interval containing both operands.
-    #[must_use]
-    pub fn convex_hull(self, other: Self) -> Self {
-        crate::convex_hull(self, other)
-    }
-
-    /// Extends this interval's hull to include `value`.
-    #[must_use]
-    pub fn hull_value(self, value: f64) -> Self {
-        crate::convex_hull(self, Self::from(value))
-    }
-
-    /// Splits the interval at its midpoint into two covering intervals.
-    #[must_use]
-    pub fn bisect(self) -> (Self, Self) {
-        if self.is_nai() || self.is_empty() {
-            return (self, self);
-        }
-        let decoration = self.decoration();
-        let midpoint = self.mid();
-        let left = Interval::new(self.inf(), midpoint);
-        let right = Interval::new(midpoint, self.sup());
-        (
-            crate::set_dec(left, decoration),
-            crate::set_dec(right, decoration),
-        )
-    }
-
-    /// Returns whether this interval is a subset of `other`.
-    #[must_use]
-    pub fn subset(self, other: Self) -> bool {
-        crate::subset(self, other)
-    }
-
-    /// Returns whether this interval lies in the interior of `other`.
-    #[must_use]
-    pub fn interior(self, other: Self) -> bool {
-        crate::interior(self, other)
-    }
-
-    /// Returns whether this interval and `other` are disjoint.
-    #[must_use]
-    pub fn disjoint(self, other: Self) -> bool {
-        crate::disjoint(self, other)
-    }
-
-    /// Returns the lower endpoint, or `NaN` for `NaI`.
-    #[must_use]
-    pub fn inf(self) -> f64 {
-        crate::inf(self)
-    }
-
-    /// Returns the upper endpoint, or `NaN` for `NaI`.
-    #[must_use]
-    pub fn sup(self) -> f64 {
-        crate::sup(self)
-    }
-
-    /// Returns `(lower, upper)` endpoints.
-    #[must_use]
-    pub fn bounds(self) -> (f64, f64) {
-        (self.inf(), self.sup())
-    }
-
-    /// Returns whether the finite scalar `value` belongs to this interval.
-    #[must_use]
-    pub fn contains(self, value: f64) -> bool {
-        value.is_finite() && crate::subset(Self::from(value), self)
-    }
-
-    /// Returns a representative midpoint.
-    #[must_use]
-    pub fn mid(self) -> f64 {
-        crate::mid(self)
-    }
-
-    /// Returns the upward-rounded width.
-    #[must_use]
-    pub fn wid(self) -> f64 {
-        crate::wid(self)
-    }
-
-    /// Returns the upward-rounded radius.
-    #[must_use]
-    pub fn rad(self) -> f64 {
-        crate::rad(self)
-    }
-
-    /// Returns the greatest absolute value in this interval.
-    #[must_use]
-    pub fn mag(self) -> f64 {
-        crate::mag(self)
-    }
-
-    /// Returns the least absolute value in this interval.
-    #[must_use]
-    pub fn mig(self) -> f64 {
-        crate::mig(self)
-    }
-
-    /// Returns a midpoint and radius that enclose this interval.
-    #[must_use]
-    pub fn mid_rad(self) -> (f64, f64) {
-        crate::mid_rad(self)
-    }
-
-    /// Returns whether this is the empty interval; `NaI` is not empty.
-    #[must_use]
-    pub fn is_empty(self) -> bool {
-        crate::is_empty(self)
-    }
-
-    /// Returns whether this is the entire interval.
-    #[must_use]
-    pub fn is_entire(self) -> bool {
-        crate::is_entire(self)
-    }
-
-    /// Returns whether this value is Not an Interval.
-    #[must_use]
-    pub fn is_nai(self) -> bool {
-        crate::is_nai(self)
-    }
-
-    /// Returns whether this interval contains exactly one real value.
-    #[must_use]
-    pub fn is_singleton(self) -> bool {
-        !self.is_nai() && !self.is_empty() && self.inf() == self.sup()
-    }
-
-    /// Returns whether this interval is nonempty with finite endpoints.
-    #[must_use]
-    pub fn is_bounded(self) -> bool {
-        self.inf().is_finite() && self.sup().is_finite()
-    }
-
-    /// Returns this interval's decoration.
-    #[must_use]
-    pub const fn decoration(self) -> crate::Decoration {
-        crate::decoration_part(self)
-    }
-
-    /// Returns whether this interval has a nonempty intersection with `other`.
-    #[must_use]
-    pub fn intersects(self, other: Self) -> bool {
-        !crate::disjoint(self, other)
     }
 }
 

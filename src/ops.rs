@@ -45,30 +45,6 @@ fn ternary<T: IntervalDatum>(
     x.__ternary_result(y, z, result.interval, result.local)
 }
 
-/// Constructs an interval datum with endpoints `inf` and `sup`.
-#[must_use]
-pub fn new<T: IntervalDatum>(inf: f64, sup: f64) -> T {
-    T::__from_nums(inf, sup)
-}
-
-/// Constructs the singleton interval containing `value`.
-#[must_use]
-pub fn singleton<T: IntervalDatum>(value: f64) -> T {
-    T::__from_nums(value, value)
-}
-
-/// Returns the singleton interval containing zero.
-#[must_use]
-pub fn zero<T: IntervalDatum>() -> T {
-    T::__zero()
-}
-
-/// Returns the singleton interval containing one.
-#[must_use]
-pub fn one<T: IntervalDatum>() -> T {
-    T::__one()
-}
-
 // 6.7.1: interval constants.
 
 /// Returns the empty interval.
@@ -296,13 +272,6 @@ pub fn max<T: IntervalDatum>(x: T, y: T) -> T {
     binary(x, y, max_bare)
 }
 
-// hypot for convenience:
-
-/// Encloses `sqrt(x² + y²)` for values drawn from both intervals.
-pub fn hypot<T: IntervalDatum>(x: T, y: T) -> T {
-    sqrt(add(sqr(x), sqr(y)))
-}
-
 // 6.7.3: cancellative operations.
 
 /// Computes the cancellative subtraction operation `x ⊖ y`.
@@ -375,15 +344,6 @@ pub fn rad<T: IntervalDatum>(x: T) -> f64 {
         f64::NAN
     } else {
         rad_bare(x.__interval())
-    }
-}
-
-/// Returns the radius rounded downward.
-pub fn inner_rad<T: IntervalDatum>(x: T) -> f64 {
-    if x.__is_nai() {
-        f64::NAN
-    } else {
-        inner_rad_bare(x.__interval())
     }
 }
 
@@ -1601,23 +1561,11 @@ fn rad_bare(x: Interval) -> f64 {
     rad_from_mid_bare(x, midpoint)
 }
 
-fn inner_rad_bare(x: Interval) -> f64 {
-    let midpoint = mid_bare(x);
-    inner_rad_from_mid_bare(x, midpoint)
-}
-
 fn rad_from_mid_bare(x: Interval, midpoint: f64) -> f64 {
     if x.is_empty_raw() {
         return f64::NAN;
     }
     rounding::radius(x.inf_raw(), x.sup_raw(), midpoint)
-}
-
-fn inner_rad_from_mid_bare(x: Interval, midpoint: f64) -> f64 {
-    if x.is_empty_raw() {
-        return f64::NAN;
-    }
-    rounding::inner_radius(x.inf_raw(), x.sup_raw(), midpoint)
 }
 
 fn mag_bare(x: Interval) -> f64 {

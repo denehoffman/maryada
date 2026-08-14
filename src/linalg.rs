@@ -75,29 +75,6 @@ where
             .any(|entry| entry.is_empty() || entry.is_nai())
     }
 }
-// impl<R, C, S> From<Matrix<f64, R, C, S>> for IntervalMatrix<OMatrix<Interval, R, C>>
-// where
-//     R: Dim,
-//     C: Dim,
-//     S: Storage<f64, R, C>,
-//     DefaultAllocator: Allocator<R, C>,
-// {
-//     fn from(value: Matrix<f64, R, C, S>) -> Self {
-//         Self(value.map(Interval::from))
-//     }
-// }
-//
-// impl<R, C, S> From<Matrix<f64, R, C, S>> for IntervalMatrix<OMatrix<DecoratedInterval, R, C>>
-// where
-//     R: Dim,
-//     C: Dim,
-//     S: Storage<f64, R, C>,
-//     DefaultAllocator: Allocator<R, C>,
-// {
-//     fn from(value: Matrix<f64, R, C, S>) -> Self {
-//         Self(value.map(DecoratedInterval::from))
-//     }
-// }
 
 impl<T, R1, C1, SA> IntervalMatrix<Matrix<T, R1, C1, SA>>
 where

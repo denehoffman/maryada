@@ -624,9 +624,9 @@ pub fn pown(x: f64, p: i32, direction: Direction) -> f64 {
 }
 
 fn outward_positive_approximation(value: f64, direction: Direction) -> f64 {
-    // Some libm transcendental kernels are documented only as nearly rounded.
-    // Two representable steps conservatively cover the observed binary64 error;
-    // exact zeros and overflow require separate one-sided handling.
+    // The pinned libm exp kernel documents error strictly below one ulp.
+    // One representable step therefore encloses the exact result; zeros and
+    // overflow require separate one-sided handling.
     if value == 0.0 {
         return match direction {
             Direction::Down => -0.0,
@@ -639,18 +639,15 @@ fn outward_positive_approximation(value: f64, direction: Direction) -> f64 {
             Direction::Up => f64::INFINITY,
         };
     }
-    outward_finite_approximation_ulps(value, direction, 2)
+    outward_finite_approximation(value, direction)
 }
 
-fn outward_finite_approximation_ulps(mut value: f64, direction: Direction, ulps: usize) -> f64 {
+fn outward_finite_approximation(value: f64, direction: Direction) -> f64 {
     debug_assert!(value.is_finite());
-    for _ in 0..ulps {
-        value = match direction {
-            Direction::Down => value.next_down(),
-            Direction::Up => value.next_up(),
-        };
+    match direction {
+        Direction::Down => value.next_down(),
+        Direction::Up => value.next_up(),
     }
-    value
 }
 
 pub fn exp(x: f64, direction: Direction) -> f64 {
@@ -697,8 +694,17 @@ pub fn exp2(x: f64, direction: Direction) -> f64 {
             u64::try_from(x as i32 + 1023).expect("normal exponent is nonnegative") << 52,
         );
     }
+    let approximation = libm::exp2(x);
+    if approximation.is_normal() {
+        // The generic libm kernel documents peak error below 0.503 ulp for
+        // normal results. Its optional x87 implementation documents at most a
+        // one-ulp binary64 error, so one outward step covers either path.
+        return outward_finite_approximation(approximation, direction);
+    }
+    // libm does not state the same bound for subnormal or infinite results.
+    // Retain the directed composition for those ranges.
     let ln_2 = match (x.is_sign_negative(), direction) {
-        (false, Direction::Down) | (true, Direction::Up) => LN_2.next_down(),
+        (false, Direction::Down) | (true, Direction::Up) => LN_2,
         (false, Direction::Up) | (true, Direction::Down) => LN_2.next_up(),
     };
     exp(mul(x, ln_2, direction), direction)
@@ -727,7 +733,7 @@ pub fn exp10(x: f64, direction: Direction) -> f64 {
     }
     let ln_10 = match (x.is_sign_negative(), direction) {
         (false, Direction::Down) | (true, Direction::Up) => LN_10.next_down(),
-        (false, Direction::Up) | (true, Direction::Down) => LN_10.next_up(),
+        (false, Direction::Up) | (true, Direction::Down) => LN_10,
     };
     exp(mul(x, ln_10, direction), direction)
 }
@@ -745,7 +751,8 @@ pub fn log(x: f64, direction: Direction) -> f64 {
     if x == 1.0 {
         return direction.exact_zero();
     }
-    outward_finite_approximation_ulps(libm::log(x), direction, 2)
+    // The pinned libm log kernel documents error strictly below one ulp.
+    outward_finite_approximation(libm::log(x), direction)
 }
 
 #[allow(clippy::arithmetic_side_effects)]
@@ -769,7 +776,8 @@ pub fn log2(x: f64, direction: Direction) -> f64 {
             f64::from(exponent)
         };
     }
-    log_over_constant(x, LN_2, direction)
+    // The correctly rounded LN_2 lies below exact ln(2).
+    log_over_constant(x, LN_2, LN_2.next_up(), direction)
 }
 
 pub fn log10(x: f64, direction: Direction) -> f64 {
@@ -785,16 +793,18 @@ pub fn log10(x: f64, direction: Direction) -> f64 {
     if x == 1.0 {
         return direction.exact_zero();
     }
-    log_over_constant(x, LN_10, direction)
+    // The correctly rounded LN_10 lies above exact ln(10).
+    log_over_constant(x, LN_10.next_down(), LN_10, direction)
 }
 
-fn log_over_constant(x: f64, constant: f64, direction: Direction) -> f64 {
-    // The standard constants are correctly rounded binary64 values, so the
-    // adjacent values enclose the exact logarithm of the base. Division by
-    // both positive endpoints handles either sign of log(x).
+fn log_over_constant(
+    x: f64,
+    constant_lower: f64,
+    constant_upper: f64,
+    direction: Direction,
+) -> f64 {
+    // Division by both positive endpoints handles either sign of log(x).
     let numerator = log(x, direction);
-    let constant_lower = constant.next_down();
-    let constant_upper = constant.next_up();
     match direction {
         Direction::Down => f64::min(
             div(numerator, constant_lower, Direction::Down),

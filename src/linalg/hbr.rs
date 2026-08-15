@@ -1,5 +1,6 @@
 use super::*;
 
+/// Hansen–Bliek–Rohn verified solver for interval systems with an H-matrix.
 pub struct HBR;
 impl<T, D, SA, SB> Solver<T, D, SA, SB> for HBR
 where
@@ -42,10 +43,10 @@ where
 
         let a_diag = a_comp_interval.diagonal();
         let d_recip = d.map(IntervalOps::recip);
-        let alpha_interval = a_diag.component_sub(&d_recip);
+        let alpha_interval = &a_diag - &d_recip;
         let alpha = alpha_interval.mag();
         let scaled_u = u.component_div(&d);
-        let beta_interval = scaled_u.component_sub(&b_mag);
+        let beta_interval = &scaled_u - &b_mag;
         let beta = beta_interval.mag();
         if alpha
             .iter()

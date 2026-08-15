@@ -70,9 +70,7 @@ impl EpsilonInflation {
         let mut x = cb.clone();
         for _ in 0..self.max_iterations {
             // y = x^k * [1-r, 1+r] + [-eps, eps].
-            let y = x
-                .scale(relative_inflation)
-                .map(|entry| entry + absolute_inflation);
+            let y = (&x * relative_inflation).add_scalar(absolute_inflation);
 
             // x^{k+1} = Cb + (I-CA)y.
             let next = &cb + &(&residual * &y);

@@ -9,6 +9,10 @@ where
     C: Dim,
     S: StorageMut<T, R, C> + Clone,
 {
+    /// Computes a verified row-echelon reduction.
+    ///
+    /// Returns `None` if no pivot can be certified as nonzero.
+    #[must_use]
     pub fn rref(&self) -> Option<Self> {
         // Algorithm 5.9
         let mut a = self.as_inner().clone();
@@ -39,6 +43,7 @@ where
     }
 }
 
+/// Verified interval Gaussian-elimination solver.
 pub struct GaussianElimination;
 
 impl<T, D, SA, SB> Solver<T, D, SA, SB> for GaussianElimination

@@ -59,16 +59,15 @@ impl EpsilonInflation {
         if c.iter().any(|entry| !entry.is_finite()) {
             return None;
         }
-        let c_interval: OIntervalMatrix<T, D, D> = c.into();
-        let identity = OMatrix::<f64, D, D>::identity_generic(dim, dim);
-        let identity: OIntervalMatrix<T, D, D> = identity.into();
+        let c_interval = OIntervalMatrix::from_singletons(&c);
+        let identity = OIntervalMatrix::<T, D, D>::identity_generic(dim);
 
         // Z = I - CA.
         let residual = &identity - &(&c_interval * lhs);
 
         // x^0 = Cb.
         let cb = &c_interval * rhs;
-        let mut x = IntervalMatrix::from_inner(cb.as_inner().clone_owned());
+        let mut x = cb.clone();
         for _ in 0..self.max_iterations {
             // y = x^k * [1-r, 1+r] + [-eps, eps].
             let y = x

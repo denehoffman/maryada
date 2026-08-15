@@ -40,11 +40,15 @@ where
 pub type OIntervalMatrix<T, R, C> = IntervalMatrix<T, R, C, Owned<T, R, C>>;
 /// An owned interval column vector with allocator-selected storage.
 pub type OIntervalVector<T, D> = OIntervalMatrix<T, D, Const<1>>;
+/// An owned interval row vector with allocator-selected storage.
+pub type OIntervalRowVector<T, D> = OIntervalMatrix<T, Const<1>, D>;
 /// A statically sized interval matrix.
 pub type SIntervalMatrix<T, const R: usize, const C: usize> =
     IntervalMatrix<T, Const<R>, Const<C>, ArrayStorage<T, R, C>>;
 /// A statically sized interval column vector.
 pub type SIntervalVector<T, const D: usize> = SIntervalMatrix<T, D, 1>;
+/// A statically sized interval row vector.
+pub type SIntervalRowVector<T, const D: usize> = SIntervalMatrix<T, 1, D>;
 
 /// A dynamically sized interval matrix.
 #[cfg(feature = "alloc")]
@@ -52,6 +56,9 @@ pub type DIntervalMatrix<T> = IntervalMatrix<T, Dyn, Dyn, VecStorage<T, Dyn, Dyn
 /// A dynamically sized interval column vector.
 #[cfg(feature = "alloc")]
 pub type DIntervalVector<T> = IntervalMatrix<T, Dyn, Const<1>, VecStorage<T, Dyn, Const<1>>>;
+/// A dynamically sized interval row vector.
+#[cfg(feature = "alloc")]
+pub type DIntervalRowVector<T> = IntervalMatrix<T, Const<1>, Dyn, VecStorage<T, Const<1>, Dyn>>;
 
 impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
@@ -297,6 +304,426 @@ where
     }
 }
 
+impl<T, R, C> OIntervalMatrix<T, R, C>
+where
+    T: IntervalOps + Scalar,
+    R: Dim,
+    C: Dim,
+    DefaultAllocator: Allocator<R, C>,
+{
+    /// Creates an owned interval matrix filled with one value.
+    pub fn from_element_generic(nrows: R, ncols: C, element: T) -> Self {
+        OMatrix::from_element_generic(nrows, ncols, element).into()
+    }
+
+    /// Creates an owned interval matrix by calling `f` for each `(row, column)`.
+    pub fn from_fn_generic<F>(nrows: R, ncols: C, f: F) -> Self
+    where
+        F: FnMut(usize, usize) -> T,
+    {
+        OMatrix::from_fn_generic(nrows, ncols, f).into()
+    }
+
+    /// Creates an owned interval matrix from a column-major iterator.
+    pub fn from_iterator_generic<I>(nrows: R, ncols: C, iter: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+    {
+        OMatrix::from_iterator_generic(nrows, ncols, iter).into()
+    }
+
+    /// Creates an owned interval matrix from a row-major iterator.
+    pub fn from_row_iterator_generic<I>(nrows: R, ncols: C, iter: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+    {
+        OMatrix::from_row_iterator_generic(nrows, ncols, iter).into()
+    }
+
+    /// Creates an owned interval matrix from a row-major slice.
+    pub fn from_row_slice_generic(nrows: R, ncols: C, entries: &[T]) -> Self {
+        OMatrix::from_row_slice_generic(nrows, ncols, entries).into()
+    }
+
+    /// Creates an owned interval matrix from a column-major slice.
+    pub fn from_column_slice_generic(nrows: R, ncols: C, entries: &[T]) -> Self {
+        OMatrix::from_column_slice_generic(nrows, ncols, entries).into()
+    }
+
+    /// Creates an owned interval matrix from interval row vectors.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the supplied dimensions do not match the number or width of the rows.
+    #[allow(clippy::indexing_slicing)]
+    pub fn from_rows_generic<SR>(
+        nrows: R,
+        ncols: C,
+        rows: &[IntervalMatrix<T, Const<1>, C, SR>],
+    ) -> Self
+    where
+        SR: Storage<T, Const<1>, C>,
+    {
+        assert_eq!(
+            rows.len(),
+            nrows.value(),
+            "interval matrix row count mismatch"
+        );
+        assert!(
+            rows.iter().all(|row| row.ncols() == ncols.value()),
+            "interval matrix row width mismatch",
+        );
+        Self::from_fn_generic(nrows, ncols, |i, j| rows[i][(0, j)])
+    }
+
+    /// Creates an owned interval matrix from interval column vectors.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the supplied dimensions do not match the number or height of the columns.
+    #[allow(clippy::indexing_slicing)]
+    pub fn from_columns_generic<SC>(
+        nrows: R,
+        ncols: C,
+        columns: &[IntervalMatrix<T, R, Const<1>, SC>],
+    ) -> Self
+    where
+        SC: Storage<T, R, Const<1>>,
+    {
+        assert_eq!(
+            columns.len(),
+            ncols.value(),
+            "interval matrix column count mismatch",
+        );
+        assert!(
+            columns.iter().all(|column| column.nrows() == nrows.value()),
+            "interval matrix column height mismatch",
+        );
+        Self::from_fn_generic(nrows, ncols, |i, j| columns[j][i])
+    }
+
+    /// Creates singleton intervals from an ordinary real matrix.
+    pub fn from_singletons<S2>(values: &Matrix<f64, R, C, S2>) -> Self
+    where
+        S2: Storage<f64, R, C>,
+    {
+        let (nrows, ncols) = values.shape_generic();
+        Self::from_iterator_generic(nrows, ncols, values.iter().copied().map(T::singleton))
+    }
+
+    /// Creates intervals from corresponding lower- and upper-bound matrices.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `lower` and `upper` have different dimensions.
+    pub fn from_bounds<SL, SU>(lower: &Matrix<f64, R, C, SL>, upper: &Matrix<f64, R, C, SU>) -> Self
+    where
+        SL: Storage<f64, R, C>,
+        SU: Storage<f64, R, C>,
+    {
+        assert_eq!(
+            lower.shape(),
+            upper.shape(),
+            "interval matrix bounds dimension mismatch"
+        );
+        let (nrows, ncols) = lower.shape_generic();
+        let entries = lower
+            .iter()
+            .copied()
+            .zip(upper.iter().copied())
+            .map(|(lower, upper)| T::new(lower, upper));
+        Self::from_iterator_generic(nrows, ncols, entries)
+    }
+
+    /// Creates intervals from corresponding midpoint and radius matrices.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `midpoint` and `radius` have different dimensions.
+    pub fn from_mid_rad<SM, SR>(
+        midpoint: &Matrix<f64, R, C, SM>,
+        radius: &Matrix<f64, R, C, SR>,
+    ) -> Self
+    where
+        SM: Storage<f64, R, C>,
+        SR: Storage<f64, R, C>,
+    {
+        assert_eq!(
+            midpoint.shape(),
+            radius.shape(),
+            "interval matrix midpoint-radius dimension mismatch",
+        );
+        let (nrows, ncols) = midpoint.shape_generic();
+        let entries =
+            midpoint
+                .iter()
+                .copied()
+                .zip(radius.iter().copied())
+                .map(|(midpoint, radius)| {
+                    T::new(
+                        rounding::sub(midpoint, radius, Direction::Down),
+                        rounding::add(midpoint, radius, Direction::Up),
+                    )
+                });
+        Self::from_iterator_generic(nrows, ncols, entries)
+    }
+
+    /// Creates an owned interval matrix filled with singleton zero intervals.
+    pub fn zeros_generic(nrows: R, ncols: C) -> Self {
+        Self::from_element_generic(nrows, ncols, T::ZERO)
+    }
+}
+
+impl<T, D> OIntervalMatrix<T, D, D>
+where
+    T: IntervalOps + Scalar,
+    D: Dim,
+    DefaultAllocator: Allocator<D, D>,
+{
+    /// Creates an identity interval matrix.
+    pub fn identity_generic(dim: D) -> Self {
+        OMatrix::from_fn_generic(dim, dim, |i, j| if i == j { T::ONE } else { T::ZERO }).into()
+    }
+}
+
+impl<T, D> OIntervalMatrix<T, D, D>
+where
+    T: IntervalOps + Scalar,
+    D: Dim,
+    DefaultAllocator: Allocator<D, D> + Allocator<D>,
+{
+    /// Creates a square interval matrix from its diagonal.
+    pub fn from_diagonal<S>(diagonal: &IntervalMatrix<T, D, Const<1>, S>) -> Self
+    where
+        S: Storage<T, D, Const<1>>,
+    {
+        let (dim, _) = diagonal.shape_generic();
+        Self::from_fn_generic(dim, dim, |i, j| if i == j { diagonal[i] } else { T::ZERO })
+    }
+}
+
+impl<T, const R: usize, const C: usize> SIntervalMatrix<T, R, C>
+where
+    T: IntervalOps + Scalar,
+{
+    /// Creates a statically sized interval matrix filled with one value.
+    pub fn from_element(element: T) -> Self {
+        Self::from_element_generic(Const::<R>, Const::<C>, element)
+    }
+
+    /// Creates a statically sized interval matrix by calling `f` for each coordinate.
+    pub fn from_fn<F>(f: F) -> Self
+    where
+        F: FnMut(usize, usize) -> T,
+    {
+        Self::from_fn_generic(Const::<R>, Const::<C>, f)
+    }
+
+    /// Creates a statically sized interval matrix from a column-major iterator.
+    pub fn from_iterator<I>(iter: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+    {
+        Self::from_iterator_generic(Const::<R>, Const::<C>, iter)
+    }
+
+    /// Creates a statically sized interval matrix from a row-major iterator.
+    pub fn from_row_iterator<I>(iter: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+    {
+        Self::from_row_iterator_generic(Const::<R>, Const::<C>, iter)
+    }
+
+    /// Creates a statically sized interval matrix from a row-major slice.
+    pub fn from_row_slice(entries: &[T]) -> Self {
+        Self::from_row_slice_generic(Const::<R>, Const::<C>, entries)
+    }
+
+    /// Creates a statically sized interval matrix from a column-major slice.
+    pub fn from_column_slice(entries: &[T]) -> Self {
+        Self::from_column_slice_generic(Const::<R>, Const::<C>, entries)
+    }
+
+    /// Creates a statically sized interval matrix from row vectors.
+    pub fn from_rows<SR>(rows: &[IntervalMatrix<T, Const<1>, Const<C>, SR>]) -> Self
+    where
+        SR: Storage<T, Const<1>, Const<C>>,
+    {
+        Self::from_rows_generic(Const::<R>, Const::<C>, rows)
+    }
+
+    /// Creates a statically sized interval matrix from column vectors.
+    pub fn from_columns<SC>(columns: &[IntervalMatrix<T, Const<R>, Const<1>, SC>]) -> Self
+    where
+        SC: Storage<T, Const<R>, Const<1>>,
+    {
+        Self::from_columns_generic(Const::<R>, Const::<C>, columns)
+    }
+
+    /// Creates a statically sized zero interval matrix.
+    #[must_use]
+    pub fn zeros() -> Self {
+        Self::zeros_generic(Const::<R>, Const::<C>)
+    }
+}
+
+impl<T, const D: usize> SIntervalMatrix<T, D, D>
+where
+    T: IntervalOps + Scalar,
+{
+    /// Creates a statically sized identity interval matrix.
+    #[must_use]
+    pub fn identity() -> Self {
+        Self::identity_generic(Const::<D>)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<T> DIntervalMatrix<T>
+where
+    T: IntervalOps + Scalar,
+{
+    /// Creates a dynamically sized interval matrix filled with one value.
+    pub fn from_element(nrows: usize, ncols: usize, element: T) -> Self {
+        Self::from_element_generic(Dyn(nrows), Dyn(ncols), element)
+    }
+
+    /// Creates a dynamically sized interval matrix by calling `f` for each coordinate.
+    pub fn from_fn<F>(nrows: usize, ncols: usize, f: F) -> Self
+    where
+        F: FnMut(usize, usize) -> T,
+    {
+        Self::from_fn_generic(Dyn(nrows), Dyn(ncols), f)
+    }
+
+    /// Creates a dynamically sized interval matrix from a column-major iterator.
+    pub fn from_iterator<I>(nrows: usize, ncols: usize, iter: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+    {
+        Self::from_iterator_generic(Dyn(nrows), Dyn(ncols), iter)
+    }
+
+    /// Creates a dynamically sized interval matrix from a row-major iterator.
+    pub fn from_row_iterator<I>(nrows: usize, ncols: usize, iter: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+    {
+        Self::from_row_iterator_generic(Dyn(nrows), Dyn(ncols), iter)
+    }
+
+    /// Creates a dynamically sized interval matrix from a row-major slice.
+    pub fn from_row_slice(nrows: usize, ncols: usize, entries: &[T]) -> Self {
+        Self::from_row_slice_generic(Dyn(nrows), Dyn(ncols), entries)
+    }
+
+    /// Creates a dynamically sized interval matrix from a column-major slice.
+    pub fn from_column_slice(nrows: usize, ncols: usize, entries: &[T]) -> Self {
+        Self::from_column_slice_generic(Dyn(nrows), Dyn(ncols), entries)
+    }
+
+    /// Creates a dynamically sized interval matrix from row vectors.
+    pub fn from_rows(rows: &[DIntervalRowVector<T>]) -> Self {
+        let ncols = rows.first().map_or(0, IntervalMatrix::ncols);
+        Self::from_rows_generic(Dyn(rows.len()), Dyn(ncols), rows)
+    }
+
+    /// Creates a dynamically sized interval matrix from column vectors.
+    pub fn from_columns(columns: &[DIntervalVector<T>]) -> Self {
+        let nrows = columns.first().map_or(0, IntervalMatrix::nrows);
+        Self::from_columns_generic(Dyn(nrows), Dyn(columns.len()), columns)
+    }
+
+    /// Creates a dynamically sized zero interval matrix.
+    #[must_use]
+    pub fn zeros(nrows: usize, ncols: usize) -> Self {
+        Self::zeros_generic(Dyn(nrows), Dyn(ncols))
+    }
+
+    /// Creates a dynamically sized identity interval matrix.
+    #[must_use]
+    pub fn identity(dim: usize) -> Self {
+        Self::identity_generic(Dyn(dim))
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<T> DIntervalVector<T>
+where
+    T: IntervalOps + Scalar,
+{
+    /// Creates a dynamically sized interval column vector filled with one value.
+    pub fn from_element(nrows: usize, element: T) -> Self {
+        Self::from_element_generic(Dyn(nrows), Const::<1>, element)
+    }
+
+    /// Creates a dynamically sized interval column vector by calling `f` for each row.
+    pub fn from_fn<F>(nrows: usize, mut f: F) -> Self
+    where
+        F: FnMut(usize) -> T,
+    {
+        Self::from_fn_generic(Dyn(nrows), Const::<1>, |i, _| f(i))
+    }
+
+    /// Creates a dynamically sized interval column vector from an iterator.
+    pub fn from_iterator<I>(nrows: usize, iter: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+    {
+        Self::from_iterator_generic(Dyn(nrows), Const::<1>, iter)
+    }
+
+    /// Creates a dynamically sized interval column vector from a slice.
+    pub fn from_column_slice(entries: &[T]) -> Self {
+        Self::from_column_slice_generic(Dyn(entries.len()), Const::<1>, entries)
+    }
+
+    /// Creates a dynamically sized zero interval column vector.
+    #[must_use]
+    pub fn zeros(nrows: usize) -> Self {
+        Self::zeros_generic(Dyn(nrows), Const::<1>)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<T> DIntervalRowVector<T>
+where
+    T: IntervalOps + Scalar,
+{
+    /// Creates a dynamically sized interval row vector filled with one value.
+    pub fn from_element(ncols: usize, element: T) -> Self {
+        Self::from_element_generic(Const::<1>, Dyn(ncols), element)
+    }
+
+    /// Creates a dynamically sized interval row vector by calling `f` for each column.
+    pub fn from_fn<F>(ncols: usize, mut f: F) -> Self
+    where
+        F: FnMut(usize) -> T,
+    {
+        Self::from_fn_generic(Const::<1>, Dyn(ncols), |_, j| f(j))
+    }
+
+    /// Creates a dynamically sized interval row vector from an iterator.
+    pub fn from_iterator<I>(ncols: usize, iter: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+    {
+        Self::from_iterator_generic(Const::<1>, Dyn(ncols), iter)
+    }
+
+    /// Creates a dynamically sized interval row vector from a slice.
+    pub fn from_row_slice(entries: &[T]) -> Self {
+        Self::from_row_slice_generic(Const::<1>, Dyn(entries.len()), entries)
+    }
+
+    /// Creates a dynamically sized zero interval row vector.
+    #[must_use]
+    pub fn zeros(ncols: usize) -> Self {
+        Self::zeros_generic(Const::<1>, Dyn(ncols))
+    }
+}
+
 impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
     T: IntervalOps + Scalar,
@@ -366,7 +793,7 @@ where
             .zip(rhs.iter().copied())
             .map(|(lhs, rhs)| Mul::mul(lhs, rhs));
 
-        IntervalMatrix(Matrix::from_iterator_generic(nrows, ncols, elements))
+        OIntervalMatrix::from_iterator_generic(nrows, ncols, elements)
     }
 
     pub fn component_div<SB>(
@@ -389,7 +816,7 @@ where
             .zip(rhs.iter().copied())
             .map(|(lhs, rhs)| Div::div(lhs, rhs));
 
-        IntervalMatrix(Matrix::from_iterator_generic(nrows, ncols, elements))
+        OIntervalMatrix::from_iterator_generic(nrows, ncols, elements)
     }
 
     pub fn component_sub<SB>(
@@ -412,7 +839,7 @@ where
             .zip(rhs.iter().copied())
             .map(|(lhs, rhs)| Sub::sub(lhs, rhs));
 
-        IntervalMatrix(Matrix::from_iterator_generic(nrows, ncols, elements))
+        OIntervalMatrix::from_iterator_generic(nrows, ncols, elements)
     }
 
     pub fn scale(&self, value: T) -> OIntervalMatrix<T, R1, C1>
@@ -689,7 +1116,7 @@ where
             .zip(rhs.iter().copied())
             .map(|(lhs, rhs)| Add::add(lhs, rhs));
 
-        IntervalMatrix(Matrix::from_iterator_generic(nrows, ncols, elements))
+        OIntervalMatrix::from_iterator_generic(nrows, ncols, elements)
     }
 }
 
@@ -722,7 +1149,7 @@ where
             .zip(rhs.iter().copied())
             .map(|(lhs, rhs)| Sub::sub(lhs, rhs));
 
-        IntervalMatrix(Matrix::from_iterator_generic(nrows, ncols, elements))
+        OIntervalMatrix::from_iterator_generic(nrows, ncols, elements)
     }
 }
 
@@ -749,7 +1176,7 @@ where
         );
         let (nrows, _) = self.shape_generic();
         let (_, ncols) = rhs.shape_generic();
-        let mut output = OMatrix::<T, R1, C2>::from_element_generic(nrows, ncols, T::ZERO);
+        let mut output = OIntervalMatrix::<T, R1, C2>::zeros_generic(nrows, ncols);
         for (mut output_column, rhs_column) in output.column_iter_mut().zip(rhs.column_iter()) {
             for (lhs_column, rhs_entry) in self.column_iter().zip(rhs_column.iter().copied()) {
                 for (output_entry, lhs_entry) in
@@ -759,7 +1186,7 @@ where
                 }
             }
         }
-        IntervalMatrix(output)
+        output
     }
 }
 
@@ -838,5 +1265,108 @@ mod tests {
         let inner: &mut SMatrix<Interval, 2, 2> = matrix.as_mut();
         inner[(0, 0)] = Interval::ZERO;
         assert_eq!(matrix[(0, 0)], Interval::ZERO);
+    }
+
+    #[test]
+    fn static_constructors_preserve_layout_and_interval_semantics() {
+        let one = Interval::singleton(1.0);
+        let two = Interval::singleton(2.0);
+        let three = Interval::singleton(3.0);
+        let four = Interval::singleton(4.0);
+
+        let filled = SIntervalMatrix::<Interval, 2, 2>::from_element(one);
+        assert!(filled.iter().all(|entry| *entry == one));
+
+        let from_fn = SIntervalMatrix::<Interval, 2, 2>::from_fn(|i, j| {
+            Interval::singleton(match (i, j) {
+                (0, 0) => 0.0,
+                (1, 1) => 2.0,
+                _ => 1.0,
+            })
+        });
+        assert_eq!(from_fn[(1, 1)], Interval::singleton(2.0));
+
+        let column_major =
+            SIntervalMatrix::<Interval, 2, 2>::from_iterator([one, two, three, four]);
+        let row_major =
+            SIntervalMatrix::<Interval, 2, 2>::from_row_iterator([one, two, three, four]);
+        assert_eq!(column_major[(0, 1)], three);
+        assert_eq!(row_major[(0, 1)], two);
+
+        assert_eq!(
+            SIntervalMatrix::<Interval, 2, 2>::from_row_slice(&[one, two, three, four]),
+            row_major,
+        );
+        assert_eq!(
+            SIntervalMatrix::<Interval, 2, 2>::from_column_slice(&[one, two, three, four]),
+            column_major,
+        );
+
+        let rows = [
+            SIntervalRowVector::<Interval, 2>::from_row_slice(&[one, two]),
+            SIntervalRowVector::<Interval, 2>::from_row_slice(&[three, four]),
+        ];
+        let columns = [
+            SIntervalVector::<Interval, 2>::from_column_slice(&[one, three]),
+            SIntervalVector::<Interval, 2>::from_column_slice(&[two, four]),
+        ];
+        assert_eq!(SIntervalMatrix::from_rows(&rows), row_major);
+        assert_eq!(SIntervalMatrix::from_columns(&columns), row_major);
+
+        let diagonal = SIntervalVector::<Interval, 2>::from_column_slice(&[two, three]);
+        let diagonal_matrix = SIntervalMatrix::<Interval, 2, 2>::from_diagonal(&diagonal);
+        assert_eq!(diagonal_matrix[(0, 0)], two);
+        assert_eq!(diagonal_matrix[(0, 1)], Interval::ZERO);
+        assert_eq!(
+            SIntervalMatrix::<Interval, 2, 2>::zeros()[(1, 1)],
+            Interval::ZERO
+        );
+        assert_eq!(
+            SIntervalMatrix::<Interval, 2, 2>::identity()[(1, 1)],
+            Interval::ONE
+        );
+
+        let points = SMatrix::<f64, 2, 2>::from_row_slice(&[1.0, 2.0, 3.0, 4.0]);
+        let singletons = SIntervalMatrix::<Interval, 2, 2>::from_singletons(&points);
+        assert_eq!(singletons, row_major);
+
+        let lower = SMatrix::<f64, 1, 2>::from_row_slice(&[0.0, 1.0]);
+        let upper = SMatrix::<f64, 1, 2>::from_row_slice(&[2.0, 3.0]);
+        let bounds = SIntervalMatrix::<Interval, 1, 2>::from_bounds(&lower, &upper);
+        assert_eq!(bounds[(0, 0)], Interval::new(0.0, 2.0));
+
+        let midpoint = SMatrix::<f64, 1, 1>::from_element(1.0);
+        let radius = SMatrix::<f64, 1, 1>::from_element(0.1);
+        let mid_rad = SIntervalMatrix::<Interval, 1, 1>::from_mid_rad(&midpoint, &radius);
+        assert!(mid_rad[(0, 0)].contains(0.9));
+        assert!(mid_rad[(0, 0)].contains(1.1));
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn dynamic_constructors_infer_dimensions_from_rows_and_columns() {
+        let one = Interval::singleton(1.0);
+        let two = Interval::singleton(2.0);
+        let three = Interval::singleton(3.0);
+        let four = Interval::singleton(4.0);
+        let rows = [
+            DIntervalRowVector::from_row_slice(&[one, two]),
+            DIntervalRowVector::from_row_slice(&[three, four]),
+        ];
+        let columns = [
+            DIntervalVector::from_column_slice(&[one, three]),
+            DIntervalVector::from_column_slice(&[two, four]),
+        ];
+
+        let from_rows = DIntervalMatrix::from_rows(&rows);
+        let from_columns = DIntervalMatrix::from_columns(&columns);
+
+        assert_eq!(from_rows, from_columns);
+        assert_eq!(from_rows.shape(), (2, 2));
+        assert_eq!(DIntervalMatrix::<Interval>::zeros(2, 3).shape(), (2, 3));
+        assert_eq!(
+            DIntervalMatrix::<Interval>::identity(2)[(0, 0)],
+            Interval::ONE
+        );
     }
 }

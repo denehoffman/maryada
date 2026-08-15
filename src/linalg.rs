@@ -7,13 +7,13 @@
 // <https://kam.mff.cuni.cz/~horacek/source/horacek_phdthesis.pdf>
 // I'll add a nice citation for this and associated papers later.
 
-use core::ops::{Add, Div, Index, IndexMut, Mul, Sub};
+use core::ops::{Index, IndexMut, Mul};
 
 use nalgebra::{
     ArrayStorage, Const, DefaultAllocator, Dim, DimMin, Matrix, OMatrix, OVector, Scalar, Storage,
     StorageMut,
-    allocator::{Allocator, SameShapeAllocator, SameShapeC, SameShapeR},
-    constraint::{AreMultipliable, SameNumberOfColumns, SameNumberOfRows, ShapeConstraint},
+    allocator::Allocator,
+    constraint::{AreMultipliable, ShapeConstraint},
     iter::{ColumnIter, ColumnIterMut, MatrixIter, MatrixIterMut, RowIter, RowIterMut},
     storage::Owned,
 };
@@ -736,15 +736,7 @@ where
             .copied()
             .any(|entry| entry.is_empty() || entry.is_nai())
     }
-}
 
-impl<T, R, C, S> IntervalMatrix<T, R, C, S>
-where
-    T: IntervalOps + Scalar,
-    R: Dim,
-    C: Dim,
-    S: Storage<T, R, C>,
-{
     /// Maps interval entries into an ordinary owned nalgebra matrix.
     pub fn map_inner<T2, F>(&self, f: F) -> OMatrix<T2, R, C>
     where
@@ -766,110 +758,14 @@ where
     }
 }
 
-impl<T, R1, C1, SA> IntervalMatrix<T, R1, C1, SA>
-where
-    T: IntervalOps + Scalar,
-    R1: Dim,
-    C1: Dim,
-    SA: Storage<T, R1, C1>,
-{
-    pub fn component_mul<SB>(
-        &self,
-        rhs: &IntervalMatrix<T, R1, C1, SB>,
-    ) -> OIntervalMatrix<T, R1, C1>
-    where
-        SB: Storage<T, R1, C1>,
-        DefaultAllocator: Allocator<R1, C1>,
-    {
-        assert_eq!(
-            self.shape(),
-            rhs.shape(),
-            "interval matrix component_mul dimension mismatch",
-        );
-        let (nrows, ncols) = self.shape_generic();
-        let elements = self
-            .iter()
-            .copied()
-            .zip(rhs.iter().copied())
-            .map(|(lhs, rhs)| Mul::mul(lhs, rhs));
-
-        OIntervalMatrix::from_iterator_generic(nrows, ncols, elements)
-    }
-
-    pub fn component_div<SB>(
-        &self,
-        rhs: &IntervalMatrix<T, R1, C1, SB>,
-    ) -> OIntervalMatrix<T, R1, C1>
-    where
-        SB: Storage<T, R1, C1>,
-        DefaultAllocator: Allocator<R1, C1>,
-    {
-        assert_eq!(
-            self.shape(),
-            rhs.shape(),
-            "interval matrix component_div dimension mismatch",
-        );
-        let (nrows, ncols) = self.shape_generic();
-        let elements = self
-            .iter()
-            .copied()
-            .zip(rhs.iter().copied())
-            .map(|(lhs, rhs)| Div::div(lhs, rhs));
-
-        OIntervalMatrix::from_iterator_generic(nrows, ncols, elements)
-    }
-
-    pub fn component_sub<SB>(
-        &self,
-        rhs: &IntervalMatrix<T, R1, C1, SB>,
-    ) -> OIntervalMatrix<T, R1, C1>
-    where
-        SB: Storage<T, R1, C1>,
-        DefaultAllocator: Allocator<R1, C1>,
-    {
-        assert_eq!(
-            self.shape(),
-            rhs.shape(),
-            "interval matrix component_sub dimension mismatch",
-        );
-        let (nrows, ncols) = self.shape_generic();
-        let elements = self
-            .iter()
-            .copied()
-            .zip(rhs.iter().copied())
-            .map(|(lhs, rhs)| Sub::sub(lhs, rhs));
-
-        OIntervalMatrix::from_iterator_generic(nrows, ncols, elements)
-    }
-
-    pub fn scale(&self, value: T) -> OIntervalMatrix<T, R1, C1>
-    where
-        DefaultAllocator: Allocator<R1, C1>,
-    {
-        self.map(|a| Mul::mul(a, value))
-    }
-
-    pub fn unscale(&self, value: T) -> OIntervalMatrix<T, R1, C1>
-    where
-        DefaultAllocator: Allocator<R1, C1>,
-    {
-        self.map(|a| Div::div(a, value))
-    }
-}
-
 impl<T, D, S> IntervalMatrix<T, D, D, S>
 where
     T: IntervalOps + Scalar,
     D: Dim,
     S: Storage<T, D, D>,
 {
-    pub fn diagonal(&self) -> OIntervalVector<T, D>
-    where
-        DefaultAllocator: Allocator<D>,
-    {
-        IntervalMatrix::from_inner(self.0.diagonal())
-    }
-
+    /// Returns whether every off-diagonal interval is nonpositive.
+    #[must_use]
     pub fn is_z_matrix(&self) -> bool {
         // Def 4.4
         if !self.is_square() || self.has_invalid_entries() {
@@ -887,6 +783,14 @@ where
     S: Storage<T, D, D>,
     DefaultAllocator: Allocator<D, D>,
 {
+    /// Builds the real comparison matrix of this interval matrix.
+    ///
+    /// Diagonal entries are the mignitudes of the corresponding intervals;
+    /// off-diagonal entries are the negated magnitudes.
+    ///
+    /// Returns `None` when the matrix is not square or contains an empty or
+    /// `NaI` entry.
+    #[must_use]
     pub fn comparison_matrix(&self) -> Option<OMatrix<f64, D, D>> {
         if !self.is_square() || self.has_invalid_entries() {
             return None;
@@ -909,6 +813,11 @@ where
     S: Storage<T, D, D>,
     DefaultAllocator: Allocator<D, D> + Allocator<D>,
 {
+    /// Tests whether this interval matrix is an M-matrix.
+    ///
+    /// Returns `false` when the property cannot be certified, including for
+    /// empty, invalid, or singular systems.
+    #[must_use]
     pub fn is_m_matrix(&self) -> bool {
         // Def 4.5
         if !self.is_z_matrix() {
@@ -942,6 +851,11 @@ where
         })
     }
 
+    /// Tests whether this interval matrix is an H-matrix.
+    ///
+    /// Returns `false` when its comparison matrix is invalid, empty,
+    /// non-finite, singular, or does not satisfy the positive-vector test.
+    #[must_use]
     pub fn is_h_matrix(&self) -> bool {
         let Some(comparison) = self.comparison_matrix() else {
             return false; // not square or invalid entries
@@ -972,6 +886,11 @@ where
         })
     }
 
+    /// Tests strong regularity using midpoint-inverse preconditioning.
+    ///
+    /// Returns `false` when the midpoint inverse or the resulting H-matrix
+    /// condition cannot be certified.
+    #[must_use]
     pub fn is_strongly_regular(&self) -> bool {
         if !self.is_square() || self.is_empty() || self.has_invalid_entries() {
             return false;
@@ -1003,59 +922,48 @@ where
     S: Storage<T, R, C>,
     DefaultAllocator: Allocator<R, C>,
 {
+    /// Returns the matrix of lower endpoints.
+    #[must_use]
     pub fn inf(&self) -> OMatrix<f64, R, C> {
         self.map_inner(IntervalOps::inf)
     }
+    /// Returns the matrix of upper endpoints.
+    #[must_use]
     pub fn sup(&self) -> OMatrix<f64, R, C> {
         self.map_inner(IntervalOps::sup)
     }
-}
 
-impl<T, R, C, S> IntervalMatrix<T, R, C, S>
-where
-    T: IntervalOps + Scalar,
-    R: Dim,
-    C: Dim,
-    S: Storage<T, R, C>,
-    DefaultAllocator: Allocator<R, C>,
-{
+    /// Returns the matrix of outward-rounded radii.
+    #[must_use]
     pub fn rad(&self) -> OMatrix<f64, R, C> {
         self.map_inner(IntervalOps::rad)
     }
+    /// Returns the matrix of inward-rounded radii.
+    #[must_use]
     pub fn inner_rad(&self) -> OMatrix<f64, R, C> {
         self.map_inner(IntervalOps::inner_rad)
     }
-}
 
-impl<T, R, C, S> IntervalMatrix<T, R, C, S>
-where
-    T: IntervalOps + Scalar,
-    R: Dim,
-    C: Dim,
-    S: Storage<T, R, C>,
-    DefaultAllocator: Allocator<R, C>,
-{
+    /// Returns the matrix of interval midpoints.
+    #[must_use]
     pub fn mid(&self) -> OMatrix<f64, R, C> {
         self.map_inner(IntervalOps::mid)
     }
-}
 
-impl<T, R, C, S> IntervalMatrix<T, R, C, S>
-where
-    T: IntervalOps + Scalar,
-    R: Dim,
-    C: Dim,
-    S: Storage<T, R, C>,
-    DefaultAllocator: Allocator<R, C>,
-{
+    /// Returns the matrix of interval magnitudes.
+    #[must_use]
     pub fn mag(&self) -> OMatrix<f64, R, C> {
         self.map_inner(IntervalOps::mag)
     }
 
+    /// Returns the matrix of interval mignitudes.
+    #[must_use]
     pub fn mig(&self) -> OMatrix<f64, R, C> {
         self.map_inner(IntervalOps::mig)
     }
 
+    /// Returns an upward-rounded upper bound for the induced matrix 1-norm.
+    #[must_use]
     pub fn norm1(&self) -> f64 {
         let mut norm: f64 = 0.0;
         for column in self.mag().column_iter() {
@@ -1071,6 +979,8 @@ where
         norm
     }
 
+    /// Returns an upward-rounded upper bound for the induced infinity norm.
+    #[must_use]
     pub fn inf_norm(&self) -> f64 {
         let mut norm: f64 = 0.0;
         for row in self.mag().row_iter() {
@@ -1087,109 +997,7 @@ where
     }
 }
 
-impl<'a, 'b, T, R1, C1, R2, C2, SA, SB> Add<&'b IntervalMatrix<T, R2, C2, SB>>
-    for &'a IntervalMatrix<T, R1, C1, SA>
-where
-    T: IntervalOps + Scalar,
-    R1: Dim,
-    C1: Dim,
-    R2: Dim,
-    C2: Dim,
-    SA: Storage<T, R1, C1>,
-    SB: Storage<T, R2, C2>,
-    DefaultAllocator: SameShapeAllocator<R1, C1, R2, C2>,
-    ShapeConstraint: SameNumberOfRows<R1, R2> + SameNumberOfColumns<C1, C2>,
-{
-    type Output = OIntervalMatrix<T, SameShapeR<R1, R2>, SameShapeC<C1, C2>>;
-
-    fn add(self, rhs: &'b IntervalMatrix<T, R2, C2, SB>) -> Self::Output {
-        assert_eq!(
-            self.shape(),
-            rhs.shape(),
-            "interval matrix addition dimension mismatch",
-        );
-        let nrows: SameShapeR<R1, R2> = Dim::from_usize(self.nrows());
-        let ncols: SameShapeC<C1, C2> = Dim::from_usize(self.ncols());
-        let elements = self
-            .iter()
-            .copied()
-            .zip(rhs.iter().copied())
-            .map(|(lhs, rhs)| Add::add(lhs, rhs));
-
-        OIntervalMatrix::from_iterator_generic(nrows, ncols, elements)
-    }
-}
-
-impl<'a, 'b, T, R1, C1, R2, C2, SA, SB> Sub<&'b IntervalMatrix<T, R2, C2, SB>>
-    for &'a IntervalMatrix<T, R1, C1, SA>
-where
-    T: IntervalOps + Scalar,
-    R1: Dim,
-    C1: Dim,
-    R2: Dim,
-    C2: Dim,
-    SA: Storage<T, R1, C1>,
-    SB: Storage<T, R2, C2>,
-    DefaultAllocator: SameShapeAllocator<R1, C1, R2, C2>,
-    ShapeConstraint: SameNumberOfRows<R1, R2> + SameNumberOfColumns<C1, C2>,
-{
-    type Output = OIntervalMatrix<T, SameShapeR<R1, R2>, SameShapeC<C1, C2>>;
-
-    fn sub(self, rhs: &'b IntervalMatrix<T, R2, C2, SB>) -> Self::Output {
-        assert_eq!(
-            self.shape(),
-            rhs.shape(),
-            "interval matrix subtraction dimension mismatch",
-        );
-        let nrows: SameShapeR<R1, R2> = Dim::from_usize(self.nrows());
-        let ncols: SameShapeC<C1, C2> = Dim::from_usize(self.ncols());
-        let elements = self
-            .iter()
-            .copied()
-            .zip(rhs.iter().copied())
-            .map(|(lhs, rhs)| Sub::sub(lhs, rhs));
-
-        OIntervalMatrix::from_iterator_generic(nrows, ncols, elements)
-    }
-}
-
-impl<'a, 'b, T, R1, C1, R2, C2, SA, SB> Mul<&'b IntervalMatrix<T, R2, C2, SB>>
-    for &'a IntervalMatrix<T, R1, C1, SA>
-where
-    T: IntervalOps + Scalar,
-    R1: Dim,
-    C1: Dim,
-    R2: Dim,
-    C2: Dim,
-    SA: Storage<T, R1, C1>,
-    SB: Storage<T, R2, C2>,
-    DefaultAllocator: Allocator<R1, C2>,
-    ShapeConstraint: AreMultipliable<R1, C1, R2, C2>,
-{
-    type Output = OIntervalMatrix<T, R1, C2>;
-
-    fn mul(self, rhs: &'b IntervalMatrix<T, R2, C2, SB>) -> Self::Output {
-        assert_eq!(
-            self.ncols(),
-            rhs.nrows(),
-            "interval matrix multiplication dimension mismatch",
-        );
-        let (nrows, _) = self.shape_generic();
-        let (_, ncols) = rhs.shape_generic();
-        let mut output = OIntervalMatrix::<T, R1, C2>::zeros_generic(nrows, ncols);
-        for (mut output_column, rhs_column) in output.column_iter_mut().zip(rhs.column_iter()) {
-            for (lhs_column, rhs_entry) in self.column_iter().zip(rhs_column.iter().copied()) {
-                for (output_entry, lhs_entry) in
-                    output_column.iter_mut().zip(lhs_column.iter().copied())
-                {
-                    *output_entry = lhs_entry.mul_add(rhs_entry, *output_entry);
-                }
-            }
-        }
-        output
-    }
-}
-
+/// A verified solver for square interval linear systems.
 pub trait Solver<T, D, SA, SB>
 where
     T: IntervalOps + Scalar,
@@ -1198,12 +1006,19 @@ where
     SB: Storage<T, D, Const<1>>,
     DefaultAllocator: Allocator<D, D> + Allocator<D>,
 {
+    /// Computes an interval enclosure of the solution.
+    ///
+    /// Returns `None` when the system is dimensionally invalid or the method
+    /// cannot certify an enclosure.
+    #[must_use]
     fn solve(
         &self,
         lhs: &IntervalMatrix<T, D, D, SA>,
         rhs: &IntervalMatrix<T, D, Const<1>, SB>,
     ) -> Option<OIntervalVector<T, D>>;
 }
+
+mod ops;
 
 /// Epsilon-inflation method
 mod ei;
@@ -1213,7 +1028,7 @@ pub use ei::EpsilonInflation;
 mod ge;
 pub use ge::GaussianElimination;
 
-// Hansen-Bliek-Rohn-Ning-Kearfott-Neumaier method
+/// Hansen–Bliek–Rohn method.
 mod hbr;
 pub use hbr::HBR;
 

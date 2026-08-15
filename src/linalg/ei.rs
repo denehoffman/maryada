@@ -23,9 +23,9 @@ impl Default for EpsilonInflation {
 impl EpsilonInflation {
     pub(super) fn solve_matrix<T, D, C, SA, SB>(
         &self,
-        lhs: &IntervalMatrix<Matrix<T, D, D, SA>>,
-        rhs: &IntervalMatrix<Matrix<T, D, C, SB>>,
-    ) -> Option<IntervalMatrix<OMatrix<T, D, C>>>
+        lhs: &IntervalMatrix<T, D, D, SA>,
+        rhs: &IntervalMatrix<T, D, C, SB>,
+    ) -> Option<OIntervalMatrix<T, D, C>>
     where
         T: IntervalOps + Scalar,
         D: Dim,
@@ -59,9 +59,9 @@ impl EpsilonInflation {
         if c.iter().any(|entry| !entry.is_finite()) {
             return None;
         }
-        let c_interval: IntervalMatrix<OMatrix<T, D, D>> = c.into();
+        let c_interval: OIntervalMatrix<T, D, D> = c.into();
         let identity = OMatrix::<f64, D, D>::identity_generic(dim, dim);
-        let identity: IntervalMatrix<OMatrix<T, D, D>> = identity.into();
+        let identity: OIntervalMatrix<T, D, D> = identity.into();
 
         // Z = I - CA.
         let residual = &identity - &(&c_interval * lhs);
@@ -105,9 +105,9 @@ where
 {
     fn solve(
         &self,
-        lhs: &IntervalMatrix<Matrix<T, D, D, SA>>,
-        rhs: &IntervalMatrix<Matrix<T, D, Const<1>, SB>>,
-    ) -> Option<IntervalMatrix<OMatrix<T, D, Const<1>>>> {
+        lhs: &IntervalMatrix<T, D, D, SA>,
+        rhs: &IntervalMatrix<T, D, Const<1>, SB>,
+    ) -> Option<OIntervalVector<T, D>> {
         self.solve_matrix(lhs, rhs)
     }
 }

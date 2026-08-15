@@ -2,7 +2,7 @@ use nalgebra::{DimAdd, DimSum, StorageMut, allocator::Reallocator};
 
 use super::*;
 
-impl<T, R, C, S> IntervalMatrix<Matrix<T, R, C, S>>
+impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
     T: IntervalOps + Scalar,
     R: Dim,
@@ -54,9 +54,9 @@ where
 {
     fn solve(
         &self,
-        lhs: &IntervalMatrix<Matrix<T, D, D, SA>>,
-        rhs: &IntervalMatrix<Matrix<T, D, Const<1>, SB>>,
-    ) -> Option<IntervalMatrix<OMatrix<T, D, Const<1>>>> {
+        lhs: &IntervalMatrix<T, D, D, SA>,
+        rhs: &IntervalMatrix<T, D, Const<1>, SB>,
+    ) -> Option<OIntervalVector<T, D>> {
         let n = rhs.0.nrows();
         if lhs.0.nrows() != n || lhs.0.ncols() != n {
             return None;

@@ -7,12 +7,14 @@
 // <https://kam.mff.cuni.cz/~horacek/source/horacek_phdthesis.pdf>
 // I'll add a nice citation for this and associated papers later.
 
-use core::ops::{Add, Div, Mul, Sub};
+use core::ops::{Add, Div, Index, IndexMut, Mul, Sub};
 
 use nalgebra::{
     ArrayStorage, Const, DefaultAllocator, Dim, DimMin, Matrix, OMatrix, OVector, Scalar, Storage,
+    StorageMut,
     allocator::{Allocator, SameShapeAllocator, SameShapeC, SameShapeR},
     constraint::{AreMultipliable, SameNumberOfColumns, SameNumberOfRows, ShapeConstraint},
+    iter::{ColumnIter, ColumnIterMut, MatrixIter, MatrixIterMut, RowIter, RowIterMut},
     storage::Owned,
 };
 
@@ -72,6 +74,202 @@ where
     pub fn into_inner(self) -> Matrix<T, R, C, S> {
         self.0
     }
+
+    /// Returns the number of rows and columns.
+    pub fn shape(&self) -> (usize, usize) {
+        self.0.shape()
+    }
+
+    /// Returns the row and column dimensions at the type level.
+    pub fn shape_generic(&self) -> (R, C) {
+        self.0.shape_generic()
+    }
+
+    /// Returns the number of rows.
+    pub fn nrows(&self) -> usize {
+        self.0.nrows()
+    }
+
+    /// Returns the number of columns.
+    pub fn ncols(&self) -> usize {
+        self.0.ncols()
+    }
+
+    /// Returns the number of entries.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns whether this matrix has no entries.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Returns whether this matrix has the same number of rows and columns.
+    pub fn is_square(&self) -> bool {
+        self.0.is_square()
+    }
+
+    /// Returns an entry, or `None` if the row or column is out of bounds.
+    pub fn get(&self, row: usize, column: usize) -> Option<&T> {
+        self.0.get((row, column))
+    }
+
+    /// Iterates over entries in column-major order.
+    pub fn iter(&self) -> MatrixIter<'_, T, R, C, S> {
+        self.0.iter()
+    }
+
+    /// Iterates over rows.
+    pub const fn row_iter(&self) -> RowIter<'_, T, R, C, S> {
+        self.0.row_iter()
+    }
+
+    /// Iterates over columns.
+    pub fn column_iter(&self) -> ColumnIter<'_, T, R, C, S> {
+        self.0.column_iter()
+    }
+}
+
+impl<T, R, C, S> IntervalMatrix<T, R, C, S>
+where
+    T: IntervalOps + Scalar,
+    R: Dim,
+    C: Dim,
+    S: StorageMut<T, R, C>,
+{
+    /// Mutably borrows the underlying nalgebra matrix.
+    pub const fn as_inner_mut(&mut self) -> &mut Matrix<T, R, C, S> {
+        &mut self.0
+    }
+
+    /// Returns a mutable entry, or `None` if the row or column is out of bounds.
+    pub fn get_mut(&mut self, row: usize, column: usize) -> Option<&mut T> {
+        self.0.get_mut((row, column))
+    }
+
+    /// Mutably iterates over entries in column-major order.
+    pub fn iter_mut(&mut self) -> MatrixIterMut<'_, T, R, C, S> {
+        self.0.iter_mut()
+    }
+
+    /// Mutably iterates over rows.
+    pub const fn row_iter_mut(&mut self) -> RowIterMut<'_, T, R, C, S> {
+        self.0.row_iter_mut()
+    }
+
+    /// Mutably iterates over columns.
+    pub fn column_iter_mut(&mut self) -> ColumnIterMut<'_, T, R, C, S> {
+        self.0.column_iter_mut()
+    }
+}
+
+impl<T, R, C, S> AsRef<Matrix<T, R, C, S>> for IntervalMatrix<T, R, C, S>
+where
+    T: IntervalOps + Scalar,
+    R: Dim,
+    C: Dim,
+    S: Storage<T, R, C>,
+{
+    fn as_ref(&self) -> &Matrix<T, R, C, S> {
+        self.as_inner()
+    }
+}
+
+impl<T, R, C, S> AsMut<Matrix<T, R, C, S>> for IntervalMatrix<T, R, C, S>
+where
+    T: IntervalOps + Scalar,
+    R: Dim,
+    C: Dim,
+    S: StorageMut<T, R, C>,
+{
+    fn as_mut(&mut self) -> &mut Matrix<T, R, C, S> {
+        self.as_inner_mut()
+    }
+}
+
+impl<'a, T, R, C, S> IntoIterator for &'a IntervalMatrix<T, R, C, S>
+where
+    T: IntervalOps + Scalar,
+    R: Dim,
+    C: Dim,
+    S: Storage<T, R, C>,
+{
+    type Item = &'a T;
+    type IntoIter = MatrixIter<'a, T, R, C, S>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a, T, R, C, S> IntoIterator for &'a mut IntervalMatrix<T, R, C, S>
+where
+    T: IntervalOps + Scalar,
+    R: Dim,
+    C: Dim,
+    S: StorageMut<T, R, C>,
+{
+    type Item = &'a mut T;
+    type IntoIter = MatrixIterMut<'a, T, R, C, S>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
+    }
+}
+
+impl<T, R, C, S> Index<(usize, usize)> for IntervalMatrix<T, R, C, S>
+where
+    T: IntervalOps + Scalar,
+    R: Dim,
+    C: Dim,
+    S: Storage<T, R, C>,
+{
+    type Output = T;
+
+    #[allow(clippy::indexing_slicing)]
+    fn index(&self, index: (usize, usize)) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl<T, R, C, S> IndexMut<(usize, usize)> for IntervalMatrix<T, R, C, S>
+where
+    T: IntervalOps + Scalar,
+    R: Dim,
+    C: Dim,
+    S: StorageMut<T, R, C>,
+{
+    #[allow(clippy::indexing_slicing)]
+    fn index_mut(&mut self, index: (usize, usize)) -> &mut Self::Output {
+        &mut self.0[index]
+    }
+}
+
+impl<T, R, S> Index<usize> for IntervalMatrix<T, R, Const<1>, S>
+where
+    T: IntervalOps + Scalar,
+    R: Dim,
+    S: Storage<T, R, Const<1>>,
+{
+    type Output = T;
+
+    #[allow(clippy::indexing_slicing)]
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl<T, R, S> IndexMut<usize> for IntervalMatrix<T, R, Const<1>, S>
+where
+    T: IntervalOps + Scalar,
+    R: Dim,
+    S: StorageMut<T, R, Const<1>>,
+{
+    #[allow(clippy::indexing_slicing)]
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        &mut self.0[index]
+    }
 }
 
 impl<T, R, C, S> From<Matrix<T, R, C, S>> for IntervalMatrix<T, R, C, S>
@@ -107,8 +305,7 @@ where
     S: Storage<T, R, C>,
 {
     fn has_invalid_entries(&self) -> bool {
-        self.0
-            .iter()
+        self.iter()
             .copied()
             .any(|entry| entry.is_empty() || entry.is_nai())
     }
@@ -158,16 +355,15 @@ where
         DefaultAllocator: Allocator<R1, C1>,
     {
         assert_eq!(
-            self.0.shape(),
-            rhs.0.shape(),
+            self.shape(),
+            rhs.shape(),
             "interval matrix component_mul dimension mismatch",
         );
-        let (nrows, ncols) = self.0.shape_generic();
+        let (nrows, ncols) = self.shape_generic();
         let elements = self
-            .0
             .iter()
             .copied()
-            .zip(rhs.0.iter().copied())
+            .zip(rhs.iter().copied())
             .map(|(lhs, rhs)| Mul::mul(lhs, rhs));
 
         IntervalMatrix(Matrix::from_iterator_generic(nrows, ncols, elements))
@@ -182,16 +378,15 @@ where
         DefaultAllocator: Allocator<R1, C1>,
     {
         assert_eq!(
-            self.0.shape(),
-            rhs.0.shape(),
+            self.shape(),
+            rhs.shape(),
             "interval matrix component_div dimension mismatch",
         );
-        let (nrows, ncols) = self.0.shape_generic();
+        let (nrows, ncols) = self.shape_generic();
         let elements = self
-            .0
             .iter()
             .copied()
-            .zip(rhs.0.iter().copied())
+            .zip(rhs.iter().copied())
             .map(|(lhs, rhs)| Div::div(lhs, rhs));
 
         IntervalMatrix(Matrix::from_iterator_generic(nrows, ncols, elements))
@@ -206,16 +401,15 @@ where
         DefaultAllocator: Allocator<R1, C1>,
     {
         assert_eq!(
-            self.0.shape(),
-            rhs.0.shape(),
+            self.shape(),
+            rhs.shape(),
             "interval matrix component_sub dimension mismatch",
         );
-        let (nrows, ncols) = self.0.shape_generic();
+        let (nrows, ncols) = self.shape_generic();
         let elements = self
-            .0
             .iter()
             .copied()
-            .zip(rhs.0.iter().copied())
+            .zip(rhs.iter().copied())
             .map(|(lhs, rhs)| Sub::sub(lhs, rhs));
 
         IntervalMatrix(Matrix::from_iterator_generic(nrows, ncols, elements))
@@ -251,11 +445,11 @@ where
 
     pub fn is_z_matrix(&self) -> bool {
         // Def 4.4
-        if !self.0.is_square() || self.has_invalid_entries() {
+        if !self.is_square() || self.has_invalid_entries() {
             return false;
         }
-        let n = self.0.nrows();
-        (0..n).all(|i| (0..n).all(|j| i == j || self.0[(i, j)].sup() <= 0.0))
+        let n = self.nrows();
+        (0..n).all(|i| (0..n).all(|j| i == j || self[(i, j)].sup() <= 0.0))
     }
 }
 
@@ -267,15 +461,15 @@ where
     DefaultAllocator: Allocator<D, D>,
 {
     pub fn comparison_matrix(&self) -> Option<OMatrix<f64, D, D>> {
-        if !self.0.is_square() || self.has_invalid_entries() {
+        if !self.is_square() || self.has_invalid_entries() {
             return None;
         }
-        let (dim, _) = self.0.shape_generic();
+        let (dim, _) = self.shape_generic();
         Some(OMatrix::from_fn_generic(dim, dim, |i, j| {
             if i == j {
-                self.0[(i, j)].mig()
+                self[(i, j)].mig()
             } else {
-                -self.0[(i, j)].mag()
+                -self[(i, j)].mag()
             }
         }))
     }
@@ -293,11 +487,11 @@ where
         if !self.is_z_matrix() {
             return false;
         }
-        let n = self.0.nrows();
+        let n = self.nrows();
         if n == 0 {
             return false;
         }
-        let (dim, _) = self.0.shape_generic();
+        let (dim, _) = self.shape_generic();
 
         // Theorem 4.9(3)
         let a_inf = self.inf();
@@ -315,7 +509,7 @@ where
         (0..n).all(|i| {
             let mut row_sum = T::ZERO;
             for j in 0..n {
-                row_sum = self.0[(i, j)].mul_add(T::singleton(u[j]), row_sum);
+                row_sum = self[(i, j)].mul_add(T::singleton(u[j]), row_sum);
             }
             row_sum.inf() > 0.0
         })
@@ -329,7 +523,7 @@ where
         if n == 0 || comparison.iter().any(|entry| !entry.is_finite()) {
             return false;
         }
-        let (dim, _) = self.0.shape_generic();
+        let (dim, _) = self.shape_generic();
         // Theorem 4.18(3)
         let e = OVector::<f64, D>::repeat_generic(dim, Const::<1>, 1.0);
         let Some(u) = comparison.clone().lu().solve(&e) else {
@@ -352,7 +546,7 @@ where
     }
 
     pub fn is_strongly_regular(&self) -> bool {
-        if !self.0.is_square() || self.0.nrows() == 0 || self.has_invalid_entries() {
+        if !self.is_square() || self.is_empty() || self.has_invalid_entries() {
             return false;
         }
 
@@ -483,17 +677,16 @@ where
 
     fn add(self, rhs: &'b IntervalMatrix<T, R2, C2, SB>) -> Self::Output {
         assert_eq!(
-            self.0.shape(),
-            rhs.0.shape(),
+            self.shape(),
+            rhs.shape(),
             "interval matrix addition dimension mismatch",
         );
-        let nrows: SameShapeR<R1, R2> = Dim::from_usize(self.0.nrows());
-        let ncols: SameShapeC<C1, C2> = Dim::from_usize(self.0.ncols());
+        let nrows: SameShapeR<R1, R2> = Dim::from_usize(self.nrows());
+        let ncols: SameShapeC<C1, C2> = Dim::from_usize(self.ncols());
         let elements = self
-            .0
             .iter()
             .copied()
-            .zip(rhs.0.iter().copied())
+            .zip(rhs.iter().copied())
             .map(|(lhs, rhs)| Add::add(lhs, rhs));
 
         IntervalMatrix(Matrix::from_iterator_generic(nrows, ncols, elements))
@@ -517,17 +710,16 @@ where
 
     fn sub(self, rhs: &'b IntervalMatrix<T, R2, C2, SB>) -> Self::Output {
         assert_eq!(
-            self.0.shape(),
-            rhs.0.shape(),
+            self.shape(),
+            rhs.shape(),
             "interval matrix subtraction dimension mismatch",
         );
-        let nrows: SameShapeR<R1, R2> = Dim::from_usize(self.0.nrows());
-        let ncols: SameShapeC<C1, C2> = Dim::from_usize(self.0.ncols());
+        let nrows: SameShapeR<R1, R2> = Dim::from_usize(self.nrows());
+        let ncols: SameShapeC<C1, C2> = Dim::from_usize(self.ncols());
         let elements = self
-            .0
             .iter()
             .copied()
-            .zip(rhs.0.iter().copied())
+            .zip(rhs.iter().copied())
             .map(|(lhs, rhs)| Sub::sub(lhs, rhs));
 
         IntervalMatrix(Matrix::from_iterator_generic(nrows, ncols, elements))
@@ -551,15 +743,15 @@ where
 
     fn mul(self, rhs: &'b IntervalMatrix<T, R2, C2, SB>) -> Self::Output {
         assert_eq!(
-            self.0.ncols(),
-            rhs.0.nrows(),
+            self.ncols(),
+            rhs.nrows(),
             "interval matrix multiplication dimension mismatch",
         );
-        let (nrows, _) = self.0.shape_generic();
-        let (_, ncols) = rhs.0.shape_generic();
+        let (nrows, _) = self.shape_generic();
+        let (_, ncols) = rhs.shape_generic();
         let mut output = OMatrix::<T, R1, C2>::from_element_generic(nrows, ncols, T::ZERO);
-        for (mut output_column, rhs_column) in output.column_iter_mut().zip(rhs.0.column_iter()) {
-            for (lhs_column, rhs_entry) in self.0.column_iter().zip(rhs_column.iter().copied()) {
+        for (mut output_column, rhs_column) in output.column_iter_mut().zip(rhs.column_iter()) {
+            for (lhs_column, rhs_entry) in self.column_iter().zip(rhs_column.iter().copied()) {
                 for (output_entry, lhs_entry) in
                     output_column.iter_mut().zip(lhs_column.iter().copied())
                 {
@@ -597,3 +789,54 @@ pub use ge::GaussianElimination;
 // Hansen-Bliek-Rohn-Ning-Kearfott-Neumaier method
 mod hbr;
 pub use hbr::HBR;
+
+#[cfg(test)]
+mod tests {
+    use nalgebra::SMatrix;
+
+    use crate::{Interval, IntervalOps};
+
+    use super::*;
+
+    #[test]
+    fn basic_access_matches_underlying_matrix() {
+        let mut matrix: SIntervalMatrix<Interval, 2, 2> =
+            SMatrix::<Interval, 2, 2>::from_row_slice(&[
+                Interval::singleton(1.0),
+                Interval::singleton(2.0),
+                Interval::singleton(3.0),
+                Interval::singleton(4.0),
+            ])
+            .into();
+
+        assert_eq!(matrix.shape(), (2, 2));
+        assert_eq!(matrix.nrows(), 2);
+        assert_eq!(matrix.ncols(), 2);
+        assert_eq!(matrix.len(), 4);
+        assert!(!matrix.is_empty());
+        assert!(matrix.is_square());
+        assert_eq!(matrix[(0, 1)], Interval::singleton(2.0));
+        assert_eq!(matrix.get(1, 0), Some(&Interval::singleton(3.0)));
+        assert_eq!(matrix.get(2, 0), None);
+        assert_eq!(matrix.iter().next(), Some(&Interval::singleton(1.0)));
+        assert_eq!((&matrix).into_iter().count(), 4);
+        assert_eq!(matrix.row_iter().count(), 2);
+        assert_eq!(matrix.column_iter().count(), 2);
+
+        let changed = matrix.get_mut(1, 1).is_some_and(|entry| {
+            *entry = Interval::singleton(5.0);
+            true
+        });
+        assert!(changed);
+        matrix.iter_mut().for_each(|entry| *entry += 1.0);
+        assert_eq!((&mut matrix).into_iter().count(), 4);
+        assert_eq!(matrix.row_iter_mut().count(), 2);
+        assert_eq!(matrix.column_iter_mut().count(), 2);
+
+        let inner: &SMatrix<Interval, 2, 2> = matrix.as_ref();
+        assert_eq!(inner[(1, 1)], Interval::singleton(6.0));
+        let inner: &mut SMatrix<Interval, 2, 2> = matrix.as_mut();
+        inner[(0, 0)] = Interval::ZERO;
+        assert_eq!(matrix[(0, 0)], Interval::ZERO);
+    }
+}

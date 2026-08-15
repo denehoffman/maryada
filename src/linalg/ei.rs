@@ -35,16 +35,16 @@ impl EpsilonInflation {
         DefaultAllocator: Allocator<D, D> + Allocator<D, C>,
         ShapeConstraint: AreMultipliable<D, D, D, D> + AreMultipliable<D, D, D, C>,
     {
-        if !lhs.0.is_square()
-            || lhs.0.nrows() == 0
-            || lhs.0.nrows() != rhs.0.nrows()
+        if !lhs.is_square()
+            || lhs.is_empty()
+            || lhs.nrows() != rhs.nrows()
             || lhs.has_invalid_entries()
             || rhs.has_invalid_entries()
         {
             return None;
         }
 
-        let (dim, _) = lhs.0.shape_generic();
+        let (dim, _) = lhs.shape_generic();
         let relative_inflation = T::new(1.0 - self.r, 1.0 + self.r);
         let absolute_inflation = T::new(-self.eps, self.eps);
 
@@ -79,10 +79,9 @@ impl EpsilonInflation {
             let next = &cb + &(&residual * &y);
 
             let enclosed = next
-                .as_inner()
                 .iter()
                 .copied()
-                .zip(y.as_inner().iter().copied())
+                .zip(y.iter().copied())
                 .all(|(next_entry, inflated_entry)| next_entry.interior(inflated_entry));
 
             // Check if x^{k+1} is contained in the interior of y.

@@ -15,9 +15,9 @@ where
         lhs: &IntervalMatrix<T, D, D, SA>,
         rhs: &IntervalMatrix<T, D, Const<1>, SB>,
     ) -> Option<OIntervalVector<T, D>> {
-        if !lhs.0.is_square()
-            || lhs.0.nrows() == 0
-            || lhs.0.nrows() != rhs.0.nrows()
+        if !lhs.is_square()
+            || lhs.is_empty()
+            || lhs.nrows() != rhs.nrows()
             || lhs.has_invalid_entries()
             || rhs.has_invalid_entries()
             || !lhs.is_h_matrix()
@@ -26,7 +26,7 @@ where
         }
 
         let a_comp = lhs.comparison_matrix()?;
-        let (dim, _) = rhs.0.shape_generic();
+        let (dim, _) = rhs.shape_generic();
         let a_comp_interval: OIntervalMatrix<T, D, D> = a_comp.into();
         let identity = OMatrix::<f64, D, D>::identity_generic(dim, dim);
         let identity: OIntervalMatrix<T, D, D> = identity.into();
@@ -37,7 +37,7 @@ where
         let b_mag: OIntervalVector<T, D> = b_mag.into();
         let u = &a_comp_inv * &b_mag;
         let d = a_comp_inv.diagonal();
-        if d.as_inner().iter().any(|entry| entry.inf() <= 0.0) {
+        if d.iter().any(|entry| entry.inf() <= 0.0) {
             return None;
         }
 
@@ -56,15 +56,15 @@ where
             return None;
         }
 
-        for i in 0..lhs.0.nrows() {
-            let denominator = lhs.0[(i, i)] + T::new(-alpha[i], alpha[i]);
+        for i in 0..lhs.nrows() {
+            let denominator = lhs[(i, i)] + T::new(-alpha[i], alpha[i]);
             if denominator.mig() == 0.0 {
                 return None;
             }
         }
 
         let x = Matrix::from_fn_generic(dim, Const::<1>, |i, _| {
-            (rhs.0[i] + T::new(-beta[i], beta[i])) / (lhs.0[(i, i)] + T::new(-alpha[i], alpha[i]))
+            (rhs[i] + T::new(-beta[i], beta[i])) / (lhs[(i, i)] + T::new(-alpha[i], alpha[i]))
         });
         Some(IntervalMatrix::from_inner(x))
     }
@@ -95,9 +95,11 @@ mod tests {
 
         let solution = HBR.solve(&lhs, &rhs);
 
-        assert!(solution.as_ref().is_some_and(|solution| {
-            solution.as_inner()[0].contains(2.0) && solution.as_inner()[1].contains(3.0)
-        }));
+        assert!(
+            solution
+                .as_ref()
+                .is_some_and(|solution| { solution[0].contains(2.0) && solution[1].contains(3.0) })
+        );
     }
 
     #[test]
@@ -134,8 +136,10 @@ mod tests {
 
         let solution = HBR.solve(&lhs, &rhs);
 
-        assert!(solution.as_ref().is_some_and(|solution| {
-            solution.as_inner()[0].contains(2.0) && solution.as_inner()[1].contains(3.0)
-        }));
+        assert!(
+            solution
+                .as_ref()
+                .is_some_and(|solution| { solution[0].contains(2.0) && solution[1].contains(3.0) })
+        );
     }
 }

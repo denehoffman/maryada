@@ -12,7 +12,8 @@ use core::ops::{Index, IndexMut, Mul};
 use nalgebra::{
     ArrayStorage, Const, DefaultAllocator, Dim, DimMin, Matrix, OMatrix, OVector, Scalar, Storage,
     StorageMut,
-    allocator::Allocator,
+    allocator::{Allocator, SameShapeAllocator, SameShapeC, SameShapeR},
+    constraint::{SameNumberOfColumns, SameNumberOfRows, ShapeConstraint},
     iter::{ColumnIter, ColumnIterMut, MatrixIter, MatrixIterMut, RowIter, RowIterMut},
     storage::Owned,
 };
@@ -730,30 +731,134 @@ where
     C: Dim,
     S: Storage<T, R, C>,
 {
-    fn has_invalid_entries(&self) -> bool {
+    /// Returns whether any entry is empty.
+    #[must_use]
+    pub fn has_empty_entries(&self) -> bool {
+        self.any(IntervalOps::is_empty)
+    }
+
+    /// Returns whether any entry is `NaI`.
+    #[must_use]
+    pub fn has_nai_entries(&self) -> bool {
+        self.any(IntervalOps::is_nai)
+    }
+
+    /// Returns whether any entry is entire.
+    #[must_use]
+    pub fn has_entire_entries(&self) -> bool {
+        self.any(IntervalOps::is_entire)
+    }
+
+    /// Intersects corresponding entries of two matrices.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrices have different dimensions.
+    #[must_use]
+    pub fn intersection<R2, C2, S2>(
+        &self,
+        rhs: &IntervalMatrix<T, R2, C2, S2>,
+    ) -> OIntervalMatrix<T, SameShapeR<R, R2>, SameShapeC<C, C2>>
+    where
+        R2: Dim,
+        C2: Dim,
+        S2: Storage<T, R2, C2>,
+        DefaultAllocator: SameShapeAllocator<R, C, R2, C2>,
+        ShapeConstraint: SameNumberOfRows<R, R2> + SameNumberOfColumns<C, C2>,
+    {
+        self.zip_map(rhs, IntervalOps::intersection)
+    }
+
+    /// Computes the convex hull of corresponding entries of two matrices.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrices have different dimensions.
+    #[must_use]
+    pub fn convex_hull<R2, C2, S2>(
+        &self,
+        rhs: &IntervalMatrix<T, R2, C2, S2>,
+    ) -> OIntervalMatrix<T, SameShapeR<R, R2>, SameShapeC<C, C2>>
+    where
+        R2: Dim,
+        C2: Dim,
+        S2: Storage<T, R2, C2>,
+        DefaultAllocator: SameShapeAllocator<R, C, R2, C2>,
+        ShapeConstraint: SameNumberOfRows<R, R2> + SameNumberOfColumns<C, C2>,
+    {
+        self.zip_map(rhs, IntervalOps::convex_hull)
+    }
+
+    /// Returns whether corresponding entries are interval-equal.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrices have different dimensions.
+    #[must_use]
+    pub fn equal<R2, C2, S2>(&self, rhs: &IntervalMatrix<T, R2, C2, S2>) -> bool
+    where
+        R2: Dim,
+        C2: Dim,
+        S2: Storage<T, R2, C2>,
+        ShapeConstraint: SameNumberOfRows<R, R2> + SameNumberOfColumns<C, C2>,
+    {
+        assert_eq!(
+            self.shape(),
+            rhs.shape(),
+            "interval matrix equality dimension mismatch",
+        );
         self.iter()
             .copied()
-            .any(|entry| entry.is_empty() || entry.is_nai())
+            .zip(rhs.iter().copied())
+            .all(|(lhs, rhs)| lhs.equal(rhs))
     }
 
-    /// Maps interval entries into an ordinary owned nalgebra matrix.
-    pub fn map_inner<T2, F>(&self, f: F) -> OMatrix<T2, R, C>
+    /// Returns whether every entry is a subset of the corresponding `rhs` entry.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrices have different dimensions.
+    #[must_use]
+    pub fn subset<R2, C2, S2>(&self, rhs: &IntervalMatrix<T, R2, C2, S2>) -> bool
     where
-        T2: Scalar,
-        F: FnMut(T) -> T2,
-        DefaultAllocator: Allocator<R, C>,
+        R2: Dim,
+        C2: Dim,
+        S2: Storage<T, R2, C2>,
+        ShapeConstraint: SameNumberOfRows<R, R2> + SameNumberOfColumns<C, C2>,
     {
-        self.0.map(f)
+        assert_eq!(
+            self.shape(),
+            rhs.shape(),
+            "interval matrix subset dimension mismatch",
+        );
+        self.iter()
+            .copied()
+            .zip(rhs.iter().copied())
+            .all(|(lhs, rhs)| lhs.subset(rhs))
     }
 
-    /// Maps interval entries into another owned interval matrix.
-    pub fn map<T2, F>(&self, f: F) -> OIntervalMatrix<T2, R, C>
+    /// Returns whether every entry lies in the interior of the corresponding `rhs` entry.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrices have different dimensions.
+    #[must_use]
+    pub fn interior<R2, C2, S2>(&self, rhs: &IntervalMatrix<T, R2, C2, S2>) -> bool
     where
-        T2: IntervalOps + Scalar,
-        F: FnMut(T) -> T2,
-        DefaultAllocator: Allocator<R, C>,
+        R2: Dim,
+        C2: Dim,
+        S2: Storage<T, R2, C2>,
+        ShapeConstraint: SameNumberOfRows<R, R2> + SameNumberOfColumns<C, C2>,
     {
-        IntervalMatrix::from_inner(self.map_inner(f))
+        assert_eq!(
+            self.shape(),
+            rhs.shape(),
+            "interval matrix interior dimension mismatch",
+        );
+        self.iter()
+            .copied()
+            .zip(rhs.iter().copied())
+            .all(|(lhs, rhs)| lhs.interior(rhs))
     }
 }
 
@@ -767,7 +872,7 @@ where
     #[must_use]
     pub fn is_z_matrix(&self) -> bool {
         // Def 4.4
-        if !self.is_square() || self.has_invalid_entries() {
+        if !self.is_square() || self.has_empty_entries() || self.has_nai_entries() {
             return false;
         }
         let n = self.nrows();
@@ -791,7 +896,7 @@ where
     /// `NaI` entry.
     #[must_use]
     pub fn comparison_matrix(&self) -> Option<OMatrix<f64, D, D>> {
-        if !self.is_square() || self.has_invalid_entries() {
+        if !self.is_square() || self.has_empty_entries() || self.has_nai_entries() {
             return None;
         }
         let (dim, _) = self.shape_generic();
@@ -892,7 +997,11 @@ where
     /// condition cannot be certified.
     #[must_use]
     pub fn is_strongly_regular(&self) -> bool {
-        if !self.is_square() || self.is_empty() || self.has_invalid_entries() {
+        if !self.is_square()
+            || self.is_empty()
+            || self.has_empty_entries()
+            || self.has_nai_entries()
+        {
             return false;
         }
 
@@ -1037,7 +1146,7 @@ pub use hbr::HBR;
 mod tests {
     use nalgebra::SMatrix;
 
-    use crate::{Interval, IntervalOps};
+    use crate::{DecoratedInterval, Interval, IntervalOps};
 
     use super::*;
 
@@ -1184,5 +1293,35 @@ mod tests {
             DIntervalMatrix::<Interval>::identity(2)[(0, 0)],
             Interval::ONE
         );
+    }
+
+    #[test]
+    fn interval_predicates_and_set_operations_are_componentwise() {
+        let narrow = SIntervalMatrix::<Interval, 1, 2>::from_row_slice(&[
+            Interval::new(1.0, 2.0),
+            Interval::new(3.0, 4.0),
+        ]);
+        let wide = SIntervalMatrix::<Interval, 1, 2>::from_row_slice(&[
+            Interval::new(0.0, 3.0),
+            Interval::new(2.0, 5.0),
+        ]);
+
+        assert!(narrow.subset(&wide));
+        assert!(narrow.interior(&wide));
+        assert!(narrow.equal(&narrow));
+        assert_eq!(narrow.intersection(&wide), narrow);
+        assert_eq!(narrow.convex_hull(&wide), wide);
+        assert!(narrow.all(IntervalOps::is_bounded));
+        assert!(narrow.any(|entry| entry.contains(1.5)));
+
+        let exceptional =
+            SIntervalMatrix::<Interval, 1, 2>::from_row_slice(&[Interval::EMPTY, Interval::ENTIRE]);
+        assert!(exceptional.has_empty_entries());
+        assert!(exceptional.has_entire_entries());
+        assert!(!exceptional.has_nai_entries());
+
+        let decorated =
+            SIntervalMatrix::<DecoratedInterval, 1, 1>::from_element(DecoratedInterval::NAI);
+        assert!(decorated.has_nai_entries());
     }
 }

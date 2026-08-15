@@ -48,8 +48,10 @@ impl EpsilonInflation {
         if !lhs.is_square()
             || lhs.is_empty()
             || lhs.nrows() != rhs.nrows()
-            || lhs.has_invalid_entries()
-            || rhs.has_invalid_entries()
+            || lhs.has_empty_entries()
+            || lhs.has_nai_entries()
+            || rhs.has_empty_entries()
+            || rhs.has_nai_entries()
         {
             return None;
         }
@@ -83,11 +85,7 @@ impl EpsilonInflation {
             // x^{k+1} = Cb + (I-CA)y.
             let next = &cb + &(&residual * &y);
 
-            let enclosed = next
-                .iter()
-                .copied()
-                .zip(y.iter().copied())
-                .all(|(next_entry, inflated_entry)| next_entry.interior(inflated_entry));
+            let enclosed = next.interior(&y);
 
             // Check if x^{k+1} is contained in the interior of y.
             if enclosed {

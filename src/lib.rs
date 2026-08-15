@@ -42,7 +42,7 @@ mod ux;
 pub use complex::ComplexBox;
 pub use interchange::*;
 #[cfg(feature = "linalg")]
-pub use linalg::{IntervalMatrix, RegularityResult};
+pub use linalg::{EpsilonInflation, GaussianElimination, HBR, IntervalMatrix, Solver};
 pub use ops::*;
 pub use signals::{Signal, SignalFlags, SignalSink};
 pub use text::{ParseIntervalError, TextError, interval_to_text};

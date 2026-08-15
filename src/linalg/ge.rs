@@ -1,0 +1,80 @@
+use nalgebra::{DimAdd, DimSum, StorageMut, allocator::Reallocator};
+
+use super::*;
+
+impl<T, R, C, S> IntervalMatrix<Matrix<T, R, C, S>>
+where
+    T: IntervalOps + Scalar,
+    R: Dim,
+    C: Dim,
+    S: StorageMut<T, R, C> + Clone,
+{
+    pub fn rref(&self) -> Option<Self> {
+        // Algorithm 5.9
+        let mut a = self.0.clone();
+        let (n, m) = a.shape();
+        for i in 0..n.min(m) {
+            let j = (i..n).max_by(|&k, &l| a[(k, i)].mig().total_cmp(&a[(l, i)].mig()))?;
+            if a[(j, i)].mig() == 0.0 {
+                return None;
+            }
+            if j != i {
+                a.swap_rows(i, j);
+            }
+            let a_ii_recip = a[(i, i)].recip();
+            for j in i + 1..n {
+                a[(j, i)] = a[(j, i)] * a_ii_recip;
+            }
+            for k in i + 1..m {
+                for j in i + 1..n {
+                    let correction = a[(j, i)] * a[(i, k)];
+                    a[(j, k)] = a[(j, k)] - correction;
+                }
+            }
+            for j in i + 1..n {
+                a[(j, i)] = T::ZERO;
+            }
+        }
+        Some(Self::from_inner(a))
+    }
+}
+
+pub struct GaussianElimination;
+
+impl<T, D, SA, SB> Solver<T, D, SA, SB> for GaussianElimination
+where
+    T: IntervalOps + Scalar,
+    D: Dim + DimAdd<Const<1>>,
+    SA: Storage<T, D, D>,
+    SB: Storage<T, D, Const<1>>,
+    DefaultAllocator: Allocator<D, D>
+        + Allocator<D>
+        + Allocator<D, DimSum<D, Const<1>>>
+        + Reallocator<T, D, D, D, DimSum<D, Const<1>>>,
+{
+    fn solve(
+        &self,
+        lhs: &IntervalMatrix<Matrix<T, D, D, SA>>,
+        rhs: &IntervalMatrix<Matrix<T, D, Const<1>, SB>>,
+    ) -> Option<IntervalMatrix<OMatrix<T, D, Const<1>>>> {
+        let n = rhs.0.nrows();
+        if lhs.0.nrows() != n || lhs.0.ncols() != n {
+            return None;
+        }
+        let mut ab = lhs.0.clone_owned().insert_column(n, T::ZERO);
+        for i in 0..n {
+            ab[(i, n)] = rhs.0[(i, 0)].clone();
+        }
+        let ab = IntervalMatrix::from_inner(ab).rref()?;
+        let ab = &ab.0;
+        let mut x = rhs.0.clone_owned();
+        for i in (0..n).rev() {
+            let mut value = ab[(i, n)];
+            for j in i + 1..n {
+                value -= ab[(i, j)] * x[j];
+            }
+            x[i] = value * ab[(i, i)].recip();
+        }
+        Some(IntervalMatrix::from_inner(x))
+    }
+}

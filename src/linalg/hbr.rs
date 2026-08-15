@@ -27,14 +27,13 @@ where
 
         let a_comp = lhs.comparison_matrix()?;
         let (dim, _) = rhs.shape_generic();
-        let a_comp_interval: OIntervalMatrix<T, D, D> = a_comp.into();
-        let identity = OMatrix::<f64, D, D>::identity_generic(dim, dim);
-        let identity: OIntervalMatrix<T, D, D> = identity.into();
+        let a_comp_interval = OIntervalMatrix::from_singletons(&a_comp);
+        let identity = OIntervalMatrix::<T, D, D>::identity_generic(dim);
         let a_comp_inv =
             ei::EpsilonInflation::default().solve_matrix(&a_comp_interval, &identity)?;
 
         let b_mag = rhs.mag();
-        let b_mag: OIntervalVector<T, D> = b_mag.into();
+        let b_mag = OIntervalVector::from_singletons(&b_mag);
         let u = &a_comp_inv * &b_mag;
         let d = a_comp_inv.diagonal();
         if d.iter().any(|entry| entry.inf() <= 0.0) {
@@ -63,35 +62,31 @@ where
             }
         }
 
-        let x = Matrix::from_fn_generic(dim, Const::<1>, |i, _| {
+        let x = OIntervalVector::from_fn_generic(dim, Const::<1>, |i, _| {
             (rhs[i] + T::new(-beta[i], beta[i])) / (lhs[(i, i)] + T::new(-alpha[i], alpha[i]))
         });
-        Some(IntervalMatrix::from_inner(x))
+        Some(x)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use nalgebra::{SMatrix, SVector};
-
     use crate::{Interval, IntervalOps};
 
     use super::*;
 
     #[test]
     fn encloses_solution_of_h_matrix_system() {
-        let lhs: SIntervalMatrix<Interval, 2, 2> = SMatrix::<Interval, 2, 2>::from_row_slice(&[
+        let lhs = SIntervalMatrix::<Interval, 2, 2>::from_row_slice(&[
             Interval::new(1.9, 2.1),
             Interval::new(-0.01, 0.01),
             Interval::new(-0.01, 0.01),
             Interval::new(2.9, 3.1),
-        ])
-        .into();
-        let rhs: SIntervalVector<Interval, 2> = SVector::<Interval, 2>::from_row_slice(&[
+        ]);
+        let rhs = SIntervalVector::<Interval, 2>::from_column_slice(&[
             Interval::singleton(4.0),
             Interval::singleton(9.0),
-        ])
-        .into();
+        ]);
 
         let solution = HBR.solve(&lhs, &rhs);
 
@@ -104,10 +99,8 @@ mod tests {
 
     #[test]
     fn rejects_system_without_h_matrix() {
-        let lhs: SIntervalMatrix<Interval, 1, 1> =
-            SMatrix::<Interval, 1, 1>::from_element(Interval::new(-1.0, 1.0)).into();
-        let rhs: SIntervalVector<Interval, 1> =
-            SVector::<Interval, 1>::from_element(Interval::singleton(1.0)).into();
+        let lhs = SIntervalMatrix::<Interval, 1, 1>::from_element(Interval::new(-1.0, 1.0));
+        let rhs = SIntervalVector::<Interval, 1>::from_element(Interval::singleton(1.0));
 
         assert!(HBR.solve(&lhs, &rhs).is_none());
     }
@@ -115,9 +108,7 @@ mod tests {
     #[cfg(feature = "alloc")]
     #[test]
     fn supports_dynamic_dimensions() {
-        use nalgebra::{DMatrix, DVector};
-
-        let lhs: DIntervalMatrix<Interval> = DMatrix::<Interval>::from_row_slice(
+        let lhs = DIntervalMatrix::<Interval>::from_row_slice(
             2,
             2,
             &[
@@ -126,13 +117,11 @@ mod tests {
                 Interval::ZERO,
                 Interval::singleton(3.0),
             ],
-        )
-        .into();
-        let rhs: DIntervalVector<Interval> = DVector::<Interval>::from_row_slice(&[
+        );
+        let rhs = DIntervalVector::<Interval>::from_column_slice(&[
             Interval::singleton(4.0),
             Interval::singleton(9.0),
-        ])
-        .into();
+        ]);
 
         let solution = HBR.solve(&lhs, &rhs);
 

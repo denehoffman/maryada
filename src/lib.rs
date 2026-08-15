@@ -42,11 +42,12 @@ mod ux;
 pub use complex::ComplexBox;
 pub use interchange::*;
 #[cfg(all(feature = "linalg", feature = "alloc"))]
-pub use linalg::{DIntervalMatrix, DIntervalVector};
+pub use linalg::{DIntervalMatrix, DIntervalRowVector, DIntervalVector};
 #[cfg(feature = "linalg")]
 pub use linalg::{
-    EpsilonInflation, GaussianElimination, HBR, IntervalMatrix, OIntervalMatrix, OIntervalVector,
-    SIntervalMatrix, SIntervalVector, Solver,
+    EpsilonInflation, GaussianElimination, HBR, IntervalMatrix, OIntervalMatrix,
+    OIntervalRowVector, OIntervalVector, SIntervalMatrix, SIntervalRowVector, SIntervalVector,
+    Solver,
 };
 pub use ops::*;
 pub use signals::{Signal, SignalFlags, SignalSink};

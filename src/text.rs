@@ -214,7 +214,7 @@ fn trim_ascii_space(value: &str) -> &str {
     value.trim_matches(char::is_whitespace)
 }
 
-fn eq_ascii_case(left: &str, right: &str) -> bool {
+const fn eq_ascii_case(left: &str, right: &str) -> bool {
     left.eq_ignore_ascii_case(right)
 }
 

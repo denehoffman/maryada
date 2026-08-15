@@ -1,4 +1,14 @@
-use super::*;
+#![allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+
+use nalgebra::{
+    Const, DefaultAllocator, Dim, DimMin, Scalar, Storage,
+    allocator::Allocator,
+    constraint::{AreMultipliable, ShapeConstraint},
+};
+
+use crate::IntervalOps;
+
+use super::{IntervalMatrix, OIntervalMatrix, OIntervalVector, Solver, ei};
 
 /// Hansen–Bliek–Rohn verified solver for interval systems with an H-matrix.
 pub struct HBR;
@@ -74,7 +84,12 @@ where
 mod tests {
     use crate::{Interval, IntervalOps};
 
-    use super::*;
+    #[cfg(feature = "alloc")]
+    use super::super::DIntervalMatrix;
+    #[cfg(feature = "alloc")]
+    use super::super::DIntervalVector;
+    use super::super::{SIntervalMatrix, SIntervalVector};
+    use super::{HBR, Solver};
 
     #[test]
     fn encloses_solution_of_h_matrix_system() {

@@ -689,7 +689,27 @@ where
     }
 }
 
+impl<T, R1, C1, R2, C2, SA, SB> Sub<IntervalMatrix<T, R2, C2, SB>> for IntervalMatrix<T, R1, C1, SA>
+where
+    T: IntervalOps + Scalar,
+    R1: Dim,
+    C1: Dim,
+    R2: Dim,
+    C2: Dim,
+    SA: Storage<T, R1, C1>,
+    SB: Storage<T, R2, C2>,
+    DefaultAllocator: SameShapeAllocator<R1, C1, R2, C2>,
+    ShapeConstraint: SameNumberOfRows<R1, R2> + SameNumberOfColumns<C1, C2>,
+{
+    type Output = OIntervalMatrix<T, SameShapeR<R1, R2>, SameShapeC<C1, C2>>;
+
+    fn sub(self, rhs: IntervalMatrix<T, R2, C2, SB>) -> Self::Output {
+        Sub::sub(&self, &rhs)
+    }
+}
+
 #[cfg(test)]
+#[allow(clippy::indexing_slicing, clippy::op_ref)]
 mod tests {
     use crate::{Interval, IntervalOps};
 
@@ -799,24 +819,5 @@ mod tests {
         assigned += &dynamic_matrix;
         assigned -= dynamic_matrix;
         assert_eq!(assigned, static_matrix);
-    }
-}
-
-impl<T, R1, C1, R2, C2, SA, SB> Sub<IntervalMatrix<T, R2, C2, SB>> for IntervalMatrix<T, R1, C1, SA>
-where
-    T: IntervalOps + Scalar,
-    R1: Dim,
-    C1: Dim,
-    R2: Dim,
-    C2: Dim,
-    SA: Storage<T, R1, C1>,
-    SB: Storage<T, R2, C2>,
-    DefaultAllocator: SameShapeAllocator<R1, C1, R2, C2>,
-    ShapeConstraint: SameNumberOfRows<R1, R2> + SameNumberOfColumns<C1, C2>,
-{
-    type Output = OIntervalMatrix<T, SameShapeR<R1, R2>, SameShapeC<C1, C2>>;
-
-    fn sub(self, rhs: IntervalMatrix<T, R2, C2, SB>) -> Self::Output {
-        Sub::sub(&self, &rhs)
     }
 }

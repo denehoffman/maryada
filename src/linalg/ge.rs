@@ -16,11 +16,11 @@ where
     C: Dim,
     S: StorageMut<T, R, C> + Clone,
 {
-    /// Computes a verified row-echelon reduction.
+    /// Computes a verified forward elimination.
     ///
     /// Returns `None` if no pivot can be certified as nonzero.
     #[must_use]
-    pub fn rref(&self) -> Option<Self> {
+    pub fn forward_elimination(&self) -> Option<Self> {
         // Algorithm 5.9
         let mut a = self.as_inner().clone();
         let (n, m) = a.shape();
@@ -77,7 +77,7 @@ where
         for i in 0..n {
             ab[(i, n)] = rhs[i];
         }
-        let ab = IntervalMatrix::from_inner(ab).rref()?;
+        let ab = IntervalMatrix::from_inner(ab).forward_elimination()?;
         let ab = ab.into_inner();
         let mut x = rhs.as_inner().clone_owned();
         for i in (0..n).rev() {

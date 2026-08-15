@@ -3,7 +3,7 @@
 use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use nalgebra::{
-    DefaultAllocator, Dim, Scalar, Storage, StorageMut,
+    DefaultAllocator, Dim, OMatrix, Scalar, Storage, StorageMut,
     allocator::{Allocator, SameShapeAllocator, SameShapeC, SameShapeR},
     constraint::{AreMultipliable, SameNumberOfColumns, SameNumberOfRows, ShapeConstraint},
 };
@@ -35,6 +35,89 @@ where
     C1: Dim,
     SA: Storage<T, R1, C1>,
 {
+    /// Maps interval entries into an ordinary owned nalgebra matrix.
+    #[must_use]
+    pub fn map_inner<T2, F>(&self, f: F) -> OMatrix<T2, R1, C1>
+    where
+        T2: Scalar,
+        F: FnMut(T) -> T2,
+        DefaultAllocator: Allocator<R1, C1>,
+    {
+        self.as_inner().map(f)
+    }
+
+    /// Maps interval entries into another owned interval matrix.
+    #[must_use]
+    pub fn map<T2, F>(&self, f: F) -> OIntervalMatrix<T2, R1, C1>
+    where
+        T2: IntervalOps + Scalar,
+        F: FnMut(T) -> T2,
+        DefaultAllocator: Allocator<R1, C1>,
+    {
+        IntervalMatrix::from_inner(self.map_inner(f))
+    }
+
+    /// Maps pairs of corresponding entries into an owned interval matrix.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrices have different dimensions.
+    #[must_use]
+    pub fn zip_map<T2, T3, R2, C2, S2, F>(
+        &self,
+        rhs: &IntervalMatrix<T2, R2, C2, S2>,
+        mut f: F,
+    ) -> OIntervalMatrix<T3, SameShapeR<R1, R2>, SameShapeC<C1, C2>>
+    where
+        T2: IntervalOps + Scalar,
+        T3: IntervalOps + Scalar,
+        R2: Dim,
+        C2: Dim,
+        S2: Storage<T2, R2, C2>,
+        F: FnMut(T, T2) -> T3,
+        DefaultAllocator: SameShapeAllocator<R1, C1, R2, C2>,
+        ShapeConstraint: SameNumberOfRows<R1, R2> + SameNumberOfColumns<C1, C2>,
+    {
+        assert_eq!(
+            self.shape(),
+            rhs.shape(),
+            "interval matrix zip_map dimension mismatch",
+        );
+        let nrows: SameShapeR<R1, R2> = Dim::from_usize(self.nrows());
+        let ncols: SameShapeC<C1, C2> = Dim::from_usize(self.ncols());
+        let entries = self
+            .iter()
+            .copied()
+            .zip(rhs.iter().copied())
+            .map(|(lhs, rhs)| f(lhs, rhs));
+        OIntervalMatrix::from_iterator_generic(nrows, ncols, entries)
+    }
+
+    /// Returns whether any entry satisfies `predicate`.
+    pub fn any<F>(&self, predicate: F) -> bool
+    where
+        F: FnMut(T) -> bool,
+    {
+        self.iter().copied().any(predicate)
+    }
+
+    /// Returns whether every entry satisfies `predicate`.
+    pub fn all<F>(&self, predicate: F) -> bool
+    where
+        F: FnMut(T) -> bool,
+    {
+        self.iter().copied().all(predicate)
+    }
+
+    /// Returns an owned transpose of this matrix.
+    #[must_use]
+    pub fn transpose(&self) -> OIntervalMatrix<T, C1, R1>
+    where
+        DefaultAllocator: Allocator<C1, R1>,
+    {
+        IntervalMatrix::from_inner(self.as_inner().transpose())
+    }
+
     /// Multiplies two matrices componentwise.
     ///
     /// # Panics
@@ -136,6 +219,37 @@ where
     C: Dim,
     S: StorageMut<T, R, C>,
 {
+    /// Applies `f` to every entry in place.
+    pub fn apply<F>(&mut self, f: F)
+    where
+        F: FnMut(&mut T),
+    {
+        self.iter_mut().for_each(f);
+    }
+
+    /// Replaces every entry with `value`.
+    pub fn fill(&mut self, value: T) {
+        self.apply(|entry| *entry = value);
+    }
+
+    /// Swaps two rows in place.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either row index is out of bounds.
+    pub fn swap_rows(&mut self, first: usize, second: usize) {
+        self.as_inner_mut().swap_rows(first, second);
+    }
+
+    /// Swaps two columns in place.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either column index is out of bounds.
+    pub fn swap_columns(&mut self, first: usize, second: usize) {
+        self.as_inner_mut().swap_columns(first, second);
+    }
+
     /// Multiplies this matrix by `rhs` componentwise.
     ///
     /// # Panics
@@ -196,6 +310,18 @@ where
     pub fn unscale_mut(&mut self, value: f64) {
         self.iter_mut()
             .for_each(|entry| DivAssign::div_assign(entry, value));
+    }
+}
+
+impl<T, D, S> IntervalMatrix<T, D, D, S>
+where
+    T: IntervalOps + Scalar,
+    D: Dim,
+    S: StorageMut<T, D, D>,
+{
+    /// Transposes this square matrix in place.
+    pub fn transpose_mut(&mut self) {
+        self.as_inner_mut().transpose_mut();
     }
 }
 
@@ -709,13 +835,42 @@ where
 }
 
 #[cfg(test)]
-#[allow(clippy::indexing_slicing, clippy::op_ref)]
+#[allow(
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    clippy::op_ref
+)]
 mod tests {
     use crate::{Interval, IntervalOps};
 
     #[cfg(feature = "alloc")]
     use super::super::DIntervalMatrix;
     use super::super::SIntervalMatrix;
+
+    #[test]
+    fn structural_operations_match_matrix_layout() {
+        let one = Interval::singleton(1.0);
+        let two = Interval::singleton(2.0);
+        let three = Interval::singleton(3.0);
+        let four = Interval::singleton(4.0);
+        let matrix = SIntervalMatrix::<Interval, 2, 2>::from_row_slice(&[one, two, three, four]);
+
+        let expected_transpose =
+            SIntervalMatrix::<Interval, 2, 2>::from_row_slice(&[one, three, two, four]);
+        assert_eq!(matrix.transpose(), expected_transpose);
+
+        let doubled = matrix.zip_map(&matrix, |lhs, rhs| lhs + rhs);
+        assert!(doubled.all(|entry| entry.inf() >= 2.0));
+        assert!(doubled.any(|entry| entry.contains(8.0)));
+
+        let mut transformed = matrix;
+        transformed.apply(|entry| *entry += 1.0);
+        transformed.swap_rows(0, 1);
+        transformed.swap_columns(0, 1);
+        transformed.transpose_mut();
+        transformed.fill(Interval::ZERO);
+        assert!(transformed.all(|entry| entry == Interval::ZERO));
+    }
 
     #[test]
     fn component_and_scalar_arithmetic_are_complete() {

@@ -29,8 +29,10 @@ where
         if !lhs.is_square()
             || lhs.is_empty()
             || lhs.nrows() != rhs.nrows()
-            || lhs.has_invalid_entries()
-            || rhs.has_invalid_entries()
+            || lhs.has_empty_entries()
+            || lhs.has_nai_entries()
+            || rhs.has_empty_entries()
+            || rhs.has_nai_entries()
             || !lhs.is_h_matrix()
         {
             return None;
@@ -47,7 +49,7 @@ where
         let b_mag = OIntervalVector::from_singletons(&b_mag);
         let u = &a_comp_inv * &b_mag;
         let d = a_comp_inv.diagonal();
-        if d.iter().any(|entry| entry.inf() <= 0.0) {
+        if d.any(|entry| entry.inf() <= 0.0) {
             return None;
         }
 

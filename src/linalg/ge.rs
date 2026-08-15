@@ -11,7 +11,7 @@ where
 {
     pub fn rref(&self) -> Option<Self> {
         // Algorithm 5.9
-        let mut a = self.0.clone();
+        let mut a = self.as_inner().clone();
         let (n, m) = a.shape();
         for i in 0..n.min(m) {
             let j = (i..n).max_by(|&k, &l| a[(k, i)].mig().total_cmp(&a[(l, i)].mig()))?;
@@ -57,17 +57,17 @@ where
         lhs: &IntervalMatrix<T, D, D, SA>,
         rhs: &IntervalMatrix<T, D, Const<1>, SB>,
     ) -> Option<OIntervalVector<T, D>> {
-        let n = rhs.0.nrows();
-        if lhs.0.nrows() != n || lhs.0.ncols() != n {
+        let n = rhs.nrows();
+        if lhs.nrows() != n || lhs.ncols() != n {
             return None;
         }
-        let mut ab = lhs.0.clone_owned().insert_column(n, T::ZERO);
+        let mut ab = lhs.as_inner().clone_owned().insert_column(n, T::ZERO);
         for i in 0..n {
-            ab[(i, n)] = rhs.0[(i, 0)].clone();
+            ab[(i, n)] = rhs[i];
         }
         let ab = IntervalMatrix::from_inner(ab).rref()?;
-        let ab = &ab.0;
-        let mut x = rhs.0.clone_owned();
+        let ab = ab.into_inner();
+        let mut x = rhs.as_inner().clone_owned();
         for i in (0..n).rev() {
             let mut value = ab[(i, n)];
             for j in i + 1..n {

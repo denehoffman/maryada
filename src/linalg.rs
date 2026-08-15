@@ -10,34 +10,83 @@
 use core::ops::{Add, Div, Mul, Sub};
 
 use nalgebra::{
-    Const, DefaultAllocator, Dim, DimMin, Matrix, MatrixSum, OMatrix, OVector, Scalar, Storage,
+    ArrayStorage, Const, DefaultAllocator, Dim, DimMin, Matrix, OMatrix, OVector, Scalar, Storage,
     allocator::{Allocator, SameShapeAllocator, SameShapeC, SameShapeR},
     constraint::{AreMultipliable, SameNumberOfColumns, SameNumberOfRows, ShapeConstraint},
+    storage::Owned,
 };
+
+#[cfg(feature = "alloc")]
+use nalgebra::{Dyn, VecStorage};
 
 use crate::{
     IntervalOps,
     rounding::{self, Direction},
 };
 
+/// A nalgebra matrix whose entries are real intervals.
 #[repr(transparent)]
-pub struct IntervalMatrix<M>(M);
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct IntervalMatrix<T, R, C, S>(Matrix<T, R, C, S>)
+where
+    T: IntervalOps + Scalar,
+    R: Dim,
+    C: Dim,
+    S: Storage<T, R, C>;
 
-impl<M> IntervalMatrix<M> {
-    pub const fn from_inner(inner: M) -> Self {
+/// An owned interval matrix with allocator-selected storage.
+pub type OIntervalMatrix<T, R, C> = IntervalMatrix<T, R, C, Owned<T, R, C>>;
+/// An owned interval column vector with allocator-selected storage.
+pub type OIntervalVector<T, D> = OIntervalMatrix<T, D, Const<1>>;
+/// A statically sized interval matrix.
+pub type SIntervalMatrix<T, const R: usize, const C: usize> =
+    IntervalMatrix<T, Const<R>, Const<C>, ArrayStorage<T, R, C>>;
+/// A statically sized interval column vector.
+pub type SIntervalVector<T, const D: usize> = SIntervalMatrix<T, D, 1>;
+
+/// A dynamically sized interval matrix.
+#[cfg(feature = "alloc")]
+pub type DIntervalMatrix<T> = IntervalMatrix<T, Dyn, Dyn, VecStorage<T, Dyn, Dyn>>;
+/// A dynamically sized interval column vector.
+#[cfg(feature = "alloc")]
+pub type DIntervalVector<T> = IntervalMatrix<T, Dyn, Const<1>, VecStorage<T, Dyn, Const<1>>>;
+
+impl<T, R, C, S> IntervalMatrix<T, R, C, S>
+where
+    T: IntervalOps + Scalar,
+    R: Dim,
+    C: Dim,
+    S: Storage<T, R, C>,
+{
+    /// Wraps a nalgebra matrix whose scalar type is an interval type.
+    pub const fn from_inner(inner: Matrix<T, R, C, S>) -> Self {
         Self(inner)
     }
 
-    pub fn as_inner(&self) -> &M {
+    /// Borrows the underlying nalgebra matrix.
+    pub const fn as_inner(&self) -> &Matrix<T, R, C, S> {
         &self.0
     }
 
-    pub fn into_inner(self) -> M {
+    /// Unwraps this value into its underlying nalgebra matrix.
+    pub fn into_inner(self) -> Matrix<T, R, C, S> {
         self.0
     }
 }
 
-impl<T, R, C, S> From<Matrix<f64, R, C, S>> for IntervalMatrix<OMatrix<T, R, C>>
+impl<T, R, C, S> From<Matrix<T, R, C, S>> for IntervalMatrix<T, R, C, S>
+where
+    T: IntervalOps + Scalar,
+    R: Dim,
+    C: Dim,
+    S: Storage<T, R, C>,
+{
+    fn from(value: Matrix<T, R, C, S>) -> Self {
+        Self(value)
+    }
+}
+
+impl<T, R, C, S> From<Matrix<f64, R, C, S>> for OIntervalMatrix<T, R, C>
 where
     T: IntervalOps + Scalar,
     R: Dim,
@@ -50,7 +99,7 @@ where
     }
 }
 
-impl<T, R, C, S> IntervalMatrix<Matrix<T, R, C, S>>
+impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
     T: IntervalOps + Scalar,
     R: Dim,
@@ -65,13 +114,14 @@ where
     }
 }
 
-impl<T, R, C, S> IntervalMatrix<Matrix<T, R, C, S>>
+impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
     T: IntervalOps + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
 {
+    /// Maps interval entries into an ordinary owned nalgebra matrix.
     pub fn map_inner<T2, F>(&self, f: F) -> OMatrix<T2, R, C>
     where
         T2: Scalar,
@@ -81,15 +131,18 @@ where
         self.0.map(f)
     }
 
-    pub fn map<T2: Scalar, F: FnMut(T) -> T2>(&self, f: F) -> IntervalMatrix<OMatrix<T2, R, C>>
+    /// Maps interval entries into another owned interval matrix.
+    pub fn map<T2, F>(&self, f: F) -> OIntervalMatrix<T2, R, C>
     where
+        T2: IntervalOps + Scalar,
+        F: FnMut(T) -> T2,
         DefaultAllocator: Allocator<R, C>,
     {
         IntervalMatrix::from_inner(self.map_inner(f))
     }
 }
 
-impl<T, R1, C1, SA> IntervalMatrix<Matrix<T, R1, C1, SA>>
+impl<T, R1, C1, SA> IntervalMatrix<T, R1, C1, SA>
 where
     T: IntervalOps + Scalar,
     R1: Dim,
@@ -98,8 +151,8 @@ where
 {
     pub fn component_mul<SB>(
         &self,
-        rhs: &IntervalMatrix<Matrix<T, R1, C1, SB>>,
-    ) -> IntervalMatrix<OMatrix<T, R1, C1>>
+        rhs: &IntervalMatrix<T, R1, C1, SB>,
+    ) -> OIntervalMatrix<T, R1, C1>
     where
         SB: Storage<T, R1, C1>,
         DefaultAllocator: Allocator<R1, C1>,
@@ -122,8 +175,8 @@ where
 
     pub fn component_div<SB>(
         &self,
-        rhs: &IntervalMatrix<Matrix<T, R1, C1, SB>>,
-    ) -> IntervalMatrix<OMatrix<T, R1, C1>>
+        rhs: &IntervalMatrix<T, R1, C1, SB>,
+    ) -> OIntervalMatrix<T, R1, C1>
     where
         SB: Storage<T, R1, C1>,
         DefaultAllocator: Allocator<R1, C1>,
@@ -146,8 +199,8 @@ where
 
     pub fn component_sub<SB>(
         &self,
-        rhs: &IntervalMatrix<Matrix<T, R1, C1, SB>>,
-    ) -> IntervalMatrix<OMatrix<T, R1, C1>>
+        rhs: &IntervalMatrix<T, R1, C1, SB>,
+    ) -> OIntervalMatrix<T, R1, C1>
     where
         SB: Storage<T, R1, C1>,
         DefaultAllocator: Allocator<R1, C1>,
@@ -168,14 +221,14 @@ where
         IntervalMatrix(Matrix::from_iterator_generic(nrows, ncols, elements))
     }
 
-    pub fn scale(&self, value: T) -> IntervalMatrix<OMatrix<T, R1, C1>>
+    pub fn scale(&self, value: T) -> OIntervalMatrix<T, R1, C1>
     where
         DefaultAllocator: Allocator<R1, C1>,
     {
         self.map(|a| Mul::mul(a, value))
     }
 
-    pub fn unscale(&self, value: T) -> IntervalMatrix<OMatrix<T, R1, C1>>
+    pub fn unscale(&self, value: T) -> OIntervalMatrix<T, R1, C1>
     where
         DefaultAllocator: Allocator<R1, C1>,
     {
@@ -183,13 +236,13 @@ where
     }
 }
 
-impl<T, D, S> IntervalMatrix<Matrix<T, D, D, S>>
+impl<T, D, S> IntervalMatrix<T, D, D, S>
 where
     T: IntervalOps + Scalar,
     D: Dim,
     S: Storage<T, D, D>,
 {
-    pub fn diagonal(&self) -> IntervalMatrix<OVector<T, D>>
+    pub fn diagonal(&self) -> OIntervalVector<T, D>
     where
         DefaultAllocator: Allocator<D>,
     {
@@ -206,7 +259,7 @@ where
     }
 }
 
-impl<T, D, S> IntervalMatrix<Matrix<T, D, D, S>>
+impl<T, D, S> IntervalMatrix<T, D, D, S>
 where
     T: IntervalOps + Scalar,
     D: Dim,
@@ -228,7 +281,7 @@ where
     }
 }
 
-impl<T, D, S> IntervalMatrix<Matrix<T, D, D, S>>
+impl<T, D, S> IntervalMatrix<T, D, D, S>
 where
     T: IntervalOps + Scalar,
     D: Dim + DimMin<D, Output = D>,
@@ -314,14 +367,14 @@ where
         if c.iter().any(|entry| !entry.is_finite()) {
             return false;
         }
-        let c_interval: IntervalMatrix<_> = c.into();
+        let c_interval: OIntervalMatrix<T, D, D> = c.into();
         // Theorem 4.33(5)
         let preconditioned = Mul::mul(&c_interval, self);
         preconditioned.is_h_matrix()
     }
 }
 
-impl<T, R, C, S> IntervalMatrix<Matrix<T, R, C, S>>
+impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
     T: IntervalOps + Scalar,
     R: Dim,
@@ -337,7 +390,7 @@ where
     }
 }
 
-impl<T, R, C, S> IntervalMatrix<Matrix<T, R, C, S>>
+impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
     T: IntervalOps + Scalar,
     R: Dim,
@@ -353,7 +406,7 @@ where
     }
 }
 
-impl<T, R, C, S> IntervalMatrix<Matrix<T, R, C, S>>
+impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
     T: IntervalOps + Scalar,
     R: Dim,
@@ -366,7 +419,7 @@ where
     }
 }
 
-impl<T, R, C, S> IntervalMatrix<Matrix<T, R, C, S>>
+impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
     T: IntervalOps + Scalar,
     R: Dim,
@@ -413,8 +466,8 @@ where
     }
 }
 
-impl<'a, 'b, T, R1, C1, R2, C2, SA, SB> Add<&'b IntervalMatrix<Matrix<T, R2, C2, SB>>>
-    for &'a IntervalMatrix<Matrix<T, R1, C1, SA>>
+impl<'a, 'b, T, R1, C1, R2, C2, SA, SB> Add<&'b IntervalMatrix<T, R2, C2, SB>>
+    for &'a IntervalMatrix<T, R1, C1, SA>
 where
     T: IntervalOps + Scalar,
     R1: Dim,
@@ -426,9 +479,9 @@ where
     DefaultAllocator: SameShapeAllocator<R1, C1, R2, C2>,
     ShapeConstraint: SameNumberOfRows<R1, R2> + SameNumberOfColumns<C1, C2>,
 {
-    type Output = IntervalMatrix<MatrixSum<T, R1, C1, R2, C2>>;
+    type Output = OIntervalMatrix<T, SameShapeR<R1, R2>, SameShapeC<C1, C2>>;
 
-    fn add(self, rhs: &'b IntervalMatrix<Matrix<T, R2, C2, SB>>) -> Self::Output {
+    fn add(self, rhs: &'b IntervalMatrix<T, R2, C2, SB>) -> Self::Output {
         assert_eq!(
             self.0.shape(),
             rhs.0.shape(),
@@ -447,8 +500,8 @@ where
     }
 }
 
-impl<'a, 'b, T, R1, C1, R2, C2, SA, SB> Sub<&'b IntervalMatrix<Matrix<T, R2, C2, SB>>>
-    for &'a IntervalMatrix<Matrix<T, R1, C1, SA>>
+impl<'a, 'b, T, R1, C1, R2, C2, SA, SB> Sub<&'b IntervalMatrix<T, R2, C2, SB>>
+    for &'a IntervalMatrix<T, R1, C1, SA>
 where
     T: IntervalOps + Scalar,
     R1: Dim,
@@ -460,9 +513,9 @@ where
     DefaultAllocator: SameShapeAllocator<R1, C1, R2, C2>,
     ShapeConstraint: SameNumberOfRows<R1, R2> + SameNumberOfColumns<C1, C2>,
 {
-    type Output = IntervalMatrix<MatrixSum<T, R1, C1, R2, C2>>;
+    type Output = OIntervalMatrix<T, SameShapeR<R1, R2>, SameShapeC<C1, C2>>;
 
-    fn sub(self, rhs: &'b IntervalMatrix<Matrix<T, R2, C2, SB>>) -> Self::Output {
+    fn sub(self, rhs: &'b IntervalMatrix<T, R2, C2, SB>) -> Self::Output {
         assert_eq!(
             self.0.shape(),
             rhs.0.shape(),
@@ -481,8 +534,8 @@ where
     }
 }
 
-impl<'a, 'b, T, R1, C1, R2, C2, SA, SB> Mul<&'b IntervalMatrix<Matrix<T, R2, C2, SB>>>
-    for &'a IntervalMatrix<Matrix<T, R1, C1, SA>>
+impl<'a, 'b, T, R1, C1, R2, C2, SA, SB> Mul<&'b IntervalMatrix<T, R2, C2, SB>>
+    for &'a IntervalMatrix<T, R1, C1, SA>
 where
     T: IntervalOps + Scalar,
     R1: Dim,
@@ -494,9 +547,9 @@ where
     DefaultAllocator: Allocator<R1, C2>,
     ShapeConstraint: AreMultipliable<R1, C1, R2, C2>,
 {
-    type Output = IntervalMatrix<OMatrix<T, R1, C2>>;
+    type Output = OIntervalMatrix<T, R1, C2>;
 
-    fn mul(self, rhs: &'b IntervalMatrix<Matrix<T, R2, C2, SB>>) -> Self::Output {
+    fn mul(self, rhs: &'b IntervalMatrix<T, R2, C2, SB>) -> Self::Output {
         assert_eq!(
             self.0.ncols(),
             rhs.0.nrows(),
@@ -528,9 +581,9 @@ where
 {
     fn solve(
         &self,
-        lhs: &IntervalMatrix<Matrix<T, D, D, SA>>,
-        rhs: &IntervalMatrix<Matrix<T, D, Const<1>, SB>>,
-    ) -> Option<IntervalMatrix<OMatrix<T, D, Const<1>>>>;
+        lhs: &IntervalMatrix<T, D, D, SA>,
+        rhs: &IntervalMatrix<T, D, Const<1>, SB>,
+    ) -> Option<OIntervalVector<T, D>>;
 }
 
 /// Epsilon-inflation method

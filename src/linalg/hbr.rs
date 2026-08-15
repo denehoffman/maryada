@@ -12,9 +12,9 @@ where
 {
     fn solve(
         &self,
-        lhs: &IntervalMatrix<Matrix<T, D, D, SA>>,
-        rhs: &IntervalMatrix<Matrix<T, D, Const<1>, SB>>,
-    ) -> Option<IntervalMatrix<OMatrix<T, D, Const<1>>>> {
+        lhs: &IntervalMatrix<T, D, D, SA>,
+        rhs: &IntervalMatrix<T, D, Const<1>, SB>,
+    ) -> Option<OIntervalVector<T, D>> {
         if !lhs.0.is_square()
             || lhs.0.nrows() == 0
             || lhs.0.nrows() != rhs.0.nrows()
@@ -27,14 +27,14 @@ where
 
         let a_comp = lhs.comparison_matrix()?;
         let (dim, _) = rhs.0.shape_generic();
-        let a_comp_interval: IntervalMatrix<OMatrix<T, D, D>> = a_comp.into();
+        let a_comp_interval: OIntervalMatrix<T, D, D> = a_comp.into();
         let identity = OMatrix::<f64, D, D>::identity_generic(dim, dim);
-        let identity: IntervalMatrix<OMatrix<T, D, D>> = identity.into();
+        let identity: OIntervalMatrix<T, D, D> = identity.into();
         let a_comp_inv =
             ei::EpsilonInflation::default().solve_matrix(&a_comp_interval, &identity)?;
 
         let b_mag = rhs.mag();
-        let b_mag: IntervalMatrix<OMatrix<T, D, Const<1>>> = b_mag.into();
+        let b_mag: OIntervalVector<T, D> = b_mag.into();
         let u = &a_comp_inv * &b_mag;
         let d = a_comp_inv.diagonal();
         if d.as_inner().iter().any(|entry| entry.inf() <= 0.0) {
@@ -80,16 +80,18 @@ mod tests {
 
     #[test]
     fn encloses_solution_of_h_matrix_system() {
-        let lhs = IntervalMatrix::from_inner(SMatrix::<Interval, 2, 2>::from_row_slice(&[
+        let lhs: SIntervalMatrix<Interval, 2, 2> = SMatrix::<Interval, 2, 2>::from_row_slice(&[
             Interval::new(1.9, 2.1),
             Interval::new(-0.01, 0.01),
             Interval::new(-0.01, 0.01),
             Interval::new(2.9, 3.1),
-        ]));
-        let rhs = IntervalMatrix::from_inner(SVector::<Interval, 2>::from_row_slice(&[
+        ])
+        .into();
+        let rhs: SIntervalVector<Interval, 2> = SVector::<Interval, 2>::from_row_slice(&[
             Interval::singleton(4.0),
             Interval::singleton(9.0),
-        ]));
+        ])
+        .into();
 
         let solution = HBR.solve(&lhs, &rhs);
 
@@ -100,12 +102,10 @@ mod tests {
 
     #[test]
     fn rejects_system_without_h_matrix() {
-        let lhs = IntervalMatrix::from_inner(SMatrix::<Interval, 1, 1>::from_element(
-            Interval::new(-1.0, 1.0),
-        ));
-        let rhs = IntervalMatrix::from_inner(SVector::<Interval, 1>::from_element(
-            Interval::singleton(1.0),
-        ));
+        let lhs: SIntervalMatrix<Interval, 1, 1> =
+            SMatrix::<Interval, 1, 1>::from_element(Interval::new(-1.0, 1.0)).into();
+        let rhs: SIntervalVector<Interval, 1> =
+            SVector::<Interval, 1>::from_element(Interval::singleton(1.0)).into();
 
         assert!(HBR.solve(&lhs, &rhs).is_none());
     }
@@ -115,7 +115,7 @@ mod tests {
     fn supports_dynamic_dimensions() {
         use nalgebra::{DMatrix, DVector};
 
-        let lhs = IntervalMatrix::from_inner(DMatrix::<Interval>::from_row_slice(
+        let lhs: DIntervalMatrix<Interval> = DMatrix::<Interval>::from_row_slice(
             2,
             2,
             &[
@@ -124,11 +124,13 @@ mod tests {
                 Interval::ZERO,
                 Interval::singleton(3.0),
             ],
-        ));
-        let rhs = IntervalMatrix::from_inner(DVector::<Interval>::from_row_slice(&[
+        )
+        .into();
+        let rhs: DIntervalVector<Interval> = DVector::<Interval>::from_row_slice(&[
             Interval::singleton(4.0),
             Interval::singleton(9.0),
-        ]));
+        ])
+        .into();
 
         let solution = HBR.solve(&lhs, &rhs);
 

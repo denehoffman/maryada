@@ -41,8 +41,13 @@ mod ux;
 #[cfg(feature = "complex")]
 pub use complex::ComplexBox;
 pub use interchange::*;
+#[cfg(all(feature = "linalg", feature = "alloc"))]
+pub use linalg::{DIntervalMatrix, DIntervalVector};
 #[cfg(feature = "linalg")]
-pub use linalg::{EpsilonInflation, GaussianElimination, HBR, IntervalMatrix, Solver};
+pub use linalg::{
+    EpsilonInflation, GaussianElimination, HBR, IntervalMatrix, OIntervalMatrix, OIntervalVector,
+    SIntervalMatrix, SIntervalVector, Solver,
+};
 pub use ops::*;
 pub use signals::{Signal, SignalFlags, SignalSink};
 pub use text::{ParseIntervalError, TextError, interval_to_text};

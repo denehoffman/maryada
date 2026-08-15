@@ -1,4 +1,14 @@
-use super::*;
+#![allow(clippy::arithmetic_side_effects)]
+
+use nalgebra::{
+    Const, DefaultAllocator, Dim, Scalar, Storage,
+    allocator::Allocator,
+    constraint::{AreMultipliable, ShapeConstraint},
+};
+
+use crate::IntervalOps;
+
+use super::{IntervalMatrix, OIntervalMatrix, OIntervalVector, Solver};
 
 /// From Rump's dissertation
 pub struct EpsilonInflation {
@@ -53,9 +63,7 @@ impl EpsilonInflation {
         if midpoint.iter().any(|entry| !entry.is_finite()) {
             return None;
         }
-        let Some(c) = midpoint.try_inverse() else {
-            return None;
-        };
+        let c = midpoint.try_inverse()?;
         if c.iter().any(|entry| !entry.is_finite()) {
             return None;
         }

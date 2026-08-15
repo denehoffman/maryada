@@ -13,7 +13,6 @@ use nalgebra::{
     ArrayStorage, Const, DefaultAllocator, Dim, DimMin, Matrix, OMatrix, OVector, Scalar, Storage,
     StorageMut,
     allocator::Allocator,
-    constraint::{AreMultipliable, ShapeConstraint},
     iter::{ColumnIter, ColumnIterMut, MatrixIter, MatrixIterMut, RowIter, RowIterMut},
     storage::Owned,
 };
@@ -806,6 +805,7 @@ where
     }
 }
 
+#[allow(clippy::indexing_slicing)]
 impl<T, D, S> IntervalMatrix<T, D, D, S>
 where
     T: IntervalOps + Scalar,
@@ -1033,6 +1033,7 @@ mod hbr;
 pub use hbr::HBR;
 
 #[cfg(test)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use nalgebra::SMatrix;
 

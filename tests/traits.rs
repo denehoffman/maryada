@@ -1,5 +1,7 @@
 //! Tests for the sealed real-interval convenience trait.
 
+#![allow(clippy::arithmetic_side_effects)]
+
 use core::fmt::Debug;
 
 use maryada::{

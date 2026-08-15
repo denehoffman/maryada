@@ -1,6 +1,13 @@
-use nalgebra::{DimAdd, DimSum, StorageMut, allocator::Reallocator};
+#![allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
 
-use super::*;
+use nalgebra::{
+    Const, DefaultAllocator, Dim, DimAdd, DimSum, Scalar, Storage, StorageMut,
+    allocator::{Allocator, Reallocator},
+};
+
+use crate::IntervalOps;
+
+use super::{IntervalMatrix, OIntervalVector, Solver};
 
 impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
@@ -27,12 +34,12 @@ where
             }
             let a_ii_recip = a[(i, i)].recip();
             for j in i + 1..n {
-                a[(j, i)] = a[(j, i)] * a_ii_recip;
+                a[(j, i)] *= a_ii_recip;
             }
             for k in i + 1..m {
                 for j in i + 1..n {
                     let correction = a[(j, i)] * a[(i, k)];
-                    a[(j, k)] = a[(j, k)] - correction;
+                    a[(j, k)] -= correction;
                 }
             }
             for j in i + 1..n {

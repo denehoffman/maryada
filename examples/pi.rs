@@ -55,7 +55,7 @@ pub fn main() {
         let mut s_n: Interval = 0.0.into();
         for i in (1..=n).rev() {
             let i = f64::from(u32::try_from(i).expect("example index fits in u32"));
-            s_n = s_n + (1.0 / Interval::from(i).powi(2));
+            s_n += 1.0 / Interval::from(i).powi(2);
         }
         let n = f64::from(u32::try_from(n).expect("example bound fits in u32"));
         let t_n = 1.0 / Interval::new(n, n + 1.0);

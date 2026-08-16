@@ -2,10 +2,12 @@
 //!
 //! Fixed-size types are available with the `linalg` feature. Dynamically sized
 //! types additionally require the `alloc` feature.
-
-// NOTE: This is mostly coming from Jaroslav Horacek's PhD thesis:
-// <https://kam.mff.cuni.cz/~horacek/source/horacek_phdthesis.pdf>
-// I'll add a nice citation for this and associated papers later.
+//!
+//! The majority of the algorithmic work here was written by following the thesis of Jaroslav Horáček (see reference).
+//!
+//! # References
+//!
+//! J. Horáček, *Interval Linear and Nonlinear Systems*, Ph.D. thesis, Charles University, 2019. [https://dspace.cuni.cz/handle/20.500.11956/111301](https://dspace.cuni.cz/handle/20.500.11956/111301)
 
 use core::{
     fmt,

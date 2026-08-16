@@ -118,23 +118,171 @@ impl From<&f64> for DecoratedInterval {
     }
 }
 
-#[allow(clippy::indexing_slicing)]
-fn display_interval<T: IntervalDatum>(value: T, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-    let mut output = [0u8; 128];
-    let len = crate::interval_to_text(value, None, &mut output).map_err(|_| fmt::Error)?;
-    let text = core::str::from_utf8(&output[..len]).map_err(|_| fmt::Error)?;
-    formatter.write_str(text)
+#[derive(Clone, Copy)]
+enum DecimalNotation {
+    Display,
+    LowerExp,
+    UpperExp,
 }
 
-impl fmt::Display for Interval {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        display_interval(*self, formatter)
+struct CharCounter(usize);
+
+impl fmt::Write for CharCounter {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        self.0 = self.0.saturating_add(text.chars().count());
+        Ok(())
     }
 }
 
-impl fmt::Display for DecoratedInterval {
+fn write_endpoint<W: fmt::Write>(
+    output: &mut W,
+    value: f64,
+    precision: Option<usize>,
+    notation: DecimalNotation,
+) -> fmt::Result {
+    match (notation, precision) {
+        (DecimalNotation::Display, Some(precision)) => write!(output, "{value:.precision$}"),
+        (DecimalNotation::Display, None) => write!(output, "{value}"),
+        (DecimalNotation::LowerExp, Some(precision)) => write!(output, "{value:.precision$e}"),
+        (DecimalNotation::LowerExp, None) => write!(output, "{value:e}"),
+        (DecimalNotation::UpperExp, Some(precision)) => write!(output, "{value:.precision$E}"),
+        (DecimalNotation::UpperExp, None) => write!(output, "{value:E}"),
+    }
+}
+
+fn write_decoration<W: fmt::Write>(output: &mut W, decoration: Decoration) -> fmt::Result {
+    output.write_str(match decoration {
+        Decoration::Ill => "ill",
+        Decoration::Trv => "trv",
+        Decoration::Def => "def",
+        Decoration::Dac => "dac",
+        Decoration::Com => "com",
+    })
+}
+
+fn write_decimal_interval<W: fmt::Write, T: IntervalDatum>(
+    output: &mut W,
+    value: T,
+    precision: Option<usize>,
+    notation: DecimalNotation,
+) -> fmt::Result {
+    if value.__is_nai() {
+        return output.write_str("[nai]");
+    }
+    let interval = value.__interval();
+    if interval.is_empty_raw() {
+        output.write_str("[empty]")?;
+    } else if interval.is_entire_raw() {
+        output.write_str("[entire]")?;
+    } else {
+        output.write_char('[')?;
+        write_endpoint(output, interval.inf_raw(), precision, notation)?;
+        output.write_char(',')?;
+        write_endpoint(output, interval.sup_raw(), precision, notation)?;
+        output.write_char(']')?;
+    }
+    if let Some(decoration) = value.__decoration() {
+        output.write_char('_')?;
+        write_decoration(output, decoration)?;
+    }
+    Ok(())
+}
+
+fn write_fill(formatter: &mut fmt::Formatter<'_>, fill: char, count: usize) -> fmt::Result {
+    for _ in 0..count {
+        fmt::Write::write_char(formatter, fill)?;
+    }
+    Ok(())
+}
+
+fn format_decimal_interval<T: IntervalDatum>(
+    value: T,
+    formatter: &mut fmt::Formatter<'_>,
+    notation: DecimalNotation,
+) -> fmt::Result {
+    let mut counter = CharCounter(0);
+    write_decimal_interval(&mut counter, value, formatter.precision(), notation)?;
+    let padding = formatter.width().unwrap_or(0).saturating_sub(counter.0);
+    let (left, right) = match formatter.align().unwrap_or(fmt::Alignment::Left) {
+        fmt::Alignment::Left => (0, padding),
+        fmt::Alignment::Right => (padding, 0),
+        fmt::Alignment::Center => {
+            let left = padding / 2;
+            (left, padding.saturating_sub(left))
+        }
+    };
+    write_fill(formatter, formatter.fill(), left)?;
+    write_decimal_interval(formatter, value, formatter.precision(), notation)?;
+    write_fill(formatter, formatter.fill(), right)
+}
+
+#[allow(clippy::indexing_slicing)]
+fn format_hex_interval<T: IntervalDatum>(
+    value: T,
+    formatter: &mut fmt::Formatter<'_>,
+    uppercase: bool,
+) -> fmt::Result {
+    let mut output = [0u8; 128];
+    let len = crate::interval_to_text(value, Some("hex"), &mut output).map_err(|_| fmt::Error)?;
+    if uppercase {
+        output[..len].make_ascii_uppercase();
+    }
+    let text = core::str::from_utf8(&output[..len]).map_err(|_| fmt::Error)?;
+    let padding = formatter
+        .width()
+        .unwrap_or(0)
+        .saturating_sub(text.chars().count());
+    let (left, right) = match formatter.align().unwrap_or(fmt::Alignment::Left) {
+        fmt::Alignment::Left => (0, padding),
+        fmt::Alignment::Right => (padding, 0),
+        fmt::Alignment::Center => {
+            let left = padding / 2;
+            (left, padding.saturating_sub(left))
+        }
+    };
+    write_fill(formatter, formatter.fill(), left)?;
+    formatter.write_str(text)?;
+    write_fill(formatter, formatter.fill(), right)
+}
+
+macro_rules! impl_decimal_format {
+    ($type:ty, $trait:path, $notation:expr) => {
+        impl $trait for $type {
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                format_decimal_interval(*self, formatter, $notation)
+            }
+        }
+    };
+}
+
+impl_decimal_format!(Interval, fmt::Display, DecimalNotation::Display);
+impl_decimal_format!(Interval, fmt::LowerExp, DecimalNotation::LowerExp);
+impl_decimal_format!(Interval, fmt::UpperExp, DecimalNotation::UpperExp);
+impl_decimal_format!(DecoratedInterval, fmt::Display, DecimalNotation::Display);
+impl_decimal_format!(DecoratedInterval, fmt::LowerExp, DecimalNotation::LowerExp);
+impl_decimal_format!(DecoratedInterval, fmt::UpperExp, DecimalNotation::UpperExp);
+
+impl fmt::LowerHex for Interval {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        display_interval(*self, formatter)
+        format_hex_interval(*self, formatter, false)
+    }
+}
+
+impl fmt::UpperHex for Interval {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        format_hex_interval(*self, formatter, true)
+    }
+}
+
+impl fmt::LowerHex for DecoratedInterval {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        format_hex_interval(*self, formatter, false)
+    }
+}
+
+impl fmt::UpperHex for DecoratedInterval {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        format_hex_interval(*self, formatter, true)
     }
 }
 

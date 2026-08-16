@@ -7,7 +7,11 @@
 // <https://kam.mff.cuni.cz/~horacek/source/horacek_phdthesis.pdf>
 // I'll add a nice citation for this and associated papers later.
 
-use core::ops::{Index, IndexMut, Mul};
+use core::{
+    fmt,
+    fmt::Write as _,
+    ops::{Index, IndexMut, Mul},
+};
 
 use nalgebra::{
     ArrayStorage, Const, DefaultAllocator, Dim, DimMin, Matrix, OMatrix, OVector, Scalar, Storage,
@@ -137,6 +141,88 @@ where
         self.0.column_iter()
     }
 }
+
+struct CharCounter(usize);
+
+impl fmt::Write for CharCounter {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        self.0 = self.0.saturating_add(text.chars().count());
+        Ok(())
+    }
+}
+
+macro_rules! impl_matrix_format {
+    ($trait:path, $without_precision:literal, $with_precision:literal) => {
+        impl<T, R, C, S> $trait for IntervalMatrix<T, R, C, S>
+        where
+            T: IntervalOps + Scalar + $trait,
+            R: Dim,
+            C: Dim,
+            S: Storage<T, R, C>,
+        {
+            #[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+            fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                fn value_width<T: $trait>(
+                    value: &T,
+                    precision: Option<usize>,
+                ) -> Result<usize, fmt::Error> {
+                    let mut counter = CharCounter(0);
+                    match precision {
+                        Some(precision) => {
+                            write!(&mut counter, $with_precision, value, precision)?;
+                        }
+                        None => {
+                            write!(&mut counter, $without_precision, value)?;
+                        }
+                    }
+                    Ok(counter.0)
+                }
+
+                let (rows, columns) = self.shape();
+                if rows == 0 || columns == 0 {
+                    return formatter.write_str("[ ]");
+                }
+
+                let precision = formatter.precision();
+                let mut element_width = 0;
+                for row in 0..rows {
+                    for column in 0..columns {
+                        element_width =
+                            element_width.max(value_width(&self[(row, column)], precision)?);
+                    }
+                }
+                let cell_width = element_width + 1;
+                let interior_width = cell_width * columns - 1;
+
+                writeln!(formatter)?;
+                writeln!(formatter, "  ┌ {:>interior_width$} ┐", "")?;
+                for row in 0..rows {
+                    formatter.write_str("  │")?;
+                    for column in 0..columns {
+                        let value = &self[(row, column)];
+                        let padding = element_width - value_width(value, precision)?;
+                        write!(formatter, " {:padding$}", "")?;
+                        match precision {
+                            Some(precision) => {
+                                write!(formatter, $with_precision, value, precision)?;
+                            }
+                            None => write!(formatter, $without_precision, value)?,
+                        }
+                    }
+                    writeln!(formatter, " │")?;
+                }
+                writeln!(formatter, "  └ {:>interior_width$} ┘", "")?;
+                writeln!(formatter)
+            }
+        }
+    };
+}
+
+impl_matrix_format!(fmt::Display, "{}", "{:.1$}");
+impl_matrix_format!(fmt::LowerExp, "{:e}", "{:.1$e}");
+impl_matrix_format!(fmt::UpperExp, "{:E}", "{:.1$E}");
+impl_matrix_format!(fmt::LowerHex, "{:x}", "{:.1$x}");
+impl_matrix_format!(fmt::UpperHex, "{:X}", "{:.1$X}");
 
 impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
@@ -1106,13 +1192,52 @@ where
     }
 }
 
-/// A verified solver for square interval linear systems.
-pub trait Solver<T, D, SA, SB>
+impl<T, D, S> IntervalMatrix<T, D, Const<1>, S>
 where
     T: IntervalOps + Scalar,
     D: Dim,
-    SA: Storage<T, D, D>,
-    SB: Storage<T, D, Const<1>>,
+    S: Storage<T, D, Const<1>>,
+{
+    /// Returns an upward-rounded upper bound for the weighted maximum norm.
+    ///
+    /// The norm is `max_i mag(self[i]) / v[i]`. Returns `NaN` if a weight is
+    /// nonpositive or non-finite, or if an interval magnitude is `NaN`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self` and `v` have different lengths.
+    #[must_use]
+    #[allow(clippy::arithmetic_side_effects)]
+    pub fn v_norm<SV>(&self, v: &Matrix<f64, D, Const<1>, SV>) -> f64
+    where
+        SV: Storage<f64, D, Const<1>>,
+    {
+        assert_eq!(
+            self.nrows(),
+            v.nrows(),
+            "interval vector weighted norm dimension mismatch",
+        );
+        self.iter()
+            .zip(v.iter())
+            .try_fold(0.0_f64, |norm, (entry, &weight)| {
+                if !weight.is_finite() || weight <= 0.0 {
+                    None
+                } else {
+                    let weighted_magnitude = (*entry / weight).mag();
+                    (!weighted_magnitude.is_nan()).then(|| norm.max(weighted_magnitude))
+                }
+            })
+            .unwrap_or(f64::NAN)
+    }
+}
+
+mod ops;
+
+/// A verified solver for square interval linear systems.
+pub trait Solver<T, D>
+where
+    T: IntervalOps + Scalar,
+    D: Dim,
     DefaultAllocator: Allocator<D, D> + Allocator<D>,
 {
     /// Computes an interval enclosure of the solution.
@@ -1120,30 +1245,116 @@ where
     /// Returns `None` when the system is dimensionally invalid or the method
     /// cannot certify an enclosure.
     #[must_use]
-    fn solve(
+    fn solve<SA, SB>(
         &self,
         lhs: &IntervalMatrix<T, D, D, SA>,
         rhs: &IntervalMatrix<T, D, Const<1>, SB>,
-    ) -> Option<OIntervalVector<T, D>>;
+    ) -> Option<OIntervalVector<T, D>>
+    where
+        SA: Storage<T, D, D>,
+        SB: Storage<T, D, Const<1>>;
+
+    /// Computes an interval enclosure of the inverse.
+    ///
+    /// Returns `None` if any column of the inverse cannot be certified.
+    #[must_use]
+    #[allow(clippy::indexing_slicing)]
+    fn inverse<S>(&self, mat: &IntervalMatrix<T, D, D, S>) -> Option<OIntervalMatrix<T, D, D>>
+    where
+        S: Storage<T, D, D>,
+    {
+        let (dim, _) = mat.shape_generic();
+        let mut inverse = OIntervalMatrix::zeros_generic(dim, dim);
+        for column in 0..mat.ncols() {
+            let rhs = OIntervalVector::from_fn_generic(dim, Const::<1>, |row, _| {
+                if row == column { T::ONE } else { T::ZERO }
+            });
+            let solution = self.solve(mat, &rhs)?;
+            for row in 0..mat.nrows() {
+                inverse[(row, column)] = solution[row];
+            }
+        }
+        Some(inverse)
+    }
 }
 
-mod ops;
-
-/// Epsilon-inflation method
+/// Epsilon-inflation method.
 mod ei;
 pub use ei::EpsilonInflation;
 
-/// Gaussian elimination
+/// Gaussian elimination method.
 mod ge;
 pub use ge::GaussianElimination;
 
 /// Hansen–Bliek–Rohn method.
 mod hbr;
-pub use hbr::HBR;
+pub use hbr::HansenBliekRohn;
+
+/// Iterative methods for matrix solves.
+mod iterative;
+pub use iterative::{InitialEnclosure, KrawczykSolver, StoppingTolerance, enclosures_converged};
+
+mod preconditioned;
+pub use preconditioned::{Preconditioned, Preconditioner};
+
+impl<T, D, S> IntervalMatrix<T, D, D, S>
+where
+    T: IntervalOps + Scalar,
+    D: Dim,
+    S: Storage<T, D, D>,
+    DefaultAllocator: Allocator<D, D> + Allocator<D>,
+{
+    /// Computes an interval enclosure of the solution using epsilon inflation.
+    #[must_use]
+    pub fn solve<SR>(
+        &self,
+        rhs: &IntervalMatrix<T, D, Const<1>, SR>,
+    ) -> Option<OIntervalVector<T, D>>
+    where
+        SR: Storage<T, D, Const<1>>,
+    {
+        // TODO: this is a placeholder, I eventually want to run some checks to use an optimal
+        // solver for the matrix type
+        EpsilonInflation::default().solve(self, rhs)
+    }
+
+    /// Computes an interval enclosure of the solution using `solver`.
+    #[must_use]
+    pub fn solve_with<SR, V>(
+        &self,
+        rhs: &IntervalMatrix<T, D, Const<1>, SR>,
+        solver: &V,
+    ) -> Option<OIntervalVector<T, D>>
+    where
+        SR: Storage<T, D, Const<1>>,
+        V: Solver<T, D>,
+    {
+        solver.solve(self, rhs)
+    }
+
+    /// Computes an interval enclosure of the inverse using epsilon inflation.
+    #[must_use]
+    pub fn inverse(&self) -> Option<OIntervalMatrix<T, D, D>> {
+        // TODO: this is a placeholder, I eventually want to run some checks to use an optimal
+        // solver for the matrix type
+        EpsilonInflation::default().inverse(self)
+    }
+
+    /// Computes an interval enclosure of the inverse using `solver`.
+    #[must_use]
+    pub fn inverse_with<V>(&self, solver: &V) -> Option<OIntervalMatrix<T, D, D>>
+    where
+        V: Solver<T, D>,
+    {
+        solver.inverse(self)
+    }
+}
 
 #[cfg(test)]
 #[allow(clippy::indexing_slicing)]
 mod tests {
+    extern crate std;
+
     use nalgebra::SMatrix;
 
     use crate::{DecoratedInterval, Interval, IntervalOps};
@@ -1323,5 +1534,68 @@ mod tests {
         let decorated =
             SIntervalMatrix::<DecoratedInterval, 1, 1>::from_element(DecoratedInterval::NAI);
         assert!(decorated.has_nai_entries());
+    }
+
+    #[test]
+    fn solvers_accept_borrowed_matrix_and_vector_views() {
+        let lhs_storage = SIntervalMatrix::<Interval, 3, 3>::from_fn(|row, column| {
+            if row == column {
+                Interval::singleton(2.0)
+            } else {
+                Interval::ZERO
+            }
+        });
+        let rhs_storage = SIntervalVector::<Interval, 3>::from_column_slice(&[
+            Interval::singleton(4.0),
+            Interval::singleton(6.0),
+            Interval::singleton(8.0),
+        ]);
+        let lhs = IntervalMatrix::from_inner(lhs_storage.as_inner().fixed_view::<2, 2>(0, 0));
+        let rhs = IntervalMatrix::from_inner(rhs_storage.as_inner().fixed_rows::<2>(0));
+
+        let solution = lhs.solve_with(&rhs, &GaussianElimination);
+        assert!(
+            solution
+                .as_ref()
+                .is_some_and(|solution| solution[0].contains(2.0) && solution[1].contains(3.0))
+        );
+
+        let inverse = lhs.inverse_with(&GaussianElimination);
+        assert!(
+            inverse.as_ref().is_some_and(
+                |inverse| inverse[(0, 0)].contains(0.5) && inverse[(1, 1)].contains(0.5)
+            )
+        );
+    }
+
+    #[test]
+    fn weighted_vector_norm_uses_positive_component_weights() {
+        let vector = SIntervalVector::<Interval, 2>::from_column_slice(&[
+            Interval::new(-2.0, 1.0),
+            Interval::new(3.0, 4.0),
+        ]);
+        let weights = nalgebra::SVector::<f64, 2>::from_column_slice(&[4.0, 2.0]);
+
+        assert_eq!(vector.v_norm(&weights), 2.0);
+    }
+
+    #[test]
+    fn matrix_display_forwards_precision_and_measures_interval_widths() {
+        let matrix = SIntervalMatrix::<Interval, 2, 1>::from_column_slice(&[
+            Interval::new(-1.25, 2.5),
+            Interval::new(-100.0, 200.0),
+        ]);
+
+        let rendered = std::format!("{matrix:.2}");
+        assert!(rendered.contains("[-1.25,2.50]"));
+        assert!(rendered.contains("[-100.00,200.00]"));
+        let row_widths: std::vec::Vec<_> = rendered
+            .lines()
+            .filter(|line| line.contains('│'))
+            .map(str::len)
+            .collect();
+        assert!(row_widths.windows(2).all(|widths| widths[0] == widths[1]));
+        assert!(std::format!("{matrix:.1e}").contains('e'));
+        assert!(std::format!("{matrix:x}").contains("0x"));
     }
 }

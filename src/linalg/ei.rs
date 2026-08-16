@@ -10,7 +10,8 @@ use crate::IntervalOps;
 
 use super::{IntervalMatrix, OIntervalMatrix, OIntervalVector, Solver};
 
-/// From Rump's dissertation
+/// Verified epsilon-inflation solver from Rump's dissertation.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EpsilonInflation {
     /// Relative inflation
     r: f64,
@@ -22,15 +23,73 @@ pub struct EpsilonInflation {
 
 impl Default for EpsilonInflation {
     fn default() -> Self {
-        Self {
-            r: 0.1,
-            eps: 1e-20,
-            max_iterations: 20,
-        }
+        Self::new()
     }
 }
 
 impl EpsilonInflation {
+    /// Default relative inflation factor.
+    pub const DEFAULT_RELATIVE_INFLATION: f64 = 0.1;
+    /// Default absolute inflation radius.
+    pub const DEFAULT_ABSOLUTE_INFLATION: f64 = 1e-20;
+    /// Default maximum number of iterations.
+    pub const DEFAULT_MAX_ITERATIONS: usize = 20;
+
+    /// Creates a solver with the default inflation parameters.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            r: Self::DEFAULT_RELATIVE_INFLATION,
+            eps: Self::DEFAULT_ABSOLUTE_INFLATION,
+            max_iterations: Self::DEFAULT_MAX_ITERATIONS,
+        }
+    }
+
+    /// Sets the relative inflation factor.
+    ///
+    /// A non-finite or negative value causes [`Solver::solve`] to return
+    /// `None`.
+    #[must_use]
+    pub const fn with_relative_inflation(mut self, relative_inflation: f64) -> Self {
+        self.r = relative_inflation;
+        self
+    }
+
+    /// Sets the absolute inflation radius.
+    ///
+    /// A non-finite or negative value causes [`Solver::solve`] to return
+    /// `None`.
+    #[must_use]
+    pub const fn with_absolute_inflation(mut self, absolute_inflation: f64) -> Self {
+        self.eps = absolute_inflation;
+        self
+    }
+
+    /// Sets the maximum number of iterations.
+    #[must_use]
+    pub const fn with_max_iterations(mut self, max_iterations: usize) -> Self {
+        self.max_iterations = max_iterations;
+        self
+    }
+
+    /// Returns the relative inflation factor.
+    #[must_use]
+    pub const fn relative_inflation(&self) -> f64 {
+        self.r
+    }
+
+    /// Returns the absolute inflation radius.
+    #[must_use]
+    pub const fn absolute_inflation(&self) -> f64 {
+        self.eps
+    }
+
+    /// Returns the maximum number of iterations.
+    #[must_use]
+    pub const fn max_iterations(&self) -> usize {
+        self.max_iterations
+    }
+
     pub(super) fn solve_matrix<T, D, C, SA, SB>(
         &self,
         lhs: &IntervalMatrix<T, D, D, SA>,
@@ -45,7 +104,11 @@ impl EpsilonInflation {
         DefaultAllocator: Allocator<D, D> + Allocator<D, C>,
         ShapeConstraint: AreMultipliable<D, D, D, D> + AreMultipliable<D, D, D, C>,
     {
-        if !lhs.is_square()
+        if !self.r.is_finite()
+            || self.r < 0.0
+            || !self.eps.is_finite()
+            || self.eps < 0.0
+            || !lhs.is_square()
             || lhs.is_empty()
             || lhs.nrows() != rhs.nrows()
             || lhs.has_empty_entries()
@@ -97,19 +160,59 @@ impl EpsilonInflation {
     }
 }
 
-impl<T, D, SA, SB> Solver<T, D, SA, SB> for EpsilonInflation
+impl<T, D> Solver<T, D> for EpsilonInflation
 where
     T: IntervalOps + Scalar,
     D: Dim,
-    SA: Storage<T, D, D>,
-    SB: Storage<T, D, Const<1>>,
     DefaultAllocator: Allocator<D, D> + Allocator<D>,
 {
-    fn solve(
+    fn solve<SA, SB>(
         &self,
         lhs: &IntervalMatrix<T, D, D, SA>,
         rhs: &IntervalMatrix<T, D, Const<1>, SB>,
-    ) -> Option<OIntervalVector<T, D>> {
+    ) -> Option<OIntervalVector<T, D>>
+    where
+        SA: Storage<T, D, D>,
+        SB: Storage<T, D, Const<1>>,
+    {
         self.solve_matrix(lhs, rhs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Interval, SIntervalMatrix, SIntervalVector, Solver};
+
+    use super::EpsilonInflation;
+
+    #[test]
+    fn builder_methods_configure_the_solver() {
+        let solver = EpsilonInflation::new()
+            .with_relative_inflation(0.05)
+            .with_absolute_inflation(1e-16)
+            .with_max_iterations(40);
+
+        assert_eq!(solver.relative_inflation(), 0.05);
+        assert_eq!(solver.absolute_inflation(), 1e-16);
+        assert_eq!(solver.max_iterations(), 40);
+    }
+
+    #[test]
+    fn invalid_inflation_parameters_are_rejected() {
+        let lhs = SIntervalMatrix::<Interval, 1, 1>::identity();
+        let rhs = SIntervalVector::<Interval, 1>::from_element(Interval::ONE);
+
+        assert!(
+            EpsilonInflation::new()
+                .with_relative_inflation(-0.1)
+                .solve(&lhs, &rhs)
+                .is_none()
+        );
+        assert!(
+            EpsilonInflation::new()
+                .with_absolute_inflation(f64::NAN)
+                .solve(&lhs, &rhs)
+                .is_none()
+        );
     }
 }

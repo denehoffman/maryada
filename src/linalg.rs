@@ -1306,7 +1306,7 @@ where
     S: Storage<T, D, D>,
     DefaultAllocator: Allocator<D, D> + Allocator<D>,
 {
-    /// Computes an interval enclosure of the solution using epsilon inflation.
+    /// Computes an interval enclosure of the solution using Gaussian elimination.
     #[must_use]
     pub fn solve<SR>(
         &self,
@@ -1314,10 +1314,11 @@ where
     ) -> Option<OIntervalVector<T, D>>
     where
         SR: Storage<T, D, Const<1>>,
+        D: DimMin<D, Output = D>,
+        GaussianEliminationSolver: Solver<T, D>,
     {
-        // TODO: this is a placeholder, I eventually want to run some checks to use an optimal
-        // solver for the matrix type
-        EpsilonInflationSolver::default().solve(self, rhs)
+        let solver = Preconditioned::auto(GaussianEliminationSolver, self);
+        solver.solve(self, rhs)
     }
 
     /// Computes an interval enclosure of the solution using `solver`.
@@ -1334,12 +1335,15 @@ where
         solver.solve(self, rhs)
     }
 
-    /// Computes an interval enclosure of the inverse using epsilon inflation.
+    /// Computes an interval enclosure of the inverse using Gaussian elimination.
     #[must_use]
-    pub fn inverse(&self) -> Option<OIntervalMatrix<T, D, D>> {
-        // TODO: this is a placeholder, I eventually want to run some checks to use an optimal
-        // solver for the matrix type
-        EpsilonInflationSolver::default().inverse(self)
+    pub fn inverse(&self) -> Option<OIntervalMatrix<T, D, D>>
+    where
+        D: DimMin<D, Output = D>,
+        GaussianEliminationSolver: Solver<T, D>,
+    {
+        let solver = Preconditioned::auto(GaussianEliminationSolver, self);
+        solver.inverse(self)
     }
 
     /// Computes an interval enclosure of the inverse using `solver`.

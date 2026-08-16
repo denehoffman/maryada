@@ -18,13 +18,27 @@ assert_eq!(y.bounds(), (1.0, 4.0));
 
 - `complex` enables the `ComplexBox` rectangular complex interval API.
 - `num-complex` enables `complex` plus interoperability with `num_complex::Complex64`.
+- `linalg` enables the linear algebra API, namely `IntervalMatrix` and its associated operations.
 
-Additionally, I have added some basic support for complex-valued operations (not defined in the IEEE standard). Note that complex functions transform interval spaces in nontrivial ways, so while the resulting image from this library will contain the true image, it is not guaranteed to be equal to it, though it may be equal under certain operations.
+I have added some basic support for complex-valued operations (not defined in the IEEE standard). Note that complex functions transform interval spaces in nontrivial ways, so while the resulting image from this library will contain the true image, it is not guaranteed to be equal to it, though it may be equal under certain operations.
+
+Linear algebra has been implemented mostly by following the work of Jaroslav Horáček's dissertation:
+
+```bibtex
+@phdthesis{Horacek2019Interval,
+  author = {Jaroslav Hor{\'a}{\v c}ek},
+  title  = {Interval Linear and Nonlinear Systems},
+  school = {Charles University, Faculty of Mathematics and Physics},
+  year   = {2019},
+  address = {Prague, Czech Republic},
+  url    = {https://dspace.cuni.cz/handle/20.500.11956/111301}
+}
+```
 
 # Future plans
 
 - Support for alternate complex interval space formulations, like disks and polyarcs
-- Linear algebra methods
+- Linear algebra methods (a lot of this is done, but there are still some thing I want to add)
 - Potentially a PyO3 binding if I find it useful
 
 # Licensing

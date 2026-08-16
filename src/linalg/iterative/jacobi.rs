@@ -8,7 +8,6 @@ use crate::{
     InitialEnclosure, IntervalMatrix, IntervalOps, OIntervalMatrix, OIntervalVector, Solver,
     StoppingTolerance,
     linalg::iterative::{enclosures_converged, valid_system},
-    ux::IntervalOps,
 };
 
 /// The Jacobi iterative method for interval linear systems.

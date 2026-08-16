@@ -1,8 +1,10 @@
 #![allow(clippy::arithmetic_side_effects)]
 
-use nalgebra::{Const, DefaultAllocator, Dim, OMatrix, Scalar, Storage, allocator::Allocator};
+use nalgebra::{
+    Const, DefaultAllocator, Dim, DimMin, OMatrix, Scalar, Storage, allocator::Allocator,
+};
 
-use crate::{IntervalOps, OIntervalMatrix, Solver};
+use crate::{Interval, IntervalOps, OIntervalMatrix, Solver};
 
 use super::IntervalMatrix;
 
@@ -54,6 +56,33 @@ where
             }
         })
     }
+
+    /// Automatically selects a suitable preconditioner.
+    #[must_use]
+    pub fn auto<T, S>(lhs: &IntervalMatrix<T, D, D, S>) -> Option<Self>
+    where
+        T: IntervalOps + Scalar,
+        S: Storage<T, D, D>,
+        D: DimMin<D, Output = D>,
+        DefaultAllocator: Allocator<D, D> + Allocator<D>,
+    {
+        if lhs.is_m_matrix() {
+            return None;
+        }
+        let (n, _) = lhs.shape();
+        for i in 0..n {
+            let mut sum = Interval::ZERO;
+            for j in 0..n {
+                if i != j {
+                    sum += Interval::singleton(lhs[(i, j)].mag());
+                }
+            }
+            if lhs[(i, i)].mig() <= sum.inf() {
+                return Some(Self::InverseMidpoint);
+            }
+        }
+        None
+    }
 }
 
 /// A solver adapter that left-preconditions a system before solving it.
@@ -63,7 +92,7 @@ where
     DefaultAllocator: Allocator<D, D>,
 {
     solver: S,
-    preconditioner: Preconditioner<D>,
+    preconditioner: Option<Preconditioner<D>>,
 }
 
 impl<D, S> Preconditioned<D, S>
@@ -76,7 +105,7 @@ where
     pub const fn new(solver: S, preconditioner: Preconditioner<D>) -> Self {
         Self {
             solver,
-            preconditioner,
+            preconditioner: Some(preconditioner),
         }
     }
 
@@ -85,7 +114,7 @@ where
     pub const fn inverse_midpoint(solver: S) -> Self {
         Self {
             solver,
-            preconditioner: Preconditioner::InverseMidpoint,
+            preconditioner: Some(Preconditioner::InverseMidpoint),
         }
     }
 
@@ -94,7 +123,7 @@ where
     pub const fn inverse_diagonal_midpoint(solver: S) -> Self {
         Self {
             solver,
-            preconditioner: Preconditioner::InverseDiagonalMidpoint,
+            preconditioner: Some(Preconditioner::InverseDiagonalMidpoint),
         }
     }
 
@@ -103,14 +132,29 @@ where
     pub const fn custom(solver: S, matrix: OMatrix<f64, D, D>) -> Self {
         Self {
             solver,
-            preconditioner: Preconditioner::Custom(matrix),
+            preconditioner: Some(Preconditioner::Custom(matrix)),
+        }
+    }
+
+    /// Automatically selects a suitable preconditioner.
+    #[must_use]
+    pub fn auto<T, SA>(solver: S, lhs: &IntervalMatrix<T, D, D, SA>) -> Self
+    where
+        T: IntervalOps + Scalar,
+        SA: Storage<T, D, D>,
+        D: DimMin<D, Output = D>,
+        DefaultAllocator: Allocator<D, D> + Allocator<D>,
+    {
+        Self {
+            solver,
+            preconditioner: Preconditioner::auto(lhs),
         }
     }
 
     /// Replaces the selected preconditioning strategy.
     #[must_use]
     pub fn with_preconditioner(mut self, preconditioner: Preconditioner<D>) -> Self {
-        self.preconditioner = preconditioner;
+        self.preconditioner = Some(preconditioner);
         self
     }
 
@@ -122,8 +166,8 @@ where
 
     /// Returns the selected preconditioning strategy.
     #[must_use]
-    pub const fn preconditioner(&self) -> &Preconditioner<D> {
-        &self.preconditioner
+    pub const fn preconditioner(&self) -> Option<&Preconditioner<D>> {
+        self.preconditioner.as_ref()
     }
 }
 
@@ -143,7 +187,11 @@ where
         SA: Storage<T, D, D>,
         SB: Storage<T, D, Const<1>>,
     {
-        let c = self.preconditioner.matrix(lhs)?;
-        self.solver.solve(&(&c * lhs), &(&c * rhs))
+        if let Some(preconditioner) = &self.preconditioner {
+            let c = preconditioner.matrix(lhs)?;
+            self.solver.solve(&(&c * lhs), &(&c * rhs))
+        } else {
+            self.solver.solve(lhs, rhs)
+        }
     }
 }

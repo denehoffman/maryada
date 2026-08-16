@@ -6,7 +6,7 @@ use nalgebra::{
 
 use crate::{
     InitialEnclosure, IntervalMatrix, IntervalOps, OIntervalVector, Solver, StoppingTolerance,
-    enclosures_converged, linalg::iterative::valid_system,
+    linalg::iterative::{enclosures_converged, valid_system},
 };
 
 /// The Gauss-Seidel iterative method for interval linear systems.

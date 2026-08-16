@@ -1,7 +1,6 @@
 #![allow(missing_docs)]
 use maryada::{
-    DecoratedInterval, Interval, IntervalOps, Signal, SignalFlags, interval_from_be_bytes,
-    interval_part,
+    DecoratedInterval, Interval, Signal, SignalFlags, interval_from_be_bytes, interval_part,
 };
 
 #[test]

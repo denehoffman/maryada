@@ -5,6 +5,8 @@ use core::{
 #[cfg(feature = "num-complex")]
 use num_complex::Complex64;
 
+#[cfg(feature = "num-complex")]
+use crate::EnclosureScalar;
 use crate::{DecoratedInterval, Decoration, Interval, IntervalOps, SignalSink};
 
 #[derive(Copy, Clone, Debug)]
@@ -17,6 +19,85 @@ pub struct ComplexBox<I> {
     pub re: I,
     /// Interval enclosing the imaginary component.
     pub im: I,
+}
+
+#[cfg(feature = "num-complex")]
+#[allow(clippy::arithmetic_side_effects, clippy::use_self)]
+impl<I: IntervalOps> EnclosureScalar for ComplexBox<I> {
+    type Midpoint = Complex64;
+
+    const ZERO: Self = Self::ZERO;
+    const ONE: Self = Self::ONE;
+
+    fn singleton(value: f64) -> Self {
+        Self::from(value)
+    }
+
+    fn from_midpoint(value: Self::Midpoint) -> Self {
+        Self::from(value)
+    }
+
+    fn inflate(self, relative: f64, absolute: f64) -> Self {
+        let scale = I::new(1.0 - relative, 1.0 + relative);
+        let offset = I::new(-absolute, absolute);
+        Self::new(self.re * scale + offset, self.im * scale + offset)
+    }
+
+    fn mul_add(self, rhs: Self, addend: Self) -> Self {
+        ComplexBox::mul_add(self, rhs, addend)
+    }
+
+    fn mid(self) -> Self::Midpoint {
+        ComplexBox::mid(self)
+    }
+
+    fn is_empty(self) -> bool {
+        ComplexBox::is_empty(self)
+    }
+
+    fn is_nai(self) -> bool {
+        ComplexBox::is_nai(self)
+    }
+
+    fn is_entire(self) -> bool {
+        ComplexBox::is_entire(self)
+    }
+
+    fn is_singleton(self) -> bool {
+        ComplexBox::is_singleton(self)
+    }
+
+    fn is_bounded(self) -> bool {
+        ComplexBox::is_bounded(self)
+    }
+
+    fn equal(self, other: Self) -> bool {
+        self.re.equal(other.re) && self.im.equal(other.im)
+    }
+
+    fn subset(self, other: Self) -> bool {
+        ComplexBox::subset(self, other)
+    }
+
+    fn interior(self, other: Self) -> bool {
+        ComplexBox::interior(self, other)
+    }
+
+    fn intersection(self, other: Self) -> Self {
+        ComplexBox::intersection(self, other)
+    }
+
+    fn convex_hull(self, other: Self) -> Self {
+        ComplexBox::convex_hull(self, other)
+    }
+
+    fn mag(self) -> f64 {
+        ComplexBox::mag(self)
+    }
+
+    fn mig(self) -> f64 {
+        ComplexBox::mig(self)
+    }
 }
 
 impl<I: IntervalOps> ComplexBox<I> {

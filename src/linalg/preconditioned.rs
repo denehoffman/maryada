@@ -1,18 +1,19 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use nalgebra::{
-    Const, DefaultAllocator, Dim, DimMin, OMatrix, Scalar, Storage, allocator::Allocator,
+    ComplexField, Const, DefaultAllocator, Dim, OMatrix, Scalar, Storage, allocator::Allocator,
 };
 
-use crate::{Interval, IntervalOps, OIntervalMatrix, Solver};
+use crate::OIntervalMatrix;
 
-use super::IntervalMatrix;
+use super::{EnclosureScalar, IntervalMatrix, SolveError, Solver};
 
 /// Strategy used to left-precondition an interval linear system.
 #[derive(Default)]
-pub enum Preconditioner<D>
+pub enum Preconditioner<D, P = f64>
 where
     D: Dim,
+    P: Scalar,
     DefaultAllocator: Allocator<D, D>,
 {
     /// Uses the inverse of the midpoint matrix.
@@ -20,39 +21,56 @@ where
     InverseMidpoint,
     /// Uses the inverse of the midpoint diagonal.
     InverseDiagonalMidpoint,
-    /// Uses a caller-provided real preconditioner matrix.
-    Custom(OMatrix<f64, D, D>),
+    /// Uses a caller-provided point preconditioner matrix.
+    ///
+    /// The point scalar is selected by `P`; use the complex point scalar for
+    /// complex interval systems.
+    Custom(OMatrix<P, D, D>),
 }
 
-impl<D> Preconditioner<D>
+impl<D, P> Preconditioner<D, P>
 where
     D: Dim,
+    P: ComplexField + Copy,
     DefaultAllocator: Allocator<D, D>,
 {
-    /// Uses `matrix` as the real left-preconditioner.
+    /// Uses `matrix` as the point left-preconditioner.
     #[must_use]
-    pub const fn custom(matrix: OMatrix<f64, D, D>) -> Self {
+    pub const fn custom(matrix: OMatrix<P, D, D>) -> Self {
         Self::Custom(matrix)
     }
 
     /// Computes this preconditioner's point matrix as an interval matrix.
     #[must_use]
+    #[allow(clippy::indexing_slicing)]
     pub fn matrix<T, S>(&self, lhs: &IntervalMatrix<T, D, D, S>) -> Option<OIntervalMatrix<T, D, D>>
     where
-        T: IntervalOps + Scalar,
+        T: EnclosureScalar<Midpoint = P> + Scalar,
         S: Storage<T, D, D>,
         DefaultAllocator: Allocator<D, D> + Allocator<D>,
     {
         Some(match self {
-            Self::InverseMidpoint => OIntervalMatrix::from(lhs.mid().try_inverse()?),
+            Self::InverseMidpoint => {
+                let (dim, _) = lhs.shape_generic();
+                let midpoint =
+                    OMatrix::<P, D, D>::from_fn_generic(dim, dim, |i, j| lhs[(i, j)].mid());
+                let inverse = midpoint.try_inverse()?;
+                OIntervalMatrix::from_fn_generic(dim, dim, |i, j| T::from_midpoint(inverse[(i, j)]))
+            }
             Self::InverseDiagonalMidpoint => {
-                OIntervalMatrix::from(OMatrix::from_diagonal(&lhs.mid().diagonal()).try_inverse()?)
+                let (dim, _) = lhs.shape_generic();
+                let midpoint = OMatrix::<P, D, D>::from_fn_generic(dim, dim, |i, j| {
+                    if i == j { lhs[(i, j)].mid() } else { P::zero() }
+                });
+                let inverse = midpoint.try_inverse()?;
+                OIntervalMatrix::from_fn_generic(dim, dim, |i, j| T::from_midpoint(inverse[(i, j)]))
             }
             Self::Custom(matrix) => {
                 if matrix.shape() != lhs.shape() || matrix.iter().any(|entry| !entry.is_finite()) {
                     return None;
                 }
-                OIntervalMatrix::from_singletons(matrix)
+                let (dim, _) = lhs.shape_generic();
+                OIntervalMatrix::from_fn_generic(dim, dim, |i, j| T::from_midpoint(matrix[(i, j)]))
             }
         })
     }
@@ -61,23 +79,19 @@ where
     #[must_use]
     pub fn auto<T, S>(lhs: &IntervalMatrix<T, D, D, S>) -> Option<Self>
     where
-        T: IntervalOps + Scalar,
+        T: EnclosureScalar<Midpoint = P> + Scalar,
         S: Storage<T, D, D>,
-        D: DimMin<D, Output = D>,
         DefaultAllocator: Allocator<D, D> + Allocator<D>,
     {
-        if lhs.is_m_matrix() {
-            return None;
-        }
         let (n, _) = lhs.shape();
         for i in 0..n {
-            let mut sum = Interval::ZERO;
+            let mut sum = 0.0;
             for j in 0..n {
                 if i != j {
-                    sum += Interval::singleton(lhs[(i, j)].mag());
+                    sum += lhs[(i, j)].mag();
                 }
             }
-            if lhs[(i, i)].mig() <= sum.inf() {
+            if lhs[(i, i)].mig() <= sum {
                 return Some(Self::InverseMidpoint);
             }
         }
@@ -86,23 +100,25 @@ where
 }
 
 /// A solver adapter that left-preconditions a system before solving it.
-pub struct Preconditioned<D, S>
+pub struct Preconditioned<D, S, P = f64>
 where
     D: Dim,
+    P: Scalar + ComplexField + Copy,
     DefaultAllocator: Allocator<D, D>,
 {
     solver: S,
-    preconditioner: Option<Preconditioner<D>>,
+    preconditioner: Option<Preconditioner<D, P>>,
 }
 
-impl<D, S> Preconditioned<D, S>
+impl<D, S, P> Preconditioned<D, S, P>
 where
     D: Dim,
+    P: Scalar + ComplexField + Copy,
     DefaultAllocator: Allocator<D, D>,
 {
     /// Wraps `solver` with the selected preconditioning strategy.
     #[must_use]
-    pub const fn new(solver: S, preconditioner: Preconditioner<D>) -> Self {
+    pub const fn new(solver: S, preconditioner: Preconditioner<D, P>) -> Self {
         Self {
             solver,
             preconditioner: Some(preconditioner),
@@ -127,9 +143,9 @@ where
         }
     }
 
-    /// Wraps `solver` with a caller-provided real preconditioner matrix.
+    /// Wraps `solver` with a caller-provided point preconditioner matrix.
     #[must_use]
-    pub const fn custom(solver: S, matrix: OMatrix<f64, D, D>) -> Self {
+    pub const fn custom(solver: S, matrix: OMatrix<P, D, D>) -> Self {
         Self {
             solver,
             preconditioner: Some(Preconditioner::Custom(matrix)),
@@ -140,9 +156,8 @@ where
     #[must_use]
     pub fn auto<T, SA>(solver: S, lhs: &IntervalMatrix<T, D, D, SA>) -> Self
     where
-        T: IntervalOps + Scalar,
+        T: EnclosureScalar<Midpoint = P> + Scalar,
         SA: Storage<T, D, D>,
-        D: DimMin<D, Output = D>,
         DefaultAllocator: Allocator<D, D> + Allocator<D>,
     {
         Self {
@@ -153,7 +168,7 @@ where
 
     /// Replaces the selected preconditioning strategy.
     #[must_use]
-    pub fn with_preconditioner(mut self, preconditioner: Preconditioner<D>) -> Self {
+    pub fn with_preconditioner(mut self, preconditioner: Preconditioner<D, P>) -> Self {
         self.preconditioner = Some(preconditioner);
         self
     }
@@ -166,32 +181,33 @@ where
 
     /// Returns the selected preconditioning strategy.
     #[must_use]
-    pub const fn preconditioner(&self) -> Option<&Preconditioner<D>> {
+    pub const fn preconditioner(&self) -> Option<&Preconditioner<D, P>> {
         self.preconditioner.as_ref()
     }
 }
 
-impl<T, D, S> Solver<T, D> for Preconditioned<D, S>
+impl<T, D, S, P> Solver<T, D> for Preconditioned<D, S, P>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar<Midpoint = P> + Scalar,
+    P: ComplexField + Copy,
     D: Dim,
     S: Solver<T, D>,
     DefaultAllocator: Allocator<D, D> + Allocator<D>,
 {
-    fn solve<SA, SB>(
+    fn try_solve<SA, SB>(
         &self,
         lhs: &IntervalMatrix<T, D, D, SA>,
         rhs: &IntervalMatrix<T, D, Const<1>, SB>,
-    ) -> Option<OIntervalMatrix<T, D, Const<1>>>
+    ) -> Result<OIntervalMatrix<T, D, Const<1>>, SolveError>
     where
         SA: Storage<T, D, D>,
         SB: Storage<T, D, Const<1>>,
     {
         if let Some(preconditioner) = &self.preconditioner {
-            let c = preconditioner.matrix(lhs)?;
-            self.solver.solve(&(&c * lhs), &(&c * rhs))
+            let c = preconditioner.matrix(lhs).ok_or(SolveError::InvalidInput)?;
+            self.solver.try_solve(&(&c * lhs), &(&c * rhs))
         } else {
-            self.solver.solve(lhs, rhs)
+            self.solver.try_solve(lhs, rhs)
         }
     }
 }

@@ -5,8 +5,8 @@ use nalgebra::{
 };
 
 use crate::{
-    InitialEnclosure, IntervalMatrix, IntervalOps, OIntervalMatrix, OIntervalVector, Solver,
-    StoppingTolerance,
+    InitialEnclosure, IntervalMatrix, IntervalOps, OIntervalMatrix, OIntervalVector, SolveError,
+    Solver, StoppingTolerance,
     linalg::iterative::{enclosures_converged, valid_system},
 };
 
@@ -101,51 +101,56 @@ where
     DefaultAllocator: Allocator<D, D> + Allocator<D>,
     ShapeConstraint: AreMultipliable<D, D, D, D> + AreMultipliable<D, D, D, Const<1>>,
 {
-    fn solve<SA, SB>(
+    fn try_solve<SA, SB>(
         &self,
         lhs: &IntervalMatrix<T, D, D, SA>,
         rhs: &IntervalMatrix<T, D, Const<1>, SB>,
-    ) -> Option<OIntervalVector<T, D>>
+    ) -> Result<OIntervalVector<T, D>, SolveError>
     where
         SA: Storage<T, D, D>,
         SB: Storage<T, D, Const<1>>,
     {
-        if !valid_system(lhs, rhs) {
-            return None;
-        }
-        let mut x = match &self.initializer {
-            InitialEnclosure::Provided(enclosure) => {
-                if enclosure.nrows() != lhs.nrows()
-                    || enclosure.has_empty_entries()
-                    || enclosure.has_nai_entries()
-                {
-                    return None;
-                }
-                enclosure.clone()
-            }
-            InitialEnclosure::WeightedNorm => lhs.initial_enclosure_v_norm(rhs)?,
-            InitialEnclosure::InfinityNorm => lhs.initial_enclosure_inf_norm(rhs)?,
-        };
-        let (dim, _) = lhs.shape_generic();
-        let d_inv =
-            OIntervalMatrix::<T, D, D>::from_diagonal(&lhs.diagonal().map(IntervalOps::recip));
-        let j = OIntervalMatrix::<T, D, D>::from_fn_generic(dim, dim, |i, j| {
-            if i == j { T::ZERO } else { lhs[(i, j)] }
-        });
-        for _ in 0..self.max_iterations {
-            // NOTE: Horacek's thesis says this assumes that there are no intervals containing 0 on
-            // the main diagonal of lhs. If this is not the case, "extended interval arithmetic can
-            // be used". I need to read more on this.
-            let y = &d_inv * (rhs - &j * &x);
-            let next = y.intersection(&x);
-            if next.has_empty_entries() || next.has_nai_entries() {
+        let result = (|| -> Option<OIntervalVector<T, D>> {
+            if !valid_system(lhs, rhs) {
                 return None;
             }
-            if enclosures_converged(&next, &x, self.tolerance) {
-                return Some(next);
+            let mut x = match &self.initializer {
+                InitialEnclosure::Provided(enclosure) => {
+                    if enclosure.nrows() != lhs.nrows()
+                        || enclosure.has_empty_entries()
+                        || enclosure.has_nai_entries()
+                    {
+                        return None;
+                    }
+                    enclosure.clone()
+                }
+                InitialEnclosure::WeightedNorm => lhs.initial_enclosure_v_norm(rhs)?,
+                InitialEnclosure::InfinityNorm => lhs.initial_enclosure_inf_norm(rhs)?,
+            };
+            let (dim, _) = lhs.shape_generic();
+            let d_inv =
+                OIntervalMatrix::<T, D, D>::from_diagonal(&lhs.diagonal().map(IntervalOps::recip));
+            let j = OIntervalMatrix::<T, D, D>::from_fn_generic(dim, dim, |i, j| {
+                if i == j { T::ZERO } else { lhs[(i, j)] }
+            });
+            for _ in 0..self.max_iterations {
+                // NOTE: Horacek's thesis says this assumes that there are no intervals containing 0 on
+                // the main diagonal of lhs. If this is not the case, "extended interval arithmetic can
+                // be used". I need to read more on this.
+                let y = &d_inv * (rhs - &j * &x);
+                let next = y.intersection(&x);
+                if next.has_empty_entries() || next.has_nai_entries() {
+                    return None;
+                }
+                if enclosures_converged(&next, &x, self.tolerance) {
+                    return Some(next);
+                }
+                x = next;
             }
-            x = next;
-        }
-        None
+            None
+        })();
+        result.ok_or(SolveError::CertificationFailed {
+            iterations: self.max_iterations,
+        })
     }
 }

@@ -1,14 +1,14 @@
 #![allow(clippy::arithmetic_side_effects)]
 
 use nalgebra::{
-    Const, DefaultAllocator, Dim, Scalar, Storage,
+    ComplexField, Const, DefaultAllocator, Dim, Scalar, Storage,
     allocator::Allocator,
     constraint::{AreMultipliable, ShapeConstraint},
 };
 
-use crate::IntervalOps;
+use super::EnclosureScalar;
 
-use super::{IntervalMatrix, OIntervalMatrix, OIntervalVector, Solver};
+use super::{IntervalMatrix, OIntervalMatrix, OIntervalVector, SolveError, Solver};
 
 /// Verified epsilon-inflation solver from Rump's dissertation.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -89,92 +89,105 @@ impl EpsilonInflationSolver {
     pub const fn max_iterations(&self) -> usize {
         self.max_iterations
     }
-
-    pub(super) fn solve_matrix<T, D, C, SA, SB>(
-        &self,
-        lhs: &IntervalMatrix<T, D, D, SA>,
-        rhs: &IntervalMatrix<T, D, C, SB>,
-    ) -> Option<OIntervalMatrix<T, D, C>>
-    where
-        T: IntervalOps + Scalar,
-        D: Dim,
-        C: Dim,
-        SA: Storage<T, D, D>,
-        SB: Storage<T, D, C>,
-        DefaultAllocator: Allocator<D, D> + Allocator<D, C>,
-        ShapeConstraint: AreMultipliable<D, D, D, D> + AreMultipliable<D, D, D, C>,
-    {
-        if !self.r.is_finite()
-            || self.r < 0.0
-            || !self.eps.is_finite()
-            || self.eps < 0.0
-            || !lhs.is_square()
-            || lhs.is_empty()
-            || lhs.nrows() != rhs.nrows()
-            || lhs.has_empty_entries()
-            || lhs.has_nai_entries()
-            || rhs.has_empty_entries()
-            || rhs.has_nai_entries()
-        {
-            return None;
-        }
-
-        let (dim, _) = lhs.shape_generic();
-        let relative_inflation = T::new(1.0 - self.r, 1.0 + self.r);
-        let absolute_inflation = T::new(-self.eps, self.eps);
-
-        // C ~ inv(mid(A)).
-        let midpoint = lhs.mid();
-        if midpoint.iter().any(|entry| !entry.is_finite()) {
-            return None;
-        }
-        let c = midpoint.try_inverse()?;
-        if c.iter().any(|entry| !entry.is_finite()) {
-            return None;
-        }
-        let c_interval = OIntervalMatrix::from_singletons(&c);
-        let identity = OIntervalMatrix::<T, D, D>::identity_generic(dim);
-
-        // Z = I - CA.
-        let residual = &identity - &(&c_interval * lhs);
-
-        // x^0 = Cb.
-        let cb = &c_interval * rhs;
-        let mut x = cb.clone();
-        for _ in 0..self.max_iterations {
-            // y = x^k * [1-r, 1+r] + [-eps, eps].
-            let y = (&x * relative_inflation).add_scalar(absolute_inflation);
-
-            // x^{k+1} = Cb + (I-CA)y.
-            let next = &cb + &(&residual * &y);
-
-            let enclosed = next.interior(&y);
-
-            // Check if x^{k+1} is contained in the interior of y.
-            if enclosed {
-                return Some(next);
-            }
-            x = next;
-        }
-        None
-    }
 }
 
 impl<T, D> Solver<T, D> for EpsilonInflationSolver
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
+    T::Midpoint: ComplexField,
     D: Dim,
-    DefaultAllocator: Allocator<D, D> + Allocator<D>,
+    DefaultAllocator: Allocator<D, D> + Allocator<D> + Allocator<D, Const<1>>,
+    ShapeConstraint: AreMultipliable<D, D, D, D> + AreMultipliable<D, D, D, Const<1>>,
 {
-    fn solve<SA, SB>(
+    #[allow(clippy::indexing_slicing)]
+    fn try_solve<SA, SB>(
         &self,
         lhs: &IntervalMatrix<T, D, D, SA>,
         rhs: &IntervalMatrix<T, D, Const<1>, SB>,
-    ) -> Option<OIntervalVector<T, D>>
+    ) -> Result<OIntervalVector<T, D>, SolveError>
     where
         SA: Storage<T, D, D>,
         SB: Storage<T, D, Const<1>>,
     {
-        self.solve_matrix(lhs, rhs)
+        if !self.r.is_finite() || self.r < 0.0 || !self.eps.is_finite() || self.eps < 0.0 {
+            return Err(SolveError::InvalidInput);
+        }
+        if !lhs.is_square() || lhs.is_empty() || lhs.nrows() != rhs.nrows() {
+            return Err(SolveError::InvalidSystem);
+        }
+        if lhs.has_empty_entries()
+            || lhs.has_nai_entries()
+            || rhs.has_empty_entries()
+            || rhs.has_nai_entries()
+        {
+            return Err(SolveError::InvalidInput);
+        }
+
+        let (dim, _) = lhs.shape_generic();
+
+        // R ~ inv(mid(A)). The point inverse is kept separate from its
+        // singleton interval embedding so the midpoint solve remains a point
+        // operation and all subsequent products use interval arithmetic.
+        let midpoint = lhs.mid();
+        if midpoint.iter().any(|entry| !entry.is_finite()) {
+            return Err(SolveError::InvalidInput);
+        }
+        let preconditioner_point = midpoint.try_inverse().ok_or(SolveError::SingularMidpoint)?;
+        if preconditioner_point.iter().any(|entry| !entry.is_finite()) {
+            return Err(SolveError::SingularMidpoint);
+        }
+        let r_interval = OIntervalMatrix::from_fn_generic(dim, dim, |i, j| {
+            <T as EnclosureScalar>::from_midpoint(preconditioner_point[(i, j)])
+        });
+        let identity = OIntervalMatrix::<T, D, D>::identity_generic(dim);
+
+        // Let x̃ = R mid(b).  Writing x = x̃ + d gives
+        //
+        //     d = R (b - A x̃) + (I - R A) d = Z + C d.
+        //
+        // This residual-centred form is important for thick right-hand
+        // sides (and is the form used by the verified Rump/Krawczyk method).
+        let midpoint_rhs = rhs.mid();
+        if midpoint_rhs.iter().any(|entry| !entry.is_finite()) {
+            return Err(SolveError::InvalidInput);
+        }
+        let x_tilde_point = &preconditioner_point * &midpoint_rhs;
+        if x_tilde_point.iter().any(|entry| !entry.is_finite()) {
+            return Err(SolveError::InvalidInput);
+        }
+        let x_tilde: OIntervalVector<T, D> =
+            OIntervalMatrix::from_fn_generic(dim, Const::<1>, |i, j| {
+                <T as EnclosureScalar>::from_midpoint(x_tilde_point[(i, j)])
+            });
+        let lhs_x_tilde: OIntervalVector<T, D> = lhs * &x_tilde;
+        let residual_rhs: OIntervalVector<T, D> = rhs - &lhs_x_tilde;
+        let correction = &r_interval * &residual_rhs;
+        let iteration_matrix = &identity - &(&r_interval * lhs);
+
+        // Start from the residual enclosure.  Every iterate below is an
+        // enclosure for the correction d, not for the absolute solution x.
+        let mut correction_enclosure = correction.clone();
+        for _ in 0..self.max_iterations {
+            // Inflate the current correction enclosure before applying the
+            // fixed-point map.  The strict interior test is the existence
+            // certificate: if F(Y) ⊂ int(Y), then the united solution set is
+            // contained in F(Y), hence x̃ + F(Y) encloses every solution.
+            let inflated = correction_enclosure
+                .map(|entry| <T as EnclosureScalar>::inflate(entry, self.r, self.eps));
+
+            // x^{k+1} = Z + C y.
+            let next = &correction + &(&iteration_matrix * &inflated);
+
+            let enclosed = next.interior(&inflated);
+
+            // Check if x^{k+1} is contained in the interior of y.
+            if enclosed {
+                return Ok(&x_tilde + &next);
+            }
+            correction_enclosure = next;
+        }
+        Err(SolveError::CertificationFailed {
+            iterations: self.max_iterations,
+        })
     }
 }

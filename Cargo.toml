@@ -19,7 +19,9 @@ num-complex = { version = "0.4.6", default-features = false, optional = true }
 [features]
 default = []
 alloc = ["nalgebra?/alloc"]
+branch = ["alloc"]
 complex = []
+complex-linalg = ["linalg", "num-complex", "alloc"]
 num-complex = ["complex", "dep:num-complex"]
 linalg = ["dep:nalgebra"]
 

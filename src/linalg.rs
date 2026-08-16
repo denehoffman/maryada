@@ -27,17 +27,19 @@ use nalgebra::{
 #[cfg(feature = "alloc")]
 use nalgebra::{Dyn, VecStorage};
 
+#[cfg(feature = "complex")]
+use crate::ComplexBox;
 use crate::{
-    IntervalOps,
+    EnclosureScalar, IntervalOps,
     rounding::{self, Direction},
 };
 
-/// A nalgebra matrix whose entries are real intervals.
+/// A nalgebra matrix whose entries are scalar interval enclosures.
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct IntervalMatrix<T, R, C, S>(Matrix<T, R, C, S>)
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>;
@@ -66,9 +68,39 @@ pub type DIntervalVector<T> = IntervalMatrix<T, Dyn, Const<1>, VecStorage<T, Dyn
 #[cfg(feature = "alloc")]
 pub type DIntervalRowVector<T> = IntervalMatrix<T, Const<1>, Dyn, VecStorage<T, Const<1>, Dyn>>;
 
+/// An owned matrix whose entries are rectangular complex interval boxes.
+#[cfg(all(feature = "complex", feature = "num-complex"))]
+pub type OComplexIntervalMatrix<I, R, C> = OIntervalMatrix<ComplexBox<I>, R, C>;
+/// An owned rectangular complex interval column vector.
+#[cfg(all(feature = "complex", feature = "num-complex"))]
+pub type OComplexIntervalVector<I, D> = OIntervalVector<ComplexBox<I>, D>;
+/// An owned rectangular complex interval row vector.
+#[cfg(all(feature = "complex", feature = "num-complex"))]
+pub type OComplexIntervalRowVector<I, D> = OIntervalRowVector<ComplexBox<I>, D>;
+/// A statically sized rectangular complex interval matrix.
+#[cfg(all(feature = "complex", feature = "num-complex"))]
+pub type SComplexIntervalMatrix<I, const R: usize, const C: usize> =
+    SIntervalMatrix<ComplexBox<I>, R, C>;
+/// A statically sized rectangular complex interval column vector.
+#[cfg(all(feature = "complex", feature = "num-complex"))]
+pub type SComplexIntervalVector<I, const D: usize> = SComplexIntervalMatrix<I, D, 1>;
+/// A statically sized rectangular complex interval row vector.
+#[cfg(all(feature = "complex", feature = "num-complex"))]
+pub type SComplexIntervalRowVector<I, const D: usize> = SComplexIntervalMatrix<I, 1, D>;
+
+/// A dynamically sized rectangular complex interval matrix.
+#[cfg(all(feature = "complex", feature = "num-complex", feature = "alloc"))]
+pub type DComplexIntervalMatrix<I> = DIntervalMatrix<ComplexBox<I>>;
+/// A dynamically sized rectangular complex interval column vector.
+#[cfg(all(feature = "complex", feature = "num-complex", feature = "alloc"))]
+pub type DComplexIntervalVector<I> = DIntervalVector<ComplexBox<I>>;
+/// A dynamically sized rectangular complex interval row vector.
+#[cfg(all(feature = "complex", feature = "num-complex", feature = "alloc"))]
+pub type DComplexIntervalRowVector<I> = DIntervalRowVector<ComplexBox<I>>;
+
 impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
@@ -157,7 +189,7 @@ macro_rules! impl_matrix_format {
     ($trait:path, $without_precision:literal, $with_precision:literal) => {
         impl<T, R, C, S> $trait for IntervalMatrix<T, R, C, S>
         where
-            T: IntervalOps + Scalar + $trait,
+            T: EnclosureScalar + Scalar + $trait,
             R: Dim,
             C: Dim,
             S: Storage<T, R, C>,
@@ -228,7 +260,7 @@ impl_matrix_format!(fmt::UpperHex, "{:X}", "{:.1$X}");
 
 impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: StorageMut<T, R, C>,
@@ -261,7 +293,7 @@ where
 
 impl<T, R, C, S> AsRef<Matrix<T, R, C, S>> for IntervalMatrix<T, R, C, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
@@ -273,7 +305,7 @@ where
 
 impl<T, R, C, S> AsMut<Matrix<T, R, C, S>> for IntervalMatrix<T, R, C, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: StorageMut<T, R, C>,
@@ -285,7 +317,7 @@ where
 
 impl<'a, T, R, C, S> IntoIterator for &'a IntervalMatrix<T, R, C, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
@@ -300,7 +332,7 @@ where
 
 impl<'a, T, R, C, S> IntoIterator for &'a mut IntervalMatrix<T, R, C, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: StorageMut<T, R, C>,
@@ -315,7 +347,7 @@ where
 
 impl<T, R, C, S> Index<(usize, usize)> for IntervalMatrix<T, R, C, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
@@ -330,7 +362,7 @@ where
 
 impl<T, R, C, S> IndexMut<(usize, usize)> for IntervalMatrix<T, R, C, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: StorageMut<T, R, C>,
@@ -343,7 +375,7 @@ where
 
 impl<T, R, S> Index<usize> for IntervalMatrix<T, R, Const<1>, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     S: Storage<T, R, Const<1>>,
 {
@@ -357,7 +389,7 @@ where
 
 impl<T, R, S> IndexMut<usize> for IntervalMatrix<T, R, Const<1>, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     S: StorageMut<T, R, Const<1>>,
 {
@@ -369,7 +401,7 @@ where
 
 impl<T, R, C, S> From<Matrix<T, R, C, S>> for IntervalMatrix<T, R, C, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
@@ -381,7 +413,7 @@ where
 
 impl<T, R, C, S> From<Matrix<f64, R, C, S>> for OIntervalMatrix<T, R, C>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<f64, R, C>,
@@ -394,7 +426,7 @@ where
 
 impl<T, R, C> OIntervalMatrix<T, R, C>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     DefaultAllocator: Allocator<R, C>,
@@ -506,6 +538,7 @@ where
     /// Panics if `lower` and `upper` have different dimensions.
     pub fn from_bounds<SL, SU>(lower: &Matrix<f64, R, C, SL>, upper: &Matrix<f64, R, C, SU>) -> Self
     where
+        T: IntervalOps,
         SL: Storage<f64, R, C>,
         SU: Storage<f64, R, C>,
     {
@@ -533,6 +566,7 @@ where
         radius: &Matrix<f64, R, C, SR>,
     ) -> Self
     where
+        T: IntervalOps,
         SM: Storage<f64, R, C>,
         SR: Storage<f64, R, C>,
     {
@@ -564,7 +598,7 @@ where
 
 impl<T, D> OIntervalMatrix<T, D, D>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     D: Dim,
     DefaultAllocator: Allocator<D, D>,
 {
@@ -576,7 +610,7 @@ where
 
 impl<T, D> OIntervalMatrix<T, D, D>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     D: Dim,
     DefaultAllocator: Allocator<D, D> + Allocator<D>,
 {
@@ -592,7 +626,7 @@ where
 
 impl<T, const R: usize, const C: usize> SIntervalMatrix<T, R, C>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
 {
     /// Creates a statically sized interval matrix filled with one value.
     pub fn from_element(element: T) -> Self {
@@ -658,7 +692,7 @@ where
 
 impl<T, const D: usize> SIntervalMatrix<T, D, D>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
 {
     /// Creates a statically sized identity interval matrix.
     #[must_use]
@@ -670,7 +704,7 @@ where
 #[cfg(feature = "alloc")]
 impl<T> DIntervalMatrix<T>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
 {
     /// Creates a dynamically sized interval matrix filled with one value.
     pub fn from_element(nrows: usize, ncols: usize, element: T) -> Self {
@@ -739,7 +773,7 @@ where
 #[cfg(feature = "alloc")]
 impl<T> DIntervalVector<T>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
 {
     /// Creates a dynamically sized interval column vector filled with one value.
     pub fn from_element(nrows: usize, element: T) -> Self {
@@ -777,7 +811,7 @@ where
 #[cfg(feature = "alloc")]
 impl<T> DIntervalRowVector<T>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
 {
     /// Creates a dynamically sized interval row vector filled with one value.
     pub fn from_element(ncols: usize, element: T) -> Self {
@@ -814,7 +848,7 @@ where
 
 impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
@@ -822,19 +856,19 @@ where
     /// Returns whether any entry is empty.
     #[must_use]
     pub fn has_empty_entries(&self) -> bool {
-        self.any(IntervalOps::is_empty)
+        self.any(EnclosureScalar::is_empty)
     }
 
     /// Returns whether any entry is `NaI`.
     #[must_use]
     pub fn has_nai_entries(&self) -> bool {
-        self.any(IntervalOps::is_nai)
+        self.any(EnclosureScalar::is_nai)
     }
 
     /// Returns whether any entry is entire.
     #[must_use]
     pub fn has_entire_entries(&self) -> bool {
-        self.any(IntervalOps::is_entire)
+        self.any(EnclosureScalar::is_entire)
     }
 
     /// Intersects corresponding entries of two matrices.
@@ -854,7 +888,7 @@ where
         DefaultAllocator: SameShapeAllocator<R, C, R2, C2>,
         ShapeConstraint: SameNumberOfRows<R, R2> + SameNumberOfColumns<C, C2>,
     {
-        self.zip_map(rhs, IntervalOps::intersection)
+        self.zip_map(rhs, EnclosureScalar::intersection)
     }
 
     /// Computes the convex hull of corresponding entries of two matrices.
@@ -874,7 +908,7 @@ where
         DefaultAllocator: SameShapeAllocator<R, C, R2, C2>,
         ShapeConstraint: SameNumberOfRows<R, R2> + SameNumberOfColumns<C, C2>,
     {
-        self.zip_map(rhs, IntervalOps::convex_hull)
+        self.zip_map(rhs, EnclosureScalar::convex_hull)
     }
 
     /// Returns whether corresponding entries are interval-equal.
@@ -1113,6 +1147,34 @@ where
 
 impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
+    T: EnclosureScalar + Scalar,
+    T::Midpoint: Scalar,
+    R: Dim,
+    C: Dim,
+    S: Storage<T, R, C>,
+    DefaultAllocator: Allocator<R, C>,
+{
+    /// Returns the matrix of componentwise enclosure midpoints.
+    #[must_use]
+    pub fn mid(&self) -> OMatrix<T::Midpoint, R, C> {
+        self.map_inner(EnclosureScalar::mid)
+    }
+
+    /// Returns the matrix of enclosure magnitudes.
+    #[must_use]
+    pub fn mag(&self) -> OMatrix<f64, R, C> {
+        self.map_inner(EnclosureScalar::mag)
+    }
+
+    /// Returns the matrix of enclosure minimum magnitudes.
+    #[must_use]
+    pub fn mig(&self) -> OMatrix<f64, R, C> {
+        self.map_inner(EnclosureScalar::mig)
+    }
+}
+
+impl<T, R, C, S> IntervalMatrix<T, R, C, S>
+where
     T: IntervalOps + Scalar,
     R: Dim,
     C: Dim,
@@ -1139,24 +1201,6 @@ where
     #[must_use]
     pub fn inner_rad(&self) -> OMatrix<f64, R, C> {
         self.map_inner(IntervalOps::inner_rad)
-    }
-
-    /// Returns the matrix of interval midpoints.
-    #[must_use]
-    pub fn mid(&self) -> OMatrix<f64, R, C> {
-        self.map_inner(IntervalOps::mid)
-    }
-
-    /// Returns the matrix of interval magnitudes.
-    #[must_use]
-    pub fn mag(&self) -> OMatrix<f64, R, C> {
-        self.map_inner(IntervalOps::mag)
-    }
-
-    /// Returns the matrix of interval mignitudes.
-    #[must_use]
-    pub fn mig(&self) -> OMatrix<f64, R, C> {
-        self.map_inner(IntervalOps::mig)
     }
 
     /// Returns an upward-rounded upper bound for the induced matrix 1-norm.
@@ -1235,17 +1279,38 @@ where
 
 mod ops;
 
+mod diagnostics;
+pub use diagnostics::SolveError;
+
+#[cfg(feature = "complex-linalg")]
+mod complex_block;
+
 /// A verified solver for square interval linear systems.
 pub trait Solver<T, D>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     D: Dim,
     DefaultAllocator: Allocator<D, D> + Allocator<D>,
 {
+    /// Computes an interval enclosure of the solution with diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SolveError`] when the system is invalid or the method
+    /// cannot certify an enclosure.
+    fn try_solve<SA, SB>(
+        &self,
+        lhs: &IntervalMatrix<T, D, D, SA>,
+        rhs: &IntervalMatrix<T, D, Const<1>, SB>,
+    ) -> Result<OIntervalVector<T, D>, SolveError>
+    where
+        SA: Storage<T, D, D>,
+        SB: Storage<T, D, Const<1>>;
+
     /// Computes an interval enclosure of the solution.
     ///
-    /// Returns `None` when the system is dimensionally invalid or the method
-    /// cannot certify an enclosure.
+    /// Returns `None` when the system is invalid or the method cannot certify
+    /// an enclosure.
     #[must_use]
     fn solve<SA, SB>(
         &self,
@@ -1254,14 +1319,22 @@ where
     ) -> Option<OIntervalVector<T, D>>
     where
         SA: Storage<T, D, D>,
-        SB: Storage<T, D, Const<1>>;
+        SB: Storage<T, D, Const<1>>,
+    {
+        self.try_solve(lhs, rhs).ok()
+    }
 
-    /// Computes an interval enclosure of the inverse.
+    /// Computes a verified inverse enclosure with diagnostics.
     ///
-    /// Returns `None` if any column of the inverse cannot be certified.
-    #[must_use]
+    /// # Errors
+    ///
+    /// Returns the first [`SolveError`] encountered while verifying an inverse
+    /// column.
     #[allow(clippy::indexing_slicing)]
-    fn inverse<S>(&self, mat: &IntervalMatrix<T, D, D, S>) -> Option<OIntervalMatrix<T, D, D>>
+    fn try_inverse<S>(
+        &self,
+        mat: &IntervalMatrix<T, D, D, S>,
+    ) -> Result<OIntervalMatrix<T, D, D>, SolveError>
     where
         S: Storage<T, D, D>,
     {
@@ -1271,12 +1344,23 @@ where
             let rhs = OIntervalVector::from_fn_generic(dim, Const::<1>, |row, _| {
                 if row == column { T::ONE } else { T::ZERO }
             });
-            let solution = self.solve(mat, &rhs)?;
+            let solution = self.try_solve(mat, &rhs)?;
             for row in 0..mat.nrows() {
                 inverse[(row, column)] = solution[row];
             }
         }
-        Some(inverse)
+        Ok(inverse)
+    }
+
+    /// Computes an interval enclosure of the inverse.
+    ///
+    /// Returns `None` if any column of the inverse cannot be certified.
+    #[must_use]
+    fn inverse<S>(&self, mat: &IntervalMatrix<T, D, D, S>) -> Option<OIntervalMatrix<T, D, D>>
+    where
+        S: Storage<T, D, D>,
+    {
+        self.try_inverse(mat).ok()
     }
 }
 
@@ -1323,7 +1407,26 @@ where
         solver.solve(self, rhs)
     }
 
-    /// Computes an interval enclosure of the solution using `solver`.
+    /// Computes an interval enclosure of the inverse using Gaussian elimination.
+    #[must_use]
+    pub fn inverse(&self) -> Option<OIntervalMatrix<T, D, D>>
+    where
+        D: DimMin<D, Output = D>,
+        GaussianEliminationSolver: Solver<T, D>,
+    {
+        let solver = Preconditioned::auto(GaussianEliminationSolver, self);
+        solver.inverse(self)
+    }
+}
+
+impl<T, D, S> IntervalMatrix<T, D, D, S>
+where
+    T: EnclosureScalar + Scalar,
+    D: Dim,
+    S: Storage<T, D, D>,
+    DefaultAllocator: Allocator<D, D> + Allocator<D>,
+{
+    /// Computes an enclosure of the solution using `solver`.
     #[must_use]
     pub fn solve_with<SR, V>(
         &self,
@@ -1337,23 +1440,115 @@ where
         solver.solve(self, rhs)
     }
 
-    /// Computes an interval enclosure of the inverse using Gaussian elimination.
-    #[must_use]
-    pub fn inverse(&self) -> Option<OIntervalMatrix<T, D, D>>
-    where
-        D: DimMin<D, Output = D>,
-        GaussianEliminationSolver: Solver<T, D>,
-    {
-        let solver = Preconditioned::auto(GaussianEliminationSolver, self);
-        solver.inverse(self)
-    }
-
-    /// Computes an interval enclosure of the inverse using `solver`.
+    /// Computes an enclosure of the inverse using `solver`.
     #[must_use]
     pub fn inverse_with<V>(&self, solver: &V) -> Option<OIntervalMatrix<T, D, D>>
     where
         V: Solver<T, D>,
     {
         solver.inverse(self)
+    }
+
+    /// Computes an enclosure using a solver with typed diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// Returns the diagnostic reported by `solver`.
+    pub fn try_solve_with<SR, V>(
+        &self,
+        rhs: &IntervalMatrix<T, D, Const<1>, SR>,
+        solver: &V,
+    ) -> Result<OIntervalVector<T, D>, SolveError>
+    where
+        SR: Storage<T, D, Const<1>>,
+        V: Solver<T, D>,
+    {
+        solver.try_solve(self, rhs)
+    }
+
+    /// Computes an inverse enclosure using a solver with typed diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// Returns the diagnostic reported by `solver`.
+    pub fn try_inverse_with<V>(&self, solver: &V) -> Result<OIntervalMatrix<T, D, D>, SolveError>
+    where
+        V: Solver<T, D>,
+    {
+        solver.try_inverse(self)
+    }
+}
+
+#[cfg(feature = "complex-linalg")]
+impl<I, D, S> IntervalMatrix<ComplexBox<I>, D, D, S>
+where
+    I: IntervalOps + core::fmt::Debug + PartialEq + 'static,
+    D: Dim,
+    S: Storage<ComplexBox<I>, D, D>,
+    DefaultAllocator: Allocator<D, D> + Allocator<D>,
+{
+    /// Computes a verified complex solution enclosure.
+    #[must_use]
+    pub fn solve<SR>(
+        &self,
+        rhs: &IntervalMatrix<ComplexBox<I>, D, Const<1>, SR>,
+    ) -> Option<OIntervalVector<ComplexBox<I>, D>>
+    where
+        SR: Storage<ComplexBox<I>, D, Const<1>>,
+    {
+        self.try_solve(rhs).ok()
+    }
+
+    /// Computes a verified complex solution enclosure with typed diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`SolveError`] when neither the direct complex verifier nor
+    /// its conservative real-block fallback can certify a solution.
+    pub fn try_solve<SR>(
+        &self,
+        rhs: &IntervalMatrix<ComplexBox<I>, D, Const<1>, SR>,
+    ) -> Result<OIntervalVector<ComplexBox<I>, D>, SolveError>
+    where
+        SR: Storage<ComplexBox<I>, D, Const<1>>,
+    {
+        match EpsilonInflationSolver::default().try_solve(self, rhs) {
+            Err(SolveError::CertificationFailed { .. }) => {
+                complex_block::try_solve_via_real_block(self, rhs)
+            }
+            result => result,
+        }
+    }
+
+    /// Computes a verified complex inverse enclosure.
+    #[must_use]
+    pub fn inverse(&self) -> Option<OIntervalMatrix<ComplexBox<I>, D, D>> {
+        self.try_inverse().ok()
+    }
+
+    /// Computes a verified complex inverse enclosure with typed diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`SolveError`] encountered while verifying an inverse
+    /// column.
+    #[allow(clippy::indexing_slicing)]
+    pub fn try_inverse(&self) -> Result<OIntervalMatrix<ComplexBox<I>, D, D>, SolveError> {
+        let (dim, _) = self.shape_generic();
+        let mut inverse = OIntervalMatrix::zeros_generic(dim, dim);
+        for column in 0..self.ncols() {
+            let rhs = OIntervalVector::from_fn_generic(dim, Const::<1>, |row, _| {
+                if row == column {
+                    ComplexBox::from(1.0)
+                } else {
+                    ComplexBox::from(0.0)
+                }
+            });
+            let solution = self.try_solve(&rhs)?;
+            for row in 0..self.nrows() {
+                inverse[(row, column)] = solution[row];
+            }
+        }
+        Ok(inverse)
     }
 }

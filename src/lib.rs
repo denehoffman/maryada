@@ -26,8 +26,14 @@
 
 #![no_std]
 
+#[cfg(feature = "branch")]
+extern crate alloc;
+
+#[cfg(feature = "branch")]
+mod branch;
 #[cfg(feature = "complex")]
 mod complex;
+mod enclosure;
 mod interchange;
 #[cfg(feature = "linalg")]
 mod linalg;
@@ -38,9 +44,14 @@ mod text;
 mod types;
 mod ux;
 
+#[cfg(feature = "branch")]
+pub use branch::*;
 #[cfg(feature = "complex")]
 pub use complex::ComplexBox;
+pub use enclosure::EnclosureScalar;
 pub use interchange::*;
+#[cfg(all(feature = "linalg", feature = "num-complex", feature = "alloc"))]
+pub use linalg::{DComplexIntervalMatrix, DComplexIntervalRowVector, DComplexIntervalVector};
 #[cfg(all(feature = "linalg", feature = "alloc"))]
 pub use linalg::{DIntervalMatrix, DIntervalRowVector, DIntervalVector};
 #[cfg(feature = "linalg")]
@@ -48,7 +59,12 @@ pub use linalg::{
     EpsilonInflationSolver, GaussSeidelSolver, GaussianEliminationSolver, HansenBliekRohnSolver,
     InitialEnclosure, IntervalMatrix, JacobiSolver, KrawczykSolver, OIntervalMatrix,
     OIntervalRowVector, OIntervalVector, Preconditioned, Preconditioner, SIntervalMatrix,
-    SIntervalRowVector, SIntervalVector, Solver, StoppingTolerance,
+    SIntervalRowVector, SIntervalVector, SolveError, Solver, StoppingTolerance,
+};
+#[cfg(all(feature = "linalg", feature = "num-complex"))]
+pub use linalg::{
+    OComplexIntervalMatrix, OComplexIntervalRowVector, OComplexIntervalVector,
+    SComplexIntervalMatrix, SComplexIntervalRowVector, SComplexIntervalVector,
 };
 pub use ops::*;
 pub use signals::{Signal, SignalFlags, SignalSink};

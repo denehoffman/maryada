@@ -8,13 +8,13 @@ use nalgebra::{
     constraint::{AreMultipliable, SameNumberOfColumns, SameNumberOfRows, ShapeConstraint},
 };
 
-use crate::IntervalOps;
+use super::EnclosureScalar;
 
 use super::{IntervalMatrix, OIntervalMatrix, OIntervalVector};
 
 impl<T, D, S> IntervalMatrix<T, D, D, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     D: Dim,
     S: Storage<T, D, D>,
 {
@@ -30,7 +30,7 @@ where
 
 impl<T, R1, C1, SA> IntervalMatrix<T, R1, C1, SA>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R1: Dim,
     C1: Dim,
     SA: Storage<T, R1, C1>,
@@ -50,7 +50,7 @@ where
     #[must_use]
     pub fn map<T2, F>(&self, f: F) -> OIntervalMatrix<T2, R1, C1>
     where
-        T2: IntervalOps + Scalar,
+        T2: EnclosureScalar + Scalar,
         F: FnMut(T) -> T2,
         DefaultAllocator: Allocator<R1, C1>,
     {
@@ -69,8 +69,8 @@ where
         mut f: F,
     ) -> OIntervalMatrix<T3, SameShapeR<R1, R2>, SameShapeC<C1, C2>>
     where
-        T2: IntervalOps + Scalar,
-        T3: IntervalOps + Scalar,
+        T2: EnclosureScalar + Scalar,
+        T3: EnclosureScalar + Scalar,
         R2: Dim,
         C2: Dim,
         S2: Storage<T2, R2, C2>,
@@ -190,7 +190,7 @@ where
     where
         DefaultAllocator: Allocator<R1, C1>,
     {
-        self.map(|entry| Mul::mul(entry, value))
+        self.map(|entry| Mul::mul(entry, T::from(value)))
     }
 
     /// Divides every entry by a real scalar.
@@ -199,7 +199,7 @@ where
     where
         DefaultAllocator: Allocator<R1, C1>,
     {
-        self.map(|entry| Div::div(entry, value))
+        self.map(|entry| Div::div(entry, T::from(value)))
     }
 
     /// Adds an interval scalar to every entry.
@@ -214,7 +214,7 @@ where
 
 impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: StorageMut<T, R, C>,
@@ -303,19 +303,19 @@ where
     /// Multiplies every entry by a real scalar in place.
     pub fn scale_mut(&mut self, value: f64) {
         self.iter_mut()
-            .for_each(|entry| MulAssign::mul_assign(entry, value));
+            .for_each(|entry| MulAssign::mul_assign(entry, T::from(value)));
     }
 
     /// Divides every entry by a real scalar in place.
     pub fn unscale_mut(&mut self, value: f64) {
         self.iter_mut()
-            .for_each(|entry| DivAssign::div_assign(entry, value));
+            .for_each(|entry| DivAssign::div_assign(entry, T::from(value)));
     }
 }
 
 impl<T, D, S> IntervalMatrix<T, D, D, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     D: Dim,
     S: StorageMut<T, D, D>,
 {
@@ -328,7 +328,7 @@ where
 impl<T, R1, C1, R2, C2, SA, SB> Add<&IntervalMatrix<T, R2, C2, SB>>
     for &IntervalMatrix<T, R1, C1, SA>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R1: Dim,
     C1: Dim,
     R2: Dim,
@@ -361,7 +361,7 @@ where
 impl<T, R1, C1, R2, C2, SA, SB> Add<&IntervalMatrix<T, R2, C2, SB>>
     for IntervalMatrix<T, R1, C1, SA>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R1: Dim,
     C1: Dim,
     R2: Dim,
@@ -381,7 +381,7 @@ where
 impl<T, R1, C1, R2, C2, SA, SB> Add<IntervalMatrix<T, R2, C2, SB>>
     for &IntervalMatrix<T, R1, C1, SA>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R1: Dim,
     C1: Dim,
     R2: Dim,
@@ -400,7 +400,7 @@ where
 
 impl<T, R1, C1, R2, C2, SA, SB> Add<IntervalMatrix<T, R2, C2, SB>> for IntervalMatrix<T, R1, C1, SA>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R1: Dim,
     C1: Dim,
     R2: Dim,
@@ -420,7 +420,7 @@ where
 impl<T, R1, C1, R2, C2, SA, SB> Sub<&IntervalMatrix<T, R2, C2, SB>>
     for &IntervalMatrix<T, R1, C1, SA>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R1: Dim,
     C1: Dim,
     R2: Dim,
@@ -453,7 +453,7 @@ where
 impl<T, R1, C1, R2, C2, SA, SB> Sub<&IntervalMatrix<T, R2, C2, SB>>
     for IntervalMatrix<T, R1, C1, SA>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R1: Dim,
     C1: Dim,
     R2: Dim,
@@ -473,7 +473,7 @@ where
 impl<T, R1, C1, R2, C2, SA, SB> Sub<IntervalMatrix<T, R2, C2, SB>>
     for &IntervalMatrix<T, R1, C1, SA>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R1: Dim,
     C1: Dim,
     R2: Dim,
@@ -493,7 +493,7 @@ where
 impl<T, R1, C1, R2, C2, SA, SB> Mul<&IntervalMatrix<T, R2, C2, SB>>
     for &IntervalMatrix<T, R1, C1, SA>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R1: Dim,
     C1: Dim,
     R2: Dim,
@@ -530,7 +530,7 @@ where
 impl<T, R1, C1, R2, C2, SA, SB> Mul<&IntervalMatrix<T, R2, C2, SB>>
     for IntervalMatrix<T, R1, C1, SA>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R1: Dim,
     C1: Dim,
     R2: Dim,
@@ -550,7 +550,7 @@ where
 impl<T, R1, C1, R2, C2, SA, SB> Mul<IntervalMatrix<T, R2, C2, SB>>
     for &IntervalMatrix<T, R1, C1, SA>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R1: Dim,
     C1: Dim,
     R2: Dim,
@@ -569,7 +569,7 @@ where
 
 impl<T, R1, C1, R2, C2, SA, SB> Mul<IntervalMatrix<T, R2, C2, SB>> for IntervalMatrix<T, R1, C1, SA>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R1: Dim,
     C1: Dim,
     R2: Dim,
@@ -588,7 +588,7 @@ where
 
 impl<T, R, C, S> Neg for &IntervalMatrix<T, R, C, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
@@ -603,7 +603,7 @@ where
 
 impl<T, R, C, S> Neg for IntervalMatrix<T, R, C, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
@@ -618,7 +618,7 @@ where
 
 impl<T, R, C, S> Mul<T> for &IntervalMatrix<T, R, C, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
@@ -633,7 +633,7 @@ where
 
 impl<T, R, C, S> Mul<T> for IntervalMatrix<T, R, C, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
@@ -648,7 +648,7 @@ where
 
 impl<T, R, C, S> Div<T> for &IntervalMatrix<T, R, C, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
@@ -663,7 +663,7 @@ where
 
 impl<T, R, C, S> Div<T> for IntervalMatrix<T, R, C, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
@@ -679,7 +679,7 @@ where
 impl<T, R1, C1, R2, C2, SA, SB> AddAssign<&IntervalMatrix<T, R2, C2, SB>>
     for IntervalMatrix<T, R1, C1, SA>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R1: Dim,
     C1: Dim,
     R2: Dim,
@@ -703,7 +703,7 @@ where
 impl<T, R1, C1, R2, C2, SA, SB> AddAssign<IntervalMatrix<T, R2, C2, SB>>
     for IntervalMatrix<T, R1, C1, SA>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R1: Dim,
     C1: Dim,
     R2: Dim,
@@ -720,7 +720,7 @@ where
 impl<T, R1, C1, R2, C2, SA, SB> SubAssign<&IntervalMatrix<T, R2, C2, SB>>
     for IntervalMatrix<T, R1, C1, SA>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R1: Dim,
     C1: Dim,
     R2: Dim,
@@ -744,7 +744,7 @@ where
 impl<T, R1, C1, R2, C2, SA, SB> SubAssign<IntervalMatrix<T, R2, C2, SB>>
     for IntervalMatrix<T, R1, C1, SA>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R1: Dim,
     C1: Dim,
     R2: Dim,
@@ -760,7 +760,7 @@ where
 
 impl<T, R, C, S> MulAssign<T> for IntervalMatrix<T, R, C, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: StorageMut<T, R, C>,
@@ -773,7 +773,7 @@ where
 
 impl<T, R, C, S> DivAssign<T> for IntervalMatrix<T, R, C, S>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R: Dim,
     C: Dim,
     S: StorageMut<T, R, C>,
@@ -786,7 +786,7 @@ where
 
 impl<T, D, SA, SB> MulAssign<&IntervalMatrix<T, D, D, SB>> for IntervalMatrix<T, D, D, SA>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     D: Dim,
     SA: StorageMut<T, D, D>,
     SB: Storage<T, D, D>,
@@ -803,7 +803,7 @@ where
 
 impl<T, D, SA, SB> MulAssign<IntervalMatrix<T, D, D, SB>> for IntervalMatrix<T, D, D, SA>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     D: Dim,
     SA: StorageMut<T, D, D>,
     SB: Storage<T, D, D>,
@@ -817,7 +817,7 @@ where
 
 impl<T, R1, C1, R2, C2, SA, SB> Sub<IntervalMatrix<T, R2, C2, SB>> for IntervalMatrix<T, R1, C1, SA>
 where
-    T: IntervalOps + Scalar,
+    T: EnclosureScalar + Scalar,
     R1: Dim,
     C1: Dim,
     R2: Dim,

@@ -19,6 +19,20 @@ assert_eq!(y.bounds(), (1.0, 4.0));
 - `complex` enables the `ComplexBox` rectangular complex interval API.
 - `num-complex` enables `complex` plus interoperability with `num_complex::Complex64`.
 - `linalg` enables the linear algebra API, namely `IntervalMatrix` and its associated operations.
+- `complex-linalg` enables allocation-backed complex interval matrices and verified complex solves.
+- `branch` enables the `no_std` branch-and-bound engine and its allocation-backed work queues.
+
+Complex systems use the same matrix-facing API as real systems. The default
+verified solve first applies a residual-centered complex epsilon-inflation
+method and transparently retries through a conservative 2n real embedding when
+the direct sufficient test does not certify an enclosure. Use `try_solve` when
+you need a typed `SolveError`, or `solve` for the concise `Option` form.
+
+The `branch` feature provides a resumable generic `BranchAndBound` scheduler,
+pluggable evaluators, pruners, branching rules, and work queues. Its
+`GlobalMinimizer` convenience layer implements best-first interval subdivision;
+domains can be real intervals, complex boxes, vectors, or custom types that
+implement `Bisect` and optionally `Midpoint`.
 
 I have added some basic support for complex-valued operations (not defined in the IEEE standard). Note that complex functions transform interval spaces in nontrivial ways, so while the resulting image from this library will contain the true image, it is not guaranteed to be equal to it, though it may be equal under certain operations.
 

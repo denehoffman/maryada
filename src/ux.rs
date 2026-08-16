@@ -2,7 +2,7 @@ use core::{cmp::Ordering, fmt, ops, str::FromStr};
 
 use crate::{
     DecoratedInterval, Decoration, Interval, IntervalDatum, ParseIntervalError, Signal,
-    SignalFlags, SignalSink,
+    SignalFlags, SignalSink, enclosure::EnclosureScalar,
 };
 
 impl Interval {
@@ -438,7 +438,8 @@ impl_interval_neg!(Interval, DecoratedInterval);
 /// This trait is sealed transitively through [`IntervalDatum`]. It can be used
 /// as a public generic bound, but external crates cannot implement it.
 pub trait IntervalOps:
-    IntervalDatum
+    EnclosureScalar<Midpoint = f64>
+    + IntervalDatum
     + From<f64>
     + ops::Neg<Output = Self>
     + ops::Add<Output = Self>
@@ -458,10 +459,6 @@ pub trait IntervalOps:
     + ops::MulAssign<f64>
     + ops::DivAssign<f64>
 {
-    /// The singleton interval containing zero.
-    const ZERO: Self;
-    /// The singleton interval containing one.
-    const ONE: Self;
     /// The empty interval.
     const EMPTY: Self;
     /// The interval containing every real number.
@@ -470,12 +467,6 @@ pub trait IntervalOps:
     /// Constructs an interval from binary64 endpoints without reporting signals.
     #[must_use]
     fn new(inf: f64, sup: f64) -> Self;
-
-    /// Constructs a singleton interval without reporting signals.
-    #[must_use]
-    fn singleton(value: f64) -> Self {
-        Self::from(value)
-    }
 
     /// Returns the reciprocal enclosure.
     #[must_use]
@@ -493,12 +484,6 @@ pub trait IntervalOps:
     #[must_use]
     fn sqrt(self) -> Self {
         crate::sqrt(self)
-    }
-
-    /// Encloses `self * rhs + addend` using fused interval arithmetic.
-    #[must_use]
-    fn mul_add(self, rhs: Self, addend: Self) -> Self {
-        crate::fma(self, rhs, addend)
     }
 
     /// Raises this interval to an integer power.
@@ -705,18 +690,6 @@ pub trait IntervalOps:
         crate::cancel_plus(self, other)
     }
 
-    /// Returns the set intersection with `other`.
-    #[must_use]
-    fn intersection(self, other: Self) -> Self {
-        crate::intersection(self, other)
-    }
-
-    /// Returns the smallest interval containing both operands.
-    #[must_use]
-    fn convex_hull(self, other: Self) -> Self {
-        crate::convex_hull(self, other)
-    }
-
     /// Extends this interval's hull to include `value`.
     #[must_use]
     fn hull_value(self, value: f64) -> Self {
@@ -762,12 +735,6 @@ pub trait IntervalOps:
         value.is_finite() && Self::from(value).subset(self)
     }
 
-    /// Returns a representative midpoint.
-    #[must_use]
-    fn mid(self) -> f64 {
-        crate::mid(self)
-    }
-
     /// Returns the upward-rounded width.
     #[must_use]
     fn wid(self) -> f64 {
@@ -789,70 +756,10 @@ pub trait IntervalOps:
         crate::rounding::inner_radius(self.inf(), self.sup(), self.mid())
     }
 
-    /// Returns the greatest absolute value in this interval.
-    #[must_use]
-    fn mag(self) -> f64 {
-        crate::mag(self)
-    }
-
-    /// Returns the least absolute value in this interval.
-    #[must_use]
-    fn mig(self) -> f64 {
-        crate::mig(self)
-    }
-
     /// Returns a midpoint and radius enclosing this interval.
     #[must_use]
     fn mid_rad(self) -> (f64, f64) {
         crate::mid_rad(self)
-    }
-
-    /// Returns whether this is the empty interval; `NaI` is not empty.
-    #[must_use]
-    fn is_empty(self) -> bool {
-        crate::is_empty(self)
-    }
-
-    /// Returns whether this is the entire interval.
-    #[must_use]
-    fn is_entire(self) -> bool {
-        crate::is_entire(self)
-    }
-
-    /// Returns whether this value is Not an Interval.
-    #[must_use]
-    fn is_nai(self) -> bool {
-        self.__is_nai()
-    }
-
-    /// Returns whether this interval contains exactly one real value.
-    #[must_use]
-    fn is_singleton(self) -> bool {
-        !self.is_nai() && !self.is_empty() && self.inf() == self.sup()
-    }
-
-    /// Returns whether this interval is nonempty with finite endpoints.
-    #[must_use]
-    fn is_bounded(self) -> bool {
-        !self.is_nai() && self.inf().is_finite() && self.sup().is_finite()
-    }
-
-    /// Returns whether this interval denotes the same set as `other`.
-    #[must_use]
-    fn equal(self, other: Self) -> bool {
-        crate::equal(self, other)
-    }
-
-    /// Returns whether this interval is a subset of `other`.
-    #[must_use]
-    fn subset(self, other: Self) -> bool {
-        crate::subset(self, other)
-    }
-
-    /// Returns whether this interval lies in the interior of `other`.
-    #[must_use]
-    fn interior(self, other: Self) -> bool {
-        crate::interior(self, other)
     }
 
     /// Returns whether this interval and `other` are disjoint.
@@ -869,8 +776,6 @@ pub trait IntervalOps:
 }
 
 impl IntervalOps for Interval {
-    const ZERO: Self = Self::ZERO;
-    const ONE: Self = Self::ONE;
     const EMPTY: Self = Self::EMPTY;
     const ENTIRE: Self = Self::ENTIRE;
 
@@ -880,8 +785,6 @@ impl IntervalOps for Interval {
 }
 
 impl IntervalOps for DecoratedInterval {
-    const ZERO: Self = Self::ZERO;
-    const ONE: Self = Self::ONE;
     const EMPTY: Self = Self::EMPTY;
     const ENTIRE: Self = Self::ENTIRE;
 

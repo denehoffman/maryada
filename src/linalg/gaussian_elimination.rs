@@ -7,7 +7,7 @@ use nalgebra::{
 
 use crate::IntervalOps;
 
-use super::{IntervalMatrix, OIntervalVector, Solver};
+use super::{IntervalMatrix, OIntervalVector, SolveError, Solver};
 
 impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
@@ -62,33 +62,36 @@ where
         + Allocator<D, DimSum<D, Const<1>>>
         + Reallocator<T, D, D, D, DimSum<D, Const<1>>>,
 {
-    fn solve<SA, SB>(
+    fn try_solve<SA, SB>(
         &self,
         lhs: &IntervalMatrix<T, D, D, SA>,
         rhs: &IntervalMatrix<T, D, Const<1>, SB>,
-    ) -> Option<OIntervalVector<T, D>>
+    ) -> Result<OIntervalVector<T, D>, SolveError>
     where
         SA: Storage<T, D, D>,
         SB: Storage<T, D, Const<1>>,
     {
-        let n = rhs.nrows();
-        if lhs.nrows() != n || lhs.ncols() != n {
-            return None;
-        }
-        let mut ab = lhs.as_inner().clone_owned().insert_column(n, T::ZERO);
-        for i in 0..n {
-            ab[(i, n)] = rhs[i];
-        }
-        let ab = IntervalMatrix::from_inner(ab).forward_elimination()?;
-        let ab = ab.into_inner();
-        let mut x = rhs.as_inner().clone_owned();
-        for i in (0..n).rev() {
-            let mut value = ab[(i, n)];
-            for j in i + 1..n {
-                value -= ab[(i, j)] * x[j];
+        let result = (|| -> Option<OIntervalVector<T, D>> {
+            let n = rhs.nrows();
+            if lhs.nrows() != n || lhs.ncols() != n {
+                return None;
             }
-            x[i] = value * ab[(i, i)].recip();
-        }
-        Some(IntervalMatrix::from_inner(x))
+            let mut ab = lhs.as_inner().clone_owned().insert_column(n, T::ZERO);
+            for i in 0..n {
+                ab[(i, n)] = rhs[i];
+            }
+            let ab = IntervalMatrix::from_inner(ab).forward_elimination()?;
+            let ab = ab.into_inner();
+            let mut x = rhs.as_inner().clone_owned();
+            for i in (0..n).rev() {
+                let mut value = ab[(i, n)];
+                for j in i + 1..n {
+                    value -= ab[(i, j)] * x[j];
+                }
+                x[i] = value * ab[(i, i)].recip();
+            }
+            Some(IntervalMatrix::from_inner(x))
+        })();
+        result.ok_or(SolveError::CertificationFailed { iterations: 0 })
     }
 }

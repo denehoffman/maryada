@@ -1294,7 +1294,6 @@ pub use hansen_bliek_rohn::HansenBliekRohnSolver;
 mod iterative;
 pub use iterative::{
     GaussSeidelSolver, InitialEnclosure, JacobiSolver, KrawczykSolver, StoppingTolerance,
-    enclosures_converged,
 };
 
 mod preconditioned;

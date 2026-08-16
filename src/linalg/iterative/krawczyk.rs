@@ -5,9 +5,9 @@ use nalgebra::{
 };
 
 use crate::{
-    InitialEnclosure, IntervalMatrix, IntervalOps, OIntervalMatrix, OIntervalVector,
-    Preconditioner, Solver, StoppingTolerance, enclosures_converged,
-    linalg::iterative::valid_system,
+    InitialEnclosure, IntervalMatrix, IntervalOps, OIntervalMatrix, OIntervalVector, Solver,
+    StoppingTolerance,
+    linalg::iterative::{enclosures_converged, valid_system},
 };
 
 /// Krawczyk's iterative method for interval linear systems.
@@ -123,8 +123,8 @@ where
                 }
                 enclosure.clone()
             }
-            InitialEnclosure::WeightedNorm => lhs.initial_enclosure_v_norm(&rhs)?,
-            InitialEnclosure::InfinityNorm => lhs.initial_enclosure_inf_norm(&rhs)?,
+            InitialEnclosure::WeightedNorm => lhs.initial_enclosure_v_norm(rhs)?,
+            InitialEnclosure::InfinityNorm => lhs.initial_enclosure_inf_norm(rhs)?,
         };
         let (dim, _) = lhs.shape_generic();
         let identity = OIntervalMatrix::<T, D, D>::identity_generic(dim);

@@ -6,7 +6,9 @@ use nalgebra::{
 
 use crate::{
     InitialEnclosure, IntervalMatrix, IntervalOps, OIntervalMatrix, OIntervalVector, Solver,
-    StoppingTolerance, enclosures_converged, linalg::iterative::valid_system,
+    StoppingTolerance,
+    linalg::iterative::{enclosures_converged, valid_system},
+    ux::IntervalOps,
 };
 
 /// The Jacobi iterative method for interval linear systems.
@@ -122,11 +124,12 @@ where
                 }
                 enclosure.clone()
             }
-            InitialEnclosure::WeightedNorm => lhs.initial_enclosure_v_norm(&rhs)?,
-            InitialEnclosure::InfinityNorm => lhs.initial_enclosure_inf_norm(&rhs)?,
+            InitialEnclosure::WeightedNorm => lhs.initial_enclosure_v_norm(rhs)?,
+            InitialEnclosure::InfinityNorm => lhs.initial_enclosure_inf_norm(rhs)?,
         };
         let (dim, _) = lhs.shape_generic();
-        let d_inv = OIntervalMatrix::<T, D, D>::from_diagonal(&lhs.diagonal().map(|d| d.recip()));
+        let d_inv =
+            OIntervalMatrix::<T, D, D>::from_diagonal(&lhs.diagonal().map(IntervalOps::recip));
         let j = OIntervalMatrix::<T, D, D>::from_fn_generic(dim, dim, |i, j| {
             if i == j { T::ZERO } else { lhs[(i, j)] }
         });

@@ -12,7 +12,7 @@ use super::{IntervalMatrix, OIntervalMatrix, OIntervalVector, Solver};
 
 /// Verified epsilon-inflation solver from Rump's dissertation.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct EpsilonInflation {
+pub struct EpsilonInflationSolver {
     /// Relative inflation
     r: f64,
     /// Absolute inflation
@@ -21,13 +21,13 @@ pub struct EpsilonInflation {
     max_iterations: usize,
 }
 
-impl Default for EpsilonInflation {
+impl Default for EpsilonInflationSolver {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl EpsilonInflation {
+impl EpsilonInflationSolver {
     /// Default relative inflation factor.
     pub const DEFAULT_RELATIVE_INFLATION: f64 = 0.1;
     /// Default absolute inflation radius.
@@ -160,7 +160,7 @@ impl EpsilonInflation {
     }
 }
 
-impl<T, D> Solver<T, D> for EpsilonInflation
+impl<T, D> Solver<T, D> for EpsilonInflationSolver
 where
     T: IntervalOps + Scalar,
     D: Dim,
@@ -183,11 +183,11 @@ where
 mod tests {
     use crate::{Interval, SIntervalMatrix, SIntervalVector, Solver};
 
-    use super::EpsilonInflation;
+    use super::EpsilonInflationSolver;
 
     #[test]
     fn builder_methods_configure_the_solver() {
-        let solver = EpsilonInflation::new()
+        let solver = EpsilonInflationSolver::new()
             .with_relative_inflation(0.05)
             .with_absolute_inflation(1e-16)
             .with_max_iterations(40);
@@ -203,13 +203,13 @@ mod tests {
         let rhs = SIntervalVector::<Interval, 1>::from_element(Interval::ONE);
 
         assert!(
-            EpsilonInflation::new()
+            EpsilonInflationSolver::new()
                 .with_relative_inflation(-0.1)
                 .solve(&lhs, &rhs)
                 .is_none()
         );
         assert!(
-            EpsilonInflation::new()
+            EpsilonInflationSolver::new()
                 .with_absolute_inflation(f64::NAN)
                 .solve(&lhs, &rhs)
                 .is_none()

@@ -1,14 +1,9 @@
 #![allow(clippy::arithmetic_side_effects)]
-
-use nalgebra::{
-    Const, DefaultAllocator, Dim, DimMin, OVector, Scalar, Storage,
-    allocator::Allocator,
-    constraint::{AreMultipliable, ShapeConstraint},
-};
-
-use crate::{IntervalOps, Solver, linalg::Preconditioner};
-
 use super::{IntervalMatrix, OIntervalMatrix, OIntervalVector};
+use crate::IntervalOps;
+use nalgebra::{
+    Const, DefaultAllocator, Dim, DimMin, OVector, Scalar, Storage, allocator::Allocator,
+};
 
 /// Absolute tolerance for comparing consecutive interval enclosures.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -224,161 +219,14 @@ where
     InfinityNorm,
 }
 
-/// Krawczyk's iterative method for interval linear systems.
-pub struct KrawczykSolver<T, D>
-where
-    T: IntervalOps + Scalar,
-    D: Dim + DimMin<D, Output = D>,
-    DefaultAllocator: Allocator<D, D> + Allocator<D>,
-{
-    initializer: InitialEnclosure<T, D>,
-    tolerance: StoppingTolerance,
-    preconditioner: Preconditioner<D>,
-    max_iterations: usize,
-}
+mod krawczyk;
+pub use krawczyk::KrawczykSolver;
 
-impl<T, D> KrawczykSolver<T, D>
-where
-    T: IntervalOps + Scalar,
-    D: Dim + DimMin<D, Output = D>,
-    DefaultAllocator: Allocator<D, D> + Allocator<D>,
-{
-    /// Default maximum number of Krawczyk iterations.
-    pub const DEFAULT_MAX_ITERATIONS: usize = 20;
+mod jacobi;
+pub use jacobi::JacobiSolver;
 
-    /// Creates a solver with defaults derived from `lhs`.
-    ///
-    /// This uses the weighted-norm initializer, inverse-midpoint
-    /// preconditioning, and [`Self::DEFAULT_MAX_ITERATIONS`].
-    #[must_use]
-    pub fn new<S>(lhs: &IntervalMatrix<T, D, D, S>) -> Self
-    where
-        S: Storage<T, D, D>,
-    {
-        Self::from_tolerance(StoppingTolerance::from_matrix(lhs))
-    }
-
-    /// Creates a solver with an explicit stopping tolerance and otherwise
-    /// default configuration.
-    #[must_use]
-    pub const fn from_tolerance(tolerance: StoppingTolerance) -> Self {
-        Self {
-            initializer: InitialEnclosure::WeightedNorm,
-            tolerance,
-            preconditioner: Preconditioner::InverseMidpoint,
-            max_iterations: Self::DEFAULT_MAX_ITERATIONS,
-        }
-    }
-
-    /// Selects the initial-enclosure strategy.
-    #[must_use]
-    pub fn with_initial_enclosure(mut self, initializer: InitialEnclosure<T, D>) -> Self {
-        self.initializer = initializer;
-        self
-    }
-
-    /// Selects the stopping tolerance.
-    #[must_use]
-    pub const fn with_tolerance(mut self, tolerance: StoppingTolerance) -> Self {
-        self.tolerance = tolerance;
-        self
-    }
-
-    /// Selects the preconditioning strategy.
-    #[must_use]
-    pub fn with_preconditioner(mut self, preconditioner: Preconditioner<D>) -> Self {
-        self.preconditioner = preconditioner;
-        self
-    }
-
-    /// Selects the maximum number of iterations.
-    #[must_use]
-    pub const fn with_max_iterations(mut self, max_iterations: usize) -> Self {
-        self.max_iterations = max_iterations;
-        self
-    }
-
-    /// Borrows the configured initial-enclosure strategy.
-    #[must_use]
-    pub const fn initial_enclosure(&self) -> &InitialEnclosure<T, D> {
-        &self.initializer
-    }
-
-    /// Returns the configured stopping tolerance.
-    #[must_use]
-    pub const fn tolerance(&self) -> StoppingTolerance {
-        self.tolerance
-    }
-
-    /// Returns the configured preconditioner.
-    #[must_use]
-    pub const fn preconditioner(&self) -> &Preconditioner<D> {
-        &self.preconditioner
-    }
-
-    /// Returns the configured maximum number of iterations.
-    #[must_use]
-    pub const fn max_iterations(&self) -> usize {
-        self.max_iterations
-    }
-}
-
-impl<T, D> Solver<T, D> for KrawczykSolver<T, D>
-where
-    T: IntervalOps + Scalar,
-    D: Dim + DimMin<D, Output = D>,
-    DefaultAllocator: Allocator<D, D> + Allocator<D>,
-    ShapeConstraint: AreMultipliable<D, D, D, D> + AreMultipliable<D, D, D, Const<1>>,
-{
-    fn solve<SA, SB>(
-        &self,
-        lhs: &IntervalMatrix<T, D, D, SA>,
-        rhs: &IntervalMatrix<T, D, Const<1>, SB>,
-    ) -> Option<OIntervalVector<T, D>>
-    where
-        SA: Storage<T, D, D>,
-        SB: Storage<T, D, Const<1>>,
-    {
-        if !valid_system(lhs, rhs) {
-            return None;
-        }
-        let c = self.preconditioner.matrix(lhs)?;
-        let preconditioned_lhs = &c * lhs;
-        let preconditioned_rhs = &c * rhs;
-        let mut x = match &self.initializer {
-            InitialEnclosure::Provided(enclosure) => {
-                if enclosure.nrows() != lhs.nrows()
-                    || enclosure.has_empty_entries()
-                    || enclosure.has_nai_entries()
-                {
-                    return None;
-                }
-                enclosure.clone()
-            }
-            InitialEnclosure::WeightedNorm => {
-                preconditioned_lhs.initial_enclosure_v_norm(&preconditioned_rhs)?
-            }
-            InitialEnclosure::InfinityNorm => {
-                preconditioned_lhs.initial_enclosure_inf_norm(&preconditioned_rhs)?
-            }
-        };
-        let (dim, _) = lhs.shape_generic();
-        let identity = OIntervalMatrix::<T, D, D>::identity_generic(dim);
-        let residual = &identity - &preconditioned_lhs;
-        for _ in 0..self.max_iterations {
-            let y = &preconditioned_rhs + &residual * &x;
-            let next = y.intersection(&x);
-            if next.has_empty_entries() || next.has_nai_entries() {
-                return None;
-            }
-            if enclosures_converged(&next, &x, self.tolerance) {
-                return Some(next);
-            }
-            x = next;
-        }
-        None
-    }
-}
+mod gauss_seidel;
+pub use gauss_seidel::GaussSeidelSolver;
 
 fn valid_system<T, D, SA, SB>(
     lhs: &IntervalMatrix<T, D, D, SA>,
@@ -401,9 +249,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{Interval, IntervalOps, SIntervalMatrix, SIntervalVector, Solver};
+    use crate::{
+        Interval, IntervalOps, Preconditioned, Preconditioner, SIntervalMatrix, SIntervalVector,
+        Solver,
+    };
 
-    use super::{KrawczykSolver, Preconditioner, StoppingTolerance, enclosures_converged};
+    use super::{KrawczykSolver, StoppingTolerance, enclosures_converged};
 
     #[test]
     fn weighted_norm_enclosure_contains_the_solution() {
@@ -510,7 +361,7 @@ mod tests {
             Interval::singleton(2.0),
             Interval::singleton(-3.0),
         ]);
-        let solver = KrawczykSolver::new(&lhs);
+        let solver = Preconditioned::new(KrawczykSolver::new(&lhs), Preconditioner::default());
 
         let solution = solver.solve(&lhs, &rhs);
 
@@ -518,29 +369,6 @@ mod tests {
             solution
                 .as_ref()
                 .is_some_and(|solution| solution[0].contains(2.0) && solution[1].contains(-3.0))
-        );
-    }
-
-    #[test]
-    fn krawczyk_solver_accepts_a_custom_preconditioner() {
-        let lhs =
-            SIntervalMatrix::<Interval, 2, 2>::from_diagonal(&SIntervalVector::from_column_slice(
-                &[Interval::new(1.99, 2.01), Interval::new(2.99, 3.01)],
-            ));
-        let rhs = SIntervalVector::<Interval, 2>::from_column_slice(&[
-            Interval::singleton(4.0),
-            Interval::singleton(9.0),
-        ]);
-        let custom = nalgebra::SMatrix::<f64, 2, 2>::from_row_slice(&[0.5, 0.0, 0.0, 1.0 / 3.0]);
-        let solver = KrawczykSolver::new(&lhs).with_preconditioner(Preconditioner::custom(custom));
-
-        let solution = solver.solve(&lhs, &rhs);
-
-        assert!(matches!(solver.preconditioner(), Preconditioner::Custom(_)));
-        assert!(
-            solution
-                .as_ref()
-                .is_some_and(|solution| solution[0].contains(2.0) && solution[1].contains(3.0))
         );
     }
 }

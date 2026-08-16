@@ -1,6 +1,9 @@
 //! Several methods for
 //!
-use maryada::{GaussianElimination, Interval, IntervalMatrix, SIntervalVector};
+use maryada::{
+    GaussianEliminationSolver, HansenBliekRohnSolver, Interval, IntervalMatrix, JacobiSolver,
+    SIntervalVector,
+};
 use nalgebra::{Matrix4, Vector4};
 
 fn main() {
@@ -17,10 +20,27 @@ fn main() {
         &Vector4::new(-2.0, 1.0, -4.0, 2.0),
         &Vector4::new(4.0, 8.0, 10.0, 12.0),
     );
-    let solver = GaussianElimination;
+
+    println!("Solving Ax = b for x\nA = {a:.2}\nb = {b:.2}");
+
+    let solver = GaussianEliminationSolver;
     let Some(x) = a.solve_with(&b, &solver) else {
         eprintln!("the interval system could not be solved");
         return;
     };
-    println!("{x}");
+    println!("Gaussian Elimination:\n\t{x:.2}");
+
+    let solver = HansenBliekRohnSolver;
+    let Some(x) = a.solve_with(&b, &solver) else {
+        eprintln!("the interval system could not be solved");
+        return;
+    };
+    println!("Hansen-Bliek-Rohn:\n\t{x:.2}");
+
+    let solver = JacobiSolver::new(&a);
+    let Some(x) = a.solve_with(&b, &solver) else {
+        eprintln!("the interval system could not be solved");
+        return;
+    };
+    println!("Jacobi:\n\t{x:.2}");
 }

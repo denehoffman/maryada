@@ -1279,20 +1279,23 @@ where
 }
 
 /// Epsilon-inflation method.
-mod ei;
-pub use ei::EpsilonInflation;
+mod epsilon_inflation;
+pub use epsilon_inflation::EpsilonInflationSolver;
 
 /// Gaussian elimination method.
-mod ge;
-pub use ge::GaussianElimination;
+mod gaussian_elimination;
+pub use gaussian_elimination::GaussianEliminationSolver;
 
 /// Hansen–Bliek–Rohn method.
-mod hbr;
-pub use hbr::HansenBliekRohn;
+mod hansen_bliek_rohn;
+pub use hansen_bliek_rohn::HansenBliekRohnSolver;
 
 /// Iterative methods for matrix solves.
 mod iterative;
-pub use iterative::{InitialEnclosure, KrawczykSolver, StoppingTolerance, enclosures_converged};
+pub use iterative::{
+    GaussSeidelSolver, InitialEnclosure, JacobiSolver, KrawczykSolver, StoppingTolerance,
+    enclosures_converged,
+};
 
 mod preconditioned;
 pub use preconditioned::{Preconditioned, Preconditioner};
@@ -1315,7 +1318,7 @@ where
     {
         // TODO: this is a placeholder, I eventually want to run some checks to use an optimal
         // solver for the matrix type
-        EpsilonInflation::default().solve(self, rhs)
+        EpsilonInflationSolver::default().solve(self, rhs)
     }
 
     /// Computes an interval enclosure of the solution using `solver`.
@@ -1337,7 +1340,7 @@ where
     pub fn inverse(&self) -> Option<OIntervalMatrix<T, D, D>> {
         // TODO: this is a placeholder, I eventually want to run some checks to use an optimal
         // solver for the matrix type
-        EpsilonInflation::default().inverse(self)
+        EpsilonInflationSolver::default().inverse(self)
     }
 
     /// Computes an interval enclosure of the inverse using `solver`.
@@ -1553,14 +1556,14 @@ mod tests {
         let lhs = IntervalMatrix::from_inner(lhs_storage.as_inner().fixed_view::<2, 2>(0, 0));
         let rhs = IntervalMatrix::from_inner(rhs_storage.as_inner().fixed_rows::<2>(0));
 
-        let solution = lhs.solve_with(&rhs, &GaussianElimination);
+        let solution = lhs.solve_with(&rhs, &GaussianEliminationSolver);
         assert!(
             solution
                 .as_ref()
                 .is_some_and(|solution| solution[0].contains(2.0) && solution[1].contains(3.0))
         );
 
-        let inverse = lhs.inverse_with(&GaussianElimination);
+        let inverse = lhs.inverse_with(&GaussianEliminationSolver);
         assert!(
             inverse.as_ref().is_some_and(
                 |inverse| inverse[(0, 0)].contains(0.5) && inverse[(1, 1)].contains(0.5)

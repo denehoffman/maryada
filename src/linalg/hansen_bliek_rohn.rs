@@ -6,13 +6,13 @@ use nalgebra::{
     constraint::{AreMultipliable, ShapeConstraint},
 };
 
-use crate::IntervalOps;
+use crate::{EpsilonInflationSolver, IntervalOps};
 
-use super::{IntervalMatrix, OIntervalMatrix, OIntervalVector, Solver, ei};
+use super::{IntervalMatrix, OIntervalMatrix, OIntervalVector, Solver};
 
 /// Hansen–Bliek–Rohn verified solver for interval systems with an H-matrix.
-pub struct HansenBliekRohn;
-impl<T, D> Solver<T, D> for HansenBliekRohn
+pub struct HansenBliekRohnSolver;
+impl<T, D> Solver<T, D> for HansenBliekRohnSolver
 where
     T: IntervalOps + Scalar,
     D: Dim + DimMin<D, Output = D>,
@@ -45,7 +45,7 @@ where
         let a_comp_interval = OIntervalMatrix::from_singletons(&a_comp);
         let identity = OIntervalMatrix::<T, D, D>::identity_generic(dim);
         let a_comp_inv =
-            ei::EpsilonInflation::default().solve_matrix(&a_comp_interval, &identity)?;
+            EpsilonInflationSolver::default().solve_matrix(&a_comp_interval, &identity)?;
 
         let b_mag = rhs.mag();
         let b_mag = OIntervalVector::from_singletons(&b_mag);
@@ -93,7 +93,7 @@ mod tests {
     #[cfg(feature = "alloc")]
     use super::super::DIntervalVector;
     use super::super::{SIntervalMatrix, SIntervalVector};
-    use super::{HansenBliekRohn, Solver};
+    use super::{HansenBliekRohnSolver, Solver};
 
     #[test]
     fn encloses_solution_of_h_matrix_system() {
@@ -108,7 +108,7 @@ mod tests {
             Interval::singleton(9.0),
         ]);
 
-        let solution = HansenBliekRohn.solve(&lhs, &rhs);
+        let solution = HansenBliekRohnSolver.solve(&lhs, &rhs);
 
         assert!(
             solution
@@ -122,7 +122,7 @@ mod tests {
         let lhs = SIntervalMatrix::<Interval, 1, 1>::from_element(Interval::new(-1.0, 1.0));
         let rhs = SIntervalVector::<Interval, 1>::from_element(Interval::singleton(1.0));
 
-        assert!(HansenBliekRohn.solve(&lhs, &rhs).is_none());
+        assert!(HansenBliekRohnSolver.solve(&lhs, &rhs).is_none());
     }
 
     #[cfg(feature = "alloc")]
@@ -143,7 +143,7 @@ mod tests {
             Interval::singleton(9.0),
         ]);
 
-        let solution = HansenBliekRohn.solve(&lhs, &rhs);
+        let solution = HansenBliekRohnSolver.solve(&lhs, &rhs);
 
         assert!(
             solution

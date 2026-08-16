@@ -51,9 +51,9 @@ where
 }
 
 /// Verified interval Gaussian-elimination solver.
-pub struct GaussianElimination;
+pub struct GaussianEliminationSolver;
 
-impl<T, D> Solver<T, D> for GaussianElimination
+impl<T, D> Solver<T, D> for GaussianEliminationSolver
 where
     T: IntervalOps + Scalar,
     D: Dim + DimAdd<Const<1>>,

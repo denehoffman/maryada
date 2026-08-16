@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.2.0](https://github.com/denehoffman/maryada/compare/v0.1.2...v0.2.0) (2026-08-16)
+
+
+### ⚠ BREAKING CHANGES
+
+* unify interval operations and operator overloads
+
+### Features
+
+* Add full set of operator overloads for interval matrices ([66cf19f](https://github.com/denehoffman/maryada/commit/66cf19fe89f95c78d1518470cad20a0387d86af2))
+* Add Gauss-Seidel and reorganize module structure ([2990d1d](https://github.com/denehoffman/maryada/commit/2990d1dd954ec237c008b24bd5b196387587f241))
+* Add some nice traits to help with linear algebra later (to avoid writing a bunch of implementations over capabilities) ([dccf132](https://github.com/denehoffman/maryada/commit/dccf132b0b59090e1f6a4cc225612425750177f3))
+* Credit Horacek's thesis and remove linalg and complex from default features ([305a8cd](https://github.com/denehoffman/maryada/commit/305a8cdef19ce70c5e4b0d2b97927f49bbfd4c0b))
+* **linalg:** Add configurable interval linear solvers ([bef764c](https://github.com/denehoffman/maryada/commit/bef764c2328910e19af5335824a9cdfeb73aab43))
+* **linalg:** Add interval matrix constructors and row vectors ([227f452](https://github.com/denehoffman/maryada/commit/227f4520f005d2a52290bc337c380c31ceaf871e))
+* **linalg:** Add matrix predicates and structural operations ([b5ee53e](https://github.com/denehoffman/maryada/commit/b5ee53ea01dcd106ac4eca2dec7ce97106b30fe7))
+* **linalg:** Add verified interval system solvers ([17ab226](https://github.com/denehoffman/maryada/commit/17ab226851cfcfc9eb58ab2d5fa533d8dc4e3ee4))
+* **linalg:** Expose matrix accessors iterators and indexing ([85eaabf](https://github.com/denehoffman/maryada/commit/85eaabf2654db909fc49ce9ec93f8da2ff119adc))
+* **linalg:** Support generic interval matrix storage ([0311c9a](https://github.com/denehoffman/maryada/commit/0311c9abe1f17b032b229a1a3f28c37657d6953b))
+* Update default solve/inverse method to use automatic preconditioning and gaussian elimination ([206ad4e](https://github.com/denehoffman/maryada/commit/206ad4e31ced220dd10378cacfef12a888868cd8))
+
+
+### Bug fixes
+
+* Clippy lints ([4279b3b](https://github.com/denehoffman/maryada/commit/4279b3b51bcbf735bc23698e724b72dfc5bde55c))
+* **rounding:** Tighten transcendental interval enclosures ([c0a4570](https://github.com/denehoffman/maryada/commit/c0a4570fec0fce6120d75ae52586650d6f1e49e1))
+
+
+### Code refactoring
+
+* **linalg:** Modernize interval matrix operations and imports ([6f815c4](https://github.com/denehoffman/maryada/commit/6f815c43f708c6ee1b6970f4230149aff97d4987))
+* Unify interval operations and operator overloads ([e2d5505](https://github.com/denehoffman/maryada/commit/e2d5505e89218791f3a2d5db5596d47654ac7e82))
+
 ## [0.1.2](https://github.com/denehoffman/maryada/compare/v0.1.1...v0.1.2) (2026-08-03)
 
 

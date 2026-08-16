@@ -64,7 +64,10 @@ fn ergonomic_protocols_preserve_interval_semantics_and_edge_states() {
 
     let parsed: Interval = "[1/3,2/3]".parse().unwrap();
     let displayed = parsed.to_string();
-    assert_eq!(displayed.parse::<Interval>().unwrap(), parsed);
+    assert!(parsed.subset(displayed.parse::<Interval>().unwrap()));
+    assert_eq!(format!("{parsed:x}").parse::<Interval>().unwrap(), parsed);
+    assert_eq!(format!("{:.2}", Interval::new(1.25, 2.5)), "[1.25,2.50]");
+    assert_eq!(format!("{:x}", Interval::new(1.0, 2.0)), "[0x1p+0,0x1p+1]");
     assert!("not an interval".parse::<Interval>().is_err());
 
     let decorated: DecoratedInterval = "[1,2]_def".parse().unwrap();

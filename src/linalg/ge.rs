@@ -53,22 +53,24 @@ where
 /// Verified interval Gaussian-elimination solver.
 pub struct GaussianElimination;
 
-impl<T, D, SA, SB> Solver<T, D, SA, SB> for GaussianElimination
+impl<T, D> Solver<T, D> for GaussianElimination
 where
     T: IntervalOps + Scalar,
     D: Dim + DimAdd<Const<1>>,
-    SA: Storage<T, D, D>,
-    SB: Storage<T, D, Const<1>>,
     DefaultAllocator: Allocator<D, D>
         + Allocator<D>
         + Allocator<D, DimSum<D, Const<1>>>
         + Reallocator<T, D, D, D, DimSum<D, Const<1>>>,
 {
-    fn solve(
+    fn solve<SA, SB>(
         &self,
         lhs: &IntervalMatrix<T, D, D, SA>,
         rhs: &IntervalMatrix<T, D, Const<1>, SB>,
-    ) -> Option<OIntervalVector<T, D>> {
+    ) -> Option<OIntervalVector<T, D>>
+    where
+        SA: Storage<T, D, D>,
+        SB: Storage<T, D, Const<1>>,
+    {
         let n = rhs.nrows();
         if lhs.nrows() != n || lhs.ncols() != n {
             return None;

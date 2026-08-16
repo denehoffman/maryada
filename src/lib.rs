@@ -45,9 +45,10 @@ pub use interchange::*;
 pub use linalg::{DIntervalMatrix, DIntervalRowVector, DIntervalVector};
 #[cfg(feature = "linalg")]
 pub use linalg::{
-    EpsilonInflation, GaussianElimination, HBR, IntervalMatrix, OIntervalMatrix,
-    OIntervalRowVector, OIntervalVector, SIntervalMatrix, SIntervalRowVector, SIntervalVector,
-    Solver,
+    EpsilonInflation, GaussianElimination, HansenBliekRohn, InitialEnclosure, IntervalMatrix,
+    KrawczykSolver, OIntervalMatrix, OIntervalRowVector, OIntervalVector, Preconditioned,
+    Preconditioner, SIntervalMatrix, SIntervalRowVector, SIntervalVector, Solver,
+    StoppingTolerance, enclosures_converged,
 };
 pub use ops::*;
 pub use signals::{Signal, SignalFlags, SignalSink};

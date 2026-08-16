@@ -11,21 +11,23 @@ use crate::IntervalOps;
 use super::{IntervalMatrix, OIntervalMatrix, OIntervalVector, Solver, ei};
 
 /// Hansen–Bliek–Rohn verified solver for interval systems with an H-matrix.
-pub struct HBR;
-impl<T, D, SA, SB> Solver<T, D, SA, SB> for HBR
+pub struct HansenBliekRohn;
+impl<T, D> Solver<T, D> for HansenBliekRohn
 where
     T: IntervalOps + Scalar,
     D: Dim + DimMin<D, Output = D>,
-    SA: Storage<T, D, D>,
-    SB: Storage<T, D, Const<1>>,
     DefaultAllocator: Allocator<D, D> + Allocator<D>,
     ShapeConstraint: AreMultipliable<D, D, D, D> + AreMultipliable<D, D, D, Const<1>>,
 {
-    fn solve(
+    fn solve<SA, SB>(
         &self,
         lhs: &IntervalMatrix<T, D, D, SA>,
         rhs: &IntervalMatrix<T, D, Const<1>, SB>,
-    ) -> Option<OIntervalVector<T, D>> {
+    ) -> Option<OIntervalVector<T, D>>
+    where
+        SA: Storage<T, D, D>,
+        SB: Storage<T, D, Const<1>>,
+    {
         if !lhs.is_square()
             || lhs.is_empty()
             || lhs.nrows() != rhs.nrows()
@@ -91,7 +93,7 @@ mod tests {
     #[cfg(feature = "alloc")]
     use super::super::DIntervalVector;
     use super::super::{SIntervalMatrix, SIntervalVector};
-    use super::{HBR, Solver};
+    use super::{HansenBliekRohn, Solver};
 
     #[test]
     fn encloses_solution_of_h_matrix_system() {
@@ -106,7 +108,7 @@ mod tests {
             Interval::singleton(9.0),
         ]);
 
-        let solution = HBR.solve(&lhs, &rhs);
+        let solution = HansenBliekRohn.solve(&lhs, &rhs);
 
         assert!(
             solution
@@ -120,7 +122,7 @@ mod tests {
         let lhs = SIntervalMatrix::<Interval, 1, 1>::from_element(Interval::new(-1.0, 1.0));
         let rhs = SIntervalVector::<Interval, 1>::from_element(Interval::singleton(1.0));
 
-        assert!(HBR.solve(&lhs, &rhs).is_none());
+        assert!(HansenBliekRohn.solve(&lhs, &rhs).is_none());
     }
 
     #[cfg(feature = "alloc")]
@@ -141,7 +143,7 @@ mod tests {
             Interval::singleton(9.0),
         ]);
 
-        let solution = HBR.solve(&lhs, &rhs);
+        let solution = HansenBliekRohn.solve(&lhs, &rhs);
 
         assert!(
             solution

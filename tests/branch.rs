@@ -5,8 +5,8 @@
 
 use maryada::{
     BestFirstQueue, Bisect, BranchAndBound, GlobalMinimizationResult, GlobalMinimizer,
-    GlobalMinimizerOptions, Interval, IntervalOps, PruneDecision, Pruner, RunStatus, StepOutcome,
-    Unresolved, WorkQueue,
+    GlobalMinimizerError, GlobalMinimizerOptions, GlobalMinimizerOptionsError, Interval,
+    IntervalOps, PruneDecision, Pruner, RunStatus, StepOutcome, Unresolved, WorkQueue,
 };
 
 #[test]
@@ -117,8 +117,10 @@ fn retained_and_contracted_domains_are_reported() {
 #[test]
 fn global_minimizer_encloses_a_quadratic_minimum() {
     let options = GlobalMinimizerOptions {
-        value_tolerance: 0.05,
-        domain_tolerance: 0.05,
+        value_tolerance: Some(0.05),
+        domain_tolerance: Some(0.05),
+        gap_tolerance: None,
+        max_steps: None,
     };
     let mut minimizer = GlobalMinimizer::with_options(
         Interval::new(-2.0, 3.0),
@@ -128,12 +130,120 @@ fn global_minimizer_encloses_a_quadratic_minimum() {
         },
         options,
     );
-    let result: GlobalMinimizationResult<Interval> = minimizer.run(512).unwrap();
+    let result: GlobalMinimizationResult<Interval> = minimizer.solve().unwrap();
 
     assert_eq!(result.status, RunStatus::Exhausted);
     assert!(result.minimum.contains(0.0));
     assert!(result.minimum.sup() >= 0.0);
     assert!(!result.candidates.is_empty());
+}
+
+#[test]
+fn global_minimizer_default_is_unbounded_and_convergent() {
+    let mut minimizer = GlobalMinimizer::new(Interval::new(0.0, 1.0), |domain: &Interval| {
+        Ok::<Interval, core::convert::Infallible>(*domain)
+    });
+
+    assert_eq!(minimizer.options().max_steps, None);
+    let result = minimizer.solve().unwrap();
+
+    assert_eq!(result.status, RunStatus::Converged);
+    assert!(result.minimum.contains(0.0));
+    assert!(result.minimum.wid() <= 1.0e-6);
+}
+
+#[test]
+fn global_minimizer_rejects_an_unbounded_configuration_without_tolerances() {
+    let mut minimizer = GlobalMinimizer::with_options(
+        Interval::new(0.0, 1.0),
+        |domain: &Interval| Ok::<Interval, core::convert::Infallible>(*domain),
+        GlobalMinimizerOptions {
+            value_tolerance: None,
+            domain_tolerance: None,
+            gap_tolerance: None,
+            max_steps: None,
+        },
+    );
+
+    assert_eq!(
+        minimizer.solve(),
+        Err(GlobalMinimizerError::InvalidOptions(
+            GlobalMinimizerOptionsError::NoTerminationCriterion
+        ))
+    );
+}
+
+#[test]
+fn global_minimizer_rejects_nonpositive_tolerances() {
+    let mut minimizer = GlobalMinimizer::new(Interval::new(0.0, 1.0), |domain: &Interval| {
+        Ok::<Interval, core::convert::Infallible>(*domain)
+    })
+    .with_value_tolerance(0.0);
+
+    assert_eq!(
+        minimizer.solve(),
+        Err(GlobalMinimizerError::InvalidOptions(
+            GlobalMinimizerOptionsError::InvalidTolerance {
+                name: "value_tolerance",
+                value: 0.0,
+            }
+        ))
+    );
+}
+
+#[test]
+fn global_minimizer_uses_a_configured_step_limit_for_solve() {
+    let mut minimizer = GlobalMinimizer::new(Interval::new(0.0, 1.0), |domain: &Interval| {
+        Ok::<Interval, core::convert::Infallible>(*domain)
+    })
+    .with_max_steps(1);
+
+    let result = minimizer.solve().unwrap();
+    assert_eq!(result.status, RunStatus::StepLimit);
+}
+
+#[test]
+#[allow(clippy::arithmetic_side_effects, clippy::unnecessary_wraps)]
+fn global_minimizer_reports_the_domain_for_its_best_value_bound() {
+    fn objective(domain: &Interval) -> Result<Interval, core::convert::Infallible> {
+        Ok((domain.sqr() - 1.0).sqr() + 0.6 * *domain + 2.0)
+    }
+
+    let mut minimizer = GlobalMinimizer::new(Interval::new(-1.5, 1.5), objective);
+    let result = minimizer.advance(20).unwrap();
+    let domain = result.best_domain.unwrap();
+    let value = result.best_value.unwrap();
+    let point = result.best_point.unwrap();
+
+    assert_eq!(result.status, RunStatus::StepLimit);
+    assert!(point.is_singleton());
+    assert!(domain.contains(point.mid()));
+    assert!(domain.contains(-1.0679));
+    assert!(value.contains(1.3790));
+    assert!(result.minimum.contains(1.3790));
+}
+
+#[test]
+#[allow(clippy::arithmetic_side_effects, clippy::unnecessary_wraps)]
+fn global_minimizer_keeps_live_parameter_boxes_in_the_result() {
+    fn objective(domain: &Interval) -> Result<Interval, core::convert::Infallible> {
+        Ok((domain.sqr() - 1.0).sqr() + 0.6 * *domain + 2.0)
+    }
+
+    let mut minimizer = GlobalMinimizer::new(Interval::new(-1.5, 1.5), objective);
+    let result = minimizer.advance(10).unwrap();
+    let domain = Interval::new(-1.21875, -1.125);
+    let value = objective(&domain).unwrap();
+
+    assert!(
+        result
+            .unresolved
+            .iter()
+            .any(|pending| pending.domain == domain)
+    );
+    assert!(value.inf() > 1.339);
+    assert!(value.sup() < 1.561);
+    assert!(result.minimum.inf() > 1.1);
 }
 
 #[cfg(feature = "complex")]

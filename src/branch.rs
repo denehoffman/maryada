@@ -283,11 +283,13 @@ pub enum StepOutcome {
     Unsplittable,
 }
 
-/// The result of a bounded run.
+/// The stopping state of a search run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RunStatus {
     /// The queue is empty; no further work is pending.
     Exhausted,
+    /// The configured global optimality gap was reached.
+    Converged,
     /// The step budget expired while work remained.
     StepLimit,
 }
@@ -315,7 +317,7 @@ impl<E: fmt::Display, P: fmt::Display> fmt::Display for SearchError<E, P> {
 /// with [`RunStatus::StepLimit`]; call [`BranchAndBound::run`] again to resume.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunReport<D> {
-    /// Whether the search exhausted its queue or reached its step limit.
+    /// Whether the search converged, exhausted its queue, or reached its step limit.
     pub status: RunStatus,
     /// Domains certified by the pruner.
     pub certified: Vec<D>,
@@ -548,23 +550,108 @@ where
     }
 }
 
+/// An invalid [`GlobalMinimizer`] stopping configuration.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GlobalMinimizerOptionsError {
+    /// A configured tolerance was not finite and strictly positive.
+    InvalidTolerance {
+        /// The name of the invalid option.
+        name: &'static str,
+        /// The invalid tolerance value.
+        value: f64,
+    },
+    /// No tolerance was enabled and no step limit was configured.
+    NoTerminationCriterion,
+}
+
+impl fmt::Display for GlobalMinimizerOptionsError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidTolerance { name, value } => write!(
+                formatter,
+                "{name} must be finite and strictly positive, got {value}"
+            ),
+            Self::NoTerminationCriterion => write!(
+                formatter,
+                "at least one stopping tolerance or max_steps must be configured"
+            ),
+        }
+    }
+}
+
+/// A global-minimizer evaluation or configuration failure.
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Debug, PartialEq)]
+pub enum GlobalMinimizerError<E> {
+    /// The objective evaluator failed.
+    Evaluation(E),
+    /// The minimizer options were invalid.
+    InvalidOptions(GlobalMinimizerOptionsError),
+}
+
+impl<E: fmt::Display> fmt::Display for GlobalMinimizerError<E> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Evaluation(error) => write!(formatter, "interval evaluation failed: {error}"),
+            Self::InvalidOptions(error) => write!(formatter, "invalid minimizer options: {error}"),
+        }
+    }
+}
+
 /// Configuration for [`GlobalMinimizer`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlobalMinimizerOptions {
     /// Stop subdividing a domain when its objective enclosure is no wider
-    /// than this value.  Zero means only thin objective intervals stop.
-    pub value_tolerance: f64,
+    /// than this value.  `None` disables this box-resolution criterion.
+    pub value_tolerance: Option<f64>,
     /// Stop subdividing a domain when its branch width is no wider than this
-    /// value.  Zero means only singleton domains stop.
-    pub domain_tolerance: f64,
+    /// value.  `None` disables this parameter-resolution criterion.
+    pub domain_tolerance: Option<f64>,
+    /// Stop when the rigorous global upper-minus-lower value gap is no wider
+    /// than this value.  `None` disables early stopping by the global gap.
+    pub gap_tolerance: Option<f64>,
+    /// Maximum number of domain steps used by [`GlobalMinimizer::solve`].
+    /// `None` allows `solve` to continue until another stopping criterion is
+    /// reached.
+    pub max_steps: Option<usize>,
 }
 
 impl Default for GlobalMinimizerOptions {
     fn default() -> Self {
         Self {
-            value_tolerance: 0.0,
-            domain_tolerance: 0.0,
+            value_tolerance: Some(1.0e-6),
+            domain_tolerance: Some(1.0e-6),
+            gap_tolerance: Some(1.0e-6),
+            max_steps: None,
         }
+    }
+}
+
+impl GlobalMinimizerOptions {
+    fn validate(
+        &self,
+        require_termination_criterion: bool,
+    ) -> Result<(), GlobalMinimizerOptionsError> {
+        for (name, tolerance) in [
+            ("value_tolerance", self.value_tolerance),
+            ("domain_tolerance", self.domain_tolerance),
+            ("gap_tolerance", self.gap_tolerance),
+        ] {
+            if let Some(value) = tolerance
+                && (!value.is_finite() || value <= 0.0)
+            {
+                return Err(GlobalMinimizerOptionsError::InvalidTolerance { name, value });
+            }
+        }
+        if require_termination_criterion
+            && self.max_steps.is_none()
+            && self.value_tolerance.is_none()
+            && self.domain_tolerance.is_none()
+            && self.gap_tolerance.is_none()
+        {
+            return Err(GlobalMinimizerOptionsError::NoTerminationCriterion);
+        }
+        Ok(())
     }
 }
 
@@ -586,13 +673,37 @@ pub enum GlobalStep {
 /// A Moore--Skelboe-style global minimization result.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GlobalMinimizationResult<D> {
-    /// A rigorous interval containing the best objective value found.
+    /// A rigorous interval containing the global minimum value.
+    ///
+    /// The lower endpoint is the smallest lower bound among the queued,
+    /// unresolved, and certified domains, while the upper endpoint is the best
+    /// upper bound obtained from an evaluated domain or midpoint.  This
+    /// interval is therefore a bound on the optimum value, not necessarily the
+    /// image of [`Self::best_domain`].
+    ///
+    /// In particular, `minimum` and `best_value` answer different questions:
+    /// the former bounds the global optimum, while the latter encloses the
+    /// objective over the parameter box that supplied the current upper bound.
     pub minimum: Interval,
+    /// The point domain at which the best upper bound was obtained.
+    ///
+    /// This is normally a singleton midpoint.  It is paired with
+    /// [`Self::best_domain`], which is the parameter box whose image was
+    /// evaluated.
+    pub best_point: Option<D>,
+    /// The parameter domain associated with the best known upper bound.
+    ///
+    /// When a midpoint produced the upper bound, this is the containing
+    /// domain whose image was evaluated; it is the useful interval enclosure
+    /// of the parameter value for the result.
+    pub best_domain: Option<D>,
+    /// The objective enclosure evaluated over [`Self::best_domain`].
+    pub best_value: Option<Interval>,
     /// Domains certified at the configured tolerances.
     pub candidates: Vec<D>,
     /// Terminal unresolved domains and their priorities.
     pub unresolved: Vec<Unresolved<D>>,
-    /// Whether the search exhausted its queue or reached its step limit.
+    /// Whether the search converged, exhausted its queue, or reached its step limit.
     pub status: RunStatus,
     /// Number of objective calls, including midpoint calls.
     pub evaluations: usize,
@@ -617,6 +728,10 @@ where
     options: GlobalMinimizerOptions,
     lower: f64,
     upper: f64,
+    candidate_lower_bounds: Vec<f64>,
+    best_point: Option<D>,
+    best_domain: Option<D>,
+    best_value: Option<Interval>,
     evaluations: usize,
     discarded: usize,
     branched: usize,
@@ -627,13 +742,17 @@ where
     D: Bisect + Midpoint + Clone,
     O: Evaluator<D, Value = Interval>,
 {
-    /// Creates a widest-first minimizer with default zero tolerances.
+    /// Creates a widest-first minimizer with the default stopping policy.
+    ///
+    /// The default uses finite value, parameter-width, and global-gap
+    /// tolerances and has no step limit.  Call [`Self::solve`] to run until
+    /// convergence or queue exhaustion.
     #[must_use]
     pub fn new(root: D, objective: O) -> Self {
         Self::with_options(root, objective, GlobalMinimizerOptions::default())
     }
 
-    /// Creates a widest-first minimizer with explicit tolerances.
+    /// Creates a widest-first minimizer with an explicit stopping policy.
     #[must_use]
     pub fn with_options(root: D, objective: O, options: GlobalMinimizerOptions) -> Self {
         Self::with_branch_and_options(root, objective, WidestBranch, options)
@@ -652,7 +771,7 @@ where
         Self::with_branch_and_options(root, objective, brancher, GlobalMinimizerOptions::default())
     }
 
-    /// Creates a minimizer with custom subdivision and tolerance policies.
+    /// Creates a minimizer with custom subdivision and stopping policies.
     #[must_use]
     pub fn with_branch_and_options(
         root: D,
@@ -671,10 +790,79 @@ where
             options,
             lower: f64::INFINITY,
             upper: f64::INFINITY,
+            candidate_lower_bounds: Vec::new(),
+            best_point: None,
+            best_domain: None,
+            best_value: None,
             evaluations: 0,
             discarded: 0,
             branched: 0,
         }
+    }
+
+    /// Returns the current stopping configuration.
+    #[must_use]
+    pub const fn options(&self) -> GlobalMinimizerOptions {
+        self.options
+    }
+
+    /// Sets the maximum width of a box objective enclosure used for local
+    /// resolution and returns the minimizer for builder-style configuration.
+    #[must_use]
+    pub const fn with_value_tolerance(mut self, tolerance: f64) -> Self {
+        self.options.value_tolerance = Some(tolerance);
+        self
+    }
+
+    /// Disables the box objective-width stopping criterion.
+    #[must_use]
+    pub const fn without_value_tolerance(mut self) -> Self {
+        self.options.value_tolerance = None;
+        self
+    }
+
+    /// Sets the maximum parameter-box width used for local resolution and
+    /// returns the minimizer for builder-style configuration.
+    #[must_use]
+    pub const fn with_domain_tolerance(mut self, tolerance: f64) -> Self {
+        self.options.domain_tolerance = Some(tolerance);
+        self
+    }
+
+    /// Disables the parameter-width stopping criterion.
+    #[must_use]
+    pub const fn without_domain_tolerance(mut self) -> Self {
+        self.options.domain_tolerance = None;
+        self
+    }
+
+    /// Sets the rigorous global optimality-gap tolerance and returns the
+    /// minimizer for builder-style configuration.
+    #[must_use]
+    pub const fn with_gap_tolerance(mut self, tolerance: f64) -> Self {
+        self.options.gap_tolerance = Some(tolerance);
+        self
+    }
+
+    /// Disables early stopping by the global optimality gap.
+    #[must_use]
+    pub const fn without_gap_tolerance(mut self) -> Self {
+        self.options.gap_tolerance = None;
+        self
+    }
+
+    /// Sets the step limit used by [`Self::solve`].
+    #[must_use]
+    pub const fn with_max_steps(mut self, max_steps: usize) -> Self {
+        self.options.max_steps = Some(max_steps);
+        self
+    }
+
+    /// Removes the step limit used by [`Self::solve`].
+    #[must_use]
+    pub const fn without_max_steps(mut self) -> Self {
+        self.options.max_steps = None;
+        self
     }
 
     /// Processes one domain, including a midpoint objective call when
@@ -701,6 +889,7 @@ where
             return Ok(GlobalStep::Discarded);
         }
         self.update_bounds(value);
+        self.update_upper_bound(&domain, value, &domain, value);
 
         if !domain.is_singleton()
             && let Some(midpoint) = domain.midpoint()
@@ -708,6 +897,7 @@ where
             let midpoint_value = self.evaluate(&midpoint)?;
             if !midpoint_value.is_empty() && !midpoint_value.is_nai() {
                 self.update_bounds(midpoint_value);
+                self.update_upper_bound(&domain, value, &midpoint, midpoint_value);
             }
         }
 
@@ -716,9 +906,16 @@ where
             return Ok(GlobalStep::Discarded);
         }
 
-        let value_small = value.wid() <= self.options.value_tolerance;
-        let domain_small = domain.branch_width() <= self.options.domain_tolerance;
+        let value_small = self
+            .options
+            .value_tolerance
+            .is_some_and(|tolerance| value.wid() <= tolerance);
+        let domain_small = self
+            .options
+            .domain_tolerance
+            .is_some_and(|tolerance| domain.branch_width() <= tolerance);
         if value_small || domain_small {
+            self.candidate_lower_bounds.push(value.inf());
             self.candidates.push(domain);
             return Ok(GlobalStep::Certified);
         }
@@ -747,45 +944,135 @@ where
         if value.inf() < self.lower {
             self.lower = value.inf();
         }
-        if value.sup() < self.upper {
-            self.upper = value.sup();
+    }
+
+    fn update_upper_bound(
+        &mut self,
+        domain: &D,
+        domain_value: Interval,
+        point: &D,
+        bound: Interval,
+    ) {
+        if bound.sup() < self.upper {
+            self.upper = bound.sup();
+            self.best_point = Some(point.clone());
+            self.best_domain = Some(domain.clone());
+            self.best_value = Some(domain_value);
         }
     }
 
-    /// Runs at most `max_steps` domain iterations and returns a rigorous
-    /// result.  Midpoint calls are included in the evaluation count but not
-    /// in the step budget.
+    fn frontier_lower_bound(&self) -> f64
+    where
+        D: Clone,
+    {
+        let mut lower = f64::INFINITY;
+        for bound in &self.candidate_lower_bounds {
+            lower = lower.min(*bound);
+        }
+        for unresolved in &self.unresolved {
+            lower = lower.min(unresolved.priority);
+        }
+        for entry in self.queue.snapshot() {
+            lower = lower.min(entry.priority);
+        }
+        lower
+    }
+
+    fn gap_reached(&self) -> bool
+    where
+        D: Clone,
+    {
+        let Some(tolerance) = self.options.gap_tolerance else {
+            return false;
+        };
+        if !self.upper.is_finite() || self.evaluations == 0 {
+            return false;
+        }
+        let lower = self.frontier_lower_bound();
+        lower.is_finite() && self.upper - lower <= tolerance
+    }
+
+    fn advance_with_limit(
+        &mut self,
+        max_steps: Option<usize>,
+    ) -> Result<GlobalMinimizationResult<D>, GlobalMinimizerError<O::Error>> {
+        let mut steps = 0usize;
+        let status = loop {
+            if self.queue.is_empty() {
+                break RunStatus::Exhausted;
+            }
+            if self.gap_reached() {
+                break RunStatus::Converged;
+            }
+            if max_steps.is_some_and(|limit| steps >= limit) {
+                break RunStatus::StepLimit;
+            }
+            let outcome = self.step().map_err(GlobalMinimizerError::Evaluation)?;
+            if outcome == GlobalStep::Idle {
+                break RunStatus::Exhausted;
+            }
+            steps = steps.saturating_add(1);
+        };
+        Ok(self.result(status))
+    }
+
+    /// Solves using the stopping policy configured on this minimizer.
+    ///
+    /// With the default configuration, this runs without a step limit until
+    /// the global value gap is small enough or all domains have been
+    /// classified at the local tolerances.  Configure a finite limit with
+    /// [`Self::with_max_steps`] when an anytime result is preferred.
     ///
     /// # Errors
     ///
-    /// Returns the objective error from the first failed objective call.
-    pub fn run(&mut self, max_steps: usize) -> Result<GlobalMinimizationResult<D>, O::Error> {
-        let mut steps = 0usize;
-        while steps < max_steps {
-            if self.queue.is_empty() {
-                break;
-            }
-            let outcome = self.step()?;
-            if outcome == GlobalStep::Idle {
-                break;
-            }
-            steps = steps.saturating_add(1);
-        }
-        let status = if self.queue.is_empty() {
-            RunStatus::Exhausted
-        } else {
-            RunStatus::StepLimit
-        };
-        Ok(self.result(status))
+    /// Returns an invalid-options error before doing work, or the objective
+    /// error from the first failed objective call.
+    pub fn solve(&mut self) -> Result<GlobalMinimizationResult<D>, GlobalMinimizerError<O::Error>> {
+        self.options
+            .validate(true)
+            .map_err(GlobalMinimizerError::InvalidOptions)?;
+        self.advance_with_limit(self.options.max_steps)
+    }
+
+    /// Performs at most `max_steps` domain iterations and returns a rigorous
+    /// result.  The minimizer retains its queue, so a later call resumes the
+    /// same search.  Midpoint calls are included in the evaluation count but
+    /// not in the step budget.
+    ///
+    /// This explicit budget is independent of the optional limit configured
+    /// for [`Self::solve`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an invalid-options error before doing work, or the objective
+    /// error from the first failed objective call.
+    pub fn advance(
+        &mut self,
+        max_steps: usize,
+    ) -> Result<GlobalMinimizationResult<D>, GlobalMinimizerError<O::Error>> {
+        self.options
+            .validate(false)
+            .map_err(GlobalMinimizerError::InvalidOptions)?;
+        self.advance_with_limit(Some(max_steps))
     }
 
     /// Returns a result snapshot without changing search state.
     #[must_use]
     pub fn result(&self, status: RunStatus) -> GlobalMinimizationResult<D> {
-        let minimum = if self.lower == f64::INFINITY {
+        let lower = if self.evaluations == 0 {
+            f64::INFINITY
+        } else {
+            let frontier_lower = self.frontier_lower_bound();
+            if frontier_lower == f64::INFINITY {
+                self.lower
+            } else {
+                frontier_lower
+            }
+        };
+        let minimum = if lower == f64::INFINITY {
             Interval::EMPTY
         } else {
-            Interval::new(self.lower, self.upper)
+            Interval::new(lower, self.upper)
         };
         let mut unresolved = self.unresolved.clone();
         unresolved.extend(self.queue.snapshot().into_iter().map(|entry| Unresolved {
@@ -794,6 +1081,9 @@ where
         }));
         GlobalMinimizationResult {
             minimum,
+            best_point: self.best_point.clone(),
+            best_domain: self.best_domain.clone(),
+            best_value: self.best_value,
             candidates: self.candidates.clone(),
             unresolved,
             status,
@@ -820,7 +1110,12 @@ impl<I: IntervalOps> Bisect for I {
         if (*self).is_nai() || (*self).is_empty() || (*self).is_singleton() {
             None
         } else {
-            Some((*self).bisect())
+            let midpoint = (*self).mid();
+            if midpoint == (*self).inf() || midpoint == (*self).sup() {
+                None
+            } else {
+                Some((*self).bisect())
+            }
         }
     }
 }

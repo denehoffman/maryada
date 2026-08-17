@@ -7,7 +7,7 @@
 
 use std::convert::Infallible;
 
-use maryada::{GlobalMinimizer, Interval, IntervalOps};
+use maryada::{EnclosureOps, GlobalMinimizer, Interval, IntervalOps};
 
 fn main() {
     fn objective(x: &Interval) -> Result<Interval, Infallible> {

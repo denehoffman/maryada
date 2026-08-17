@@ -53,7 +53,7 @@ impl Interval {
     /// [`Interval::EMPTY`].
     ///
     /// ```
-    /// use maryada::{Interval, IntervalOps, SignalFlags};
+    /// use maryada::{EnclosureOps, Interval, IntervalOps, SignalFlags};
     ///
     /// let mut signals = SignalFlags::NONE;
     /// let x = Interval::text_to_interval("[0.1, 0.2]", &mut signals);

@@ -6,7 +6,7 @@ use nalgebra::{
     constraint::{AreMultipliable, ShapeConstraint},
 };
 
-use super::EnclosureScalar;
+use super::EnclosureOps;
 
 use super::{IntervalMatrix, OIntervalMatrix, OIntervalVector, SolveError, Solver};
 
@@ -93,7 +93,7 @@ impl EpsilonInflationSolver {
 
 impl<T, D> Solver<T, D> for EpsilonInflationSolver
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     T::Midpoint: ComplexField,
     D: Dim,
     DefaultAllocator: Allocator<D, D> + Allocator<D> + Allocator<D, Const<1>>,
@@ -135,7 +135,7 @@ where
             return Err(SolveError::SingularMidpoint);
         }
         let r_interval = OIntervalMatrix::from_fn_generic(dim, dim, |i, j| {
-            <T as EnclosureScalar>::from_midpoint(preconditioner_point[(i, j)])
+            <T as EnclosureOps>::from_midpoint(preconditioner_point[(i, j)])
         });
         let identity = OIntervalMatrix::<T, D, D>::identity_generic(dim);
 
@@ -155,7 +155,7 @@ where
         }
         let x_tilde: OIntervalVector<T, D> =
             OIntervalMatrix::from_fn_generic(dim, Const::<1>, |i, j| {
-                <T as EnclosureScalar>::from_midpoint(x_tilde_point[(i, j)])
+                <T as EnclosureOps>::from_midpoint(x_tilde_point[(i, j)])
             });
         let lhs_x_tilde: OIntervalVector<T, D> = lhs * &x_tilde;
         let residual_rhs: OIntervalVector<T, D> = rhs - &lhs_x_tilde;
@@ -171,7 +171,7 @@ where
             // certificate: if F(Y) ⊂ int(Y), then the united solution set is
             // contained in F(Y), hence x̃ + F(Y) encloses every solution.
             let inflated = correction_enclosure
-                .map(|entry| <T as EnclosureScalar>::inflate(entry, self.r, self.eps));
+                .map(|entry| <T as EnclosureOps>::inflate(entry, self.r, self.eps));
 
             // x^{k+1} = Z + C y.
             let next = &correction + &(&iteration_matrix * &inflated);

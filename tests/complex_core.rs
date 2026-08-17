@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(feature = "complex")]
 
-use maryada::{ComplexBox, DecoratedInterval, Interval, IntervalOps};
+use maryada::{ComplexBox, DecoratedInterval, EnclosureOps, Interval, IntervalOps};
 
 #[test]
 fn complex_boxes_work_without_num_complex() {

@@ -6,7 +6,7 @@ use nalgebra::{
     constraint::{AreMultipliable, ShapeConstraint},
 };
 
-use crate::{EpsilonInflationSolver, IntervalOps};
+use crate::{EnclosureOps, EpsilonInflationSolver, IntervalOps};
 
 use super::{IntervalMatrix, OIntervalMatrix, OIntervalVector, SolveError, Solver};
 
@@ -58,7 +58,7 @@ where
         }
 
         let a_diag = a_comp_interval.diagonal();
-        let d_recip = d.map(IntervalOps::recip);
+        let d_recip = d.map(EnclosureOps::recip);
         let alpha_interval = &a_diag - &d_recip;
         let alpha = alpha_interval.mag();
         let scaled_u = u.component_div(&d);

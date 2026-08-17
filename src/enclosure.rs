@@ -1,98 +1,11 @@
-//! Shared scalar capabilities for interval enclosures.
+//! Operations shared by real and complex interval enclosures.
 
 use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use crate::{DecoratedInterval, Decoration, Interval};
 
-macro_rules! impl_enclosure_methods {
-    ($type:ty) => {
-        #[allow(missing_docs)]
-        impl $type {
-            #[must_use]
-            pub fn singleton(value: f64) -> Self {
-                <Self as EnclosureScalar>::singleton(value)
-            }
-
-            #[must_use]
-            pub fn from_midpoint(value: f64) -> Self {
-                <Self as EnclosureScalar>::from_midpoint(value)
-            }
-
-            #[must_use]
-            pub fn mul_add(self, rhs: Self, addend: Self) -> Self {
-                <Self as EnclosureScalar>::mul_add(self, rhs, addend)
-            }
-
-            #[must_use]
-            pub fn mid(self) -> f64 {
-                <Self as EnclosureScalar>::mid(self)
-            }
-
-            #[must_use]
-            pub fn is_empty(self) -> bool {
-                <Self as EnclosureScalar>::is_empty(self)
-            }
-
-            #[must_use]
-            pub fn is_nai(self) -> bool {
-                <Self as EnclosureScalar>::is_nai(self)
-            }
-
-            #[must_use]
-            pub fn is_entire(self) -> bool {
-                <Self as EnclosureScalar>::is_entire(self)
-            }
-
-            #[must_use]
-            pub fn is_singleton(self) -> bool {
-                <Self as EnclosureScalar>::is_singleton(self)
-            }
-
-            #[must_use]
-            pub fn is_bounded(self) -> bool {
-                <Self as EnclosureScalar>::is_bounded(self)
-            }
-
-            #[must_use]
-            pub fn equal(self, other: Self) -> bool {
-                <Self as EnclosureScalar>::equal(self, other)
-            }
-
-            #[must_use]
-            pub fn subset(self, other: Self) -> bool {
-                <Self as EnclosureScalar>::subset(self, other)
-            }
-
-            #[must_use]
-            pub fn interior(self, other: Self) -> bool {
-                <Self as EnclosureScalar>::interior(self, other)
-            }
-
-            #[must_use]
-            pub fn intersection(self, other: Self) -> Self {
-                <Self as EnclosureScalar>::intersection(self, other)
-            }
-
-            #[must_use]
-            pub fn convex_hull(self, other: Self) -> Self {
-                <Self as EnclosureScalar>::convex_hull(self, other)
-            }
-
-            #[must_use]
-            pub fn mag(self) -> f64 {
-                <Self as EnclosureScalar>::mag(self)
-            }
-
-            #[must_use]
-            pub fn mig(self) -> f64 {
-                <Self as EnclosureScalar>::mig(self)
-            }
-        }
-    };
-}
-
-/// Scalar operations shared by real and complex interval enclosures.
-pub trait EnclosureScalar:
+/// Chaining-friendly operations shared by real and complex interval enclosures.
+pub trait EnclosureOps:
     Copy
     + From<f64>
     + Neg<Output = Self>
@@ -112,6 +25,10 @@ pub trait EnclosureScalar:
     const ZERO: Self;
     /// Singleton one enclosure.
     const ONE: Self;
+    /// The empty enclosure.
+    const EMPTY: Self;
+    /// The enclosure containing the whole scalar space.
+    const ENTIRE: Self;
 
     /// Constructs a singleton real enclosure.
     #[must_use]
@@ -129,9 +46,99 @@ pub trait EnclosureScalar:
     #[must_use]
     fn mul_add(self, rhs: Self, addend: Self) -> Self;
 
+    /// Returns the reciprocal enclosure.
+    #[must_use]
+    fn recip(self) -> Self;
+    /// Returns the square enclosure.
+    #[must_use]
+    fn sqr(self) -> Self;
+    /// Returns the square-root enclosure.
+    #[must_use]
+    fn sqrt(self) -> Self;
+    /// Raises this enclosure to an integer power.
+    #[must_use]
+    fn pown(self, exponent: i32) -> Self;
+    /// Alias for [`EnclosureOps::pown`].
+    #[must_use]
+    fn powi(self, exponent: i32) -> Self {
+        self.pown(exponent)
+    }
+    /// Encloses powers with bases in `self` and exponents in `other`.
+    #[must_use]
+    fn pow(self, other: Self) -> Self;
+    /// Applies the natural exponential function.
+    #[must_use]
+    fn exp(self) -> Self;
+    /// Applies the base-two exponential function.
+    #[must_use]
+    fn exp2(self) -> Self;
+    /// Applies the base-ten exponential function.
+    #[must_use]
+    fn exp10(self) -> Self;
+    /// Applies the natural logarithm.
+    #[must_use]
+    fn log(self) -> Self;
+    /// Applies the base-two logarithm.
+    #[must_use]
+    fn log2(self) -> Self;
+    /// Applies the base-ten logarithm.
+    #[must_use]
+    fn log10(self) -> Self;
+    /// Returns the sine enclosure.
+    #[must_use]
+    fn sin(self) -> Self;
+    /// Returns the cosine enclosure.
+    #[must_use]
+    fn cos(self) -> Self;
+    /// Returns the tangent enclosure.
+    #[must_use]
+    fn tan(self) -> Self;
+    /// Returns the inverse-sine enclosure.
+    #[must_use]
+    fn asin(self) -> Self;
+    /// Returns the inverse-cosine enclosure.
+    #[must_use]
+    fn acos(self) -> Self;
+    /// Returns the inverse-tangent enclosure.
+    #[must_use]
+    fn atan(self) -> Self;
+    /// Returns the hyperbolic-sine enclosure.
+    #[must_use]
+    fn sinh(self) -> Self;
+    /// Returns the hyperbolic-cosine enclosure.
+    #[must_use]
+    fn cosh(self) -> Self;
+    /// Returns the hyperbolic-tangent enclosure.
+    #[must_use]
+    fn tanh(self) -> Self;
+    /// Returns the inverse-hyperbolic-sine enclosure.
+    #[must_use]
+    fn asinh(self) -> Self;
+    /// Returns the inverse-hyperbolic-cosine enclosure.
+    #[must_use]
+    fn acosh(self) -> Self;
+    /// Returns the inverse-hyperbolic-tangent enclosure.
+    #[must_use]
+    fn atanh(self) -> Self;
+
     /// Returns a representative midpoint.
     #[must_use]
     fn mid(self) -> Self::Midpoint;
+    /// Returns whether a finite point belongs to this enclosure.
+    #[must_use]
+    fn contains(self, value: Self::Midpoint) -> bool;
+    /// Returns the componentwise width.
+    #[must_use]
+    fn wid(self) -> Self::Midpoint;
+    /// Returns an enclosing radius.
+    #[must_use]
+    fn rad(self) -> f64;
+    /// Returns an inner radius.
+    #[must_use]
+    fn inner_rad(self) -> f64;
+    /// Returns componentwise midpoints and radii.
+    #[must_use]
+    fn mid_rad(self) -> (Self::Midpoint, Self::Midpoint);
 
     /// Returns whether this enclosure is empty.
     #[must_use]
@@ -157,6 +164,14 @@ pub trait EnclosureScalar:
     /// Returns whether this enclosure lies strictly inside `other`.
     #[must_use]
     fn interior(self, other: Self) -> bool;
+    /// Returns whether this enclosure and `other` are disjoint.
+    #[must_use]
+    fn disjoint(self, other: Self) -> bool;
+    /// Returns whether this enclosure and `other` intersect.
+    #[must_use]
+    fn intersects(self, other: Self) -> bool {
+        !self.is_nai() && !other.is_nai() && !self.disjoint(other)
+    }
     /// Intersects two enclosures.
     #[must_use]
     fn intersection(self, other: Self) -> Self;
@@ -172,11 +187,13 @@ pub trait EnclosureScalar:
 }
 
 #[allow(clippy::arithmetic_side_effects)]
-impl EnclosureScalar for Interval {
+impl EnclosureOps for Interval {
     type Midpoint = f64;
 
     const ZERO: Self = Self::ZERO;
     const ONE: Self = Self::ONE;
+    const EMPTY: Self = Self::EMPTY;
+    const ENTIRE: Self = Self::ENTIRE;
 
     fn singleton(value: f64) -> Self {
         Self::nums_to_interval(value, value, &mut ())
@@ -195,8 +212,98 @@ impl EnclosureScalar for Interval {
         crate::fma(self, rhs, addend)
     }
 
+    fn recip(self) -> Self {
+        crate::recip(self)
+    }
+    fn sqr(self) -> Self {
+        crate::sqr(self)
+    }
+    fn sqrt(self) -> Self {
+        crate::sqrt(self)
+    }
+    fn pown(self, exponent: i32) -> Self {
+        crate::pown(self, exponent)
+    }
+    fn pow(self, other: Self) -> Self {
+        crate::pow(self, other)
+    }
+    fn exp(self) -> Self {
+        crate::exp(self)
+    }
+    fn exp2(self) -> Self {
+        crate::exp2(self)
+    }
+    fn exp10(self) -> Self {
+        crate::exp10(self)
+    }
+    fn log(self) -> Self {
+        crate::log(self)
+    }
+    fn log2(self) -> Self {
+        crate::log2(self)
+    }
+    fn log10(self) -> Self {
+        crate::log10(self)
+    }
+    fn sin(self) -> Self {
+        crate::sin(self)
+    }
+    fn cos(self) -> Self {
+        crate::cos(self)
+    }
+    fn tan(self) -> Self {
+        crate::tan(self)
+    }
+    fn asin(self) -> Self {
+        crate::asin(self)
+    }
+    fn acos(self) -> Self {
+        crate::acos(self)
+    }
+    fn atan(self) -> Self {
+        crate::atan(self)
+    }
+    fn sinh(self) -> Self {
+        crate::sinh(self)
+    }
+    fn cosh(self) -> Self {
+        crate::cosh(self)
+    }
+    fn tanh(self) -> Self {
+        crate::tanh(self)
+    }
+    fn asinh(self) -> Self {
+        crate::asinh(self)
+    }
+    fn acosh(self) -> Self {
+        crate::acosh(self)
+    }
+    fn atanh(self) -> Self {
+        crate::atanh(self)
+    }
+
     fn mid(self) -> Self::Midpoint {
         crate::mid(self)
+    }
+
+    fn contains(self, value: Self::Midpoint) -> bool {
+        value.is_finite() && Self::from(value).subset(self)
+    }
+
+    fn wid(self) -> Self::Midpoint {
+        crate::wid(self)
+    }
+    fn rad(self) -> f64 {
+        crate::rad(self)
+    }
+    fn inner_rad(self) -> f64 {
+        if self.is_empty() {
+            return f64::NAN;
+        }
+        crate::rounding::inner_radius(crate::inf(self), crate::sup(self), self.mid())
+    }
+    fn mid_rad(self) -> (Self::Midpoint, Self::Midpoint) {
+        crate::mid_rad(self)
     }
 
     fn is_empty(self) -> bool {
@@ -231,6 +338,10 @@ impl EnclosureScalar for Interval {
         crate::interior(self, other)
     }
 
+    fn disjoint(self, other: Self) -> bool {
+        crate::disjoint(self, other)
+    }
+
     fn intersection(self, other: Self) -> Self {
         crate::intersection(self, other)
     }
@@ -249,11 +360,13 @@ impl EnclosureScalar for Interval {
 }
 
 #[allow(clippy::arithmetic_side_effects)]
-impl EnclosureScalar for DecoratedInterval {
+impl EnclosureOps for DecoratedInterval {
     type Midpoint = f64;
 
     const ZERO: Self = Self::ZERO;
     const ONE: Self = Self::ONE;
+    const EMPTY: Self = Self::EMPTY;
+    const ENTIRE: Self = Self::ENTIRE;
 
     fn singleton(value: f64) -> Self {
         Self::nums_to_interval(value, value, &mut ())
@@ -272,8 +385,98 @@ impl EnclosureScalar for DecoratedInterval {
         crate::fma(self, rhs, addend)
     }
 
+    fn recip(self) -> Self {
+        crate::recip(self)
+    }
+    fn sqr(self) -> Self {
+        crate::sqr(self)
+    }
+    fn sqrt(self) -> Self {
+        crate::sqrt(self)
+    }
+    fn pown(self, exponent: i32) -> Self {
+        crate::pown(self, exponent)
+    }
+    fn pow(self, other: Self) -> Self {
+        crate::pow(self, other)
+    }
+    fn exp(self) -> Self {
+        crate::exp(self)
+    }
+    fn exp2(self) -> Self {
+        crate::exp2(self)
+    }
+    fn exp10(self) -> Self {
+        crate::exp10(self)
+    }
+    fn log(self) -> Self {
+        crate::log(self)
+    }
+    fn log2(self) -> Self {
+        crate::log2(self)
+    }
+    fn log10(self) -> Self {
+        crate::log10(self)
+    }
+    fn sin(self) -> Self {
+        crate::sin(self)
+    }
+    fn cos(self) -> Self {
+        crate::cos(self)
+    }
+    fn tan(self) -> Self {
+        crate::tan(self)
+    }
+    fn asin(self) -> Self {
+        crate::asin(self)
+    }
+    fn acos(self) -> Self {
+        crate::acos(self)
+    }
+    fn atan(self) -> Self {
+        crate::atan(self)
+    }
+    fn sinh(self) -> Self {
+        crate::sinh(self)
+    }
+    fn cosh(self) -> Self {
+        crate::cosh(self)
+    }
+    fn tanh(self) -> Self {
+        crate::tanh(self)
+    }
+    fn asinh(self) -> Self {
+        crate::asinh(self)
+    }
+    fn acosh(self) -> Self {
+        crate::acosh(self)
+    }
+    fn atanh(self) -> Self {
+        crate::atanh(self)
+    }
+
     fn mid(self) -> Self::Midpoint {
         crate::mid(self)
+    }
+
+    fn contains(self, value: Self::Midpoint) -> bool {
+        value.is_finite() && Self::from(value).subset(self)
+    }
+
+    fn wid(self) -> Self::Midpoint {
+        crate::wid(self)
+    }
+    fn rad(self) -> f64 {
+        crate::rad(self)
+    }
+    fn inner_rad(self) -> f64 {
+        if self.is_nai() || self.is_empty() {
+            return f64::NAN;
+        }
+        crate::rounding::inner_radius(crate::inf(self), crate::sup(self), self.mid())
+    }
+    fn mid_rad(self) -> (Self::Midpoint, Self::Midpoint) {
+        crate::mid_rad(self)
     }
 
     fn is_empty(self) -> bool {
@@ -308,6 +511,10 @@ impl EnclosureScalar for DecoratedInterval {
         crate::interior(self, other)
     }
 
+    fn disjoint(self, other: Self) -> bool {
+        crate::disjoint(self, other)
+    }
+
     fn intersection(self, other: Self) -> Self {
         crate::intersection(self, other)
     }
@@ -324,6 +531,3 @@ impl EnclosureScalar for DecoratedInterval {
         crate::mig(self)
     }
 }
-
-impl_enclosure_methods!(Interval);
-impl_enclosure_methods!(DecoratedInterval);

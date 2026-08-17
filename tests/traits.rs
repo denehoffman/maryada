@@ -5,7 +5,8 @@
 use core::fmt::Debug;
 
 use maryada::{
-    DecoratedInterval, Decoration, Interval, IntervalOps, add, decoration_part, set_dec, sqr,
+    DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalOps, add, decoration_part,
+    set_dec, sqr,
 };
 
 fn exercise_common_api<T>()

@@ -30,7 +30,7 @@ use nalgebra::{Dyn, VecStorage};
 #[cfg(feature = "complex")]
 use crate::ComplexBox;
 use crate::{
-    EnclosureScalar, IntervalOps,
+    EnclosureOps, IntervalOps,
     rounding::{self, Direction},
 };
 
@@ -39,7 +39,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct IntervalMatrix<T, R, C, S>(Matrix<T, R, C, S>)
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>;
@@ -100,7 +100,7 @@ pub type DComplexIntervalRowVector<I> = DIntervalRowVector<ComplexBox<I>>;
 
 impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
@@ -189,7 +189,7 @@ macro_rules! impl_matrix_format {
     ($trait:path, $without_precision:literal, $with_precision:literal) => {
         impl<T, R, C, S> $trait for IntervalMatrix<T, R, C, S>
         where
-            T: EnclosureScalar + Scalar + $trait,
+            T: EnclosureOps + Scalar + $trait,
             R: Dim,
             C: Dim,
             S: Storage<T, R, C>,
@@ -260,7 +260,7 @@ impl_matrix_format!(fmt::UpperHex, "{:X}", "{:.1$X}");
 
 impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     R: Dim,
     C: Dim,
     S: StorageMut<T, R, C>,
@@ -293,7 +293,7 @@ where
 
 impl<T, R, C, S> AsRef<Matrix<T, R, C, S>> for IntervalMatrix<T, R, C, S>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
@@ -305,7 +305,7 @@ where
 
 impl<T, R, C, S> AsMut<Matrix<T, R, C, S>> for IntervalMatrix<T, R, C, S>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     R: Dim,
     C: Dim,
     S: StorageMut<T, R, C>,
@@ -317,7 +317,7 @@ where
 
 impl<'a, T, R, C, S> IntoIterator for &'a IntervalMatrix<T, R, C, S>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
@@ -332,7 +332,7 @@ where
 
 impl<'a, T, R, C, S> IntoIterator for &'a mut IntervalMatrix<T, R, C, S>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     R: Dim,
     C: Dim,
     S: StorageMut<T, R, C>,
@@ -347,7 +347,7 @@ where
 
 impl<T, R, C, S> Index<(usize, usize)> for IntervalMatrix<T, R, C, S>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
@@ -362,7 +362,7 @@ where
 
 impl<T, R, C, S> IndexMut<(usize, usize)> for IntervalMatrix<T, R, C, S>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     R: Dim,
     C: Dim,
     S: StorageMut<T, R, C>,
@@ -375,7 +375,7 @@ where
 
 impl<T, R, S> Index<usize> for IntervalMatrix<T, R, Const<1>, S>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     R: Dim,
     S: Storage<T, R, Const<1>>,
 {
@@ -389,7 +389,7 @@ where
 
 impl<T, R, S> IndexMut<usize> for IntervalMatrix<T, R, Const<1>, S>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     R: Dim,
     S: StorageMut<T, R, Const<1>>,
 {
@@ -401,7 +401,7 @@ where
 
 impl<T, R, C, S> From<Matrix<T, R, C, S>> for IntervalMatrix<T, R, C, S>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
@@ -413,7 +413,7 @@ where
 
 impl<T, R, C, S> From<Matrix<f64, R, C, S>> for OIntervalMatrix<T, R, C>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<f64, R, C>,
@@ -426,7 +426,7 @@ where
 
 impl<T, R, C> OIntervalMatrix<T, R, C>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     R: Dim,
     C: Dim,
     DefaultAllocator: Allocator<R, C>,
@@ -598,7 +598,7 @@ where
 
 impl<T, D> OIntervalMatrix<T, D, D>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     D: Dim,
     DefaultAllocator: Allocator<D, D>,
 {
@@ -610,7 +610,7 @@ where
 
 impl<T, D> OIntervalMatrix<T, D, D>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     D: Dim,
     DefaultAllocator: Allocator<D, D> + Allocator<D>,
 {
@@ -626,7 +626,7 @@ where
 
 impl<T, const R: usize, const C: usize> SIntervalMatrix<T, R, C>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
 {
     /// Creates a statically sized interval matrix filled with one value.
     pub fn from_element(element: T) -> Self {
@@ -692,7 +692,7 @@ where
 
 impl<T, const D: usize> SIntervalMatrix<T, D, D>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
 {
     /// Creates a statically sized identity interval matrix.
     #[must_use]
@@ -704,7 +704,7 @@ where
 #[cfg(feature = "alloc")]
 impl<T> DIntervalMatrix<T>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
 {
     /// Creates a dynamically sized interval matrix filled with one value.
     pub fn from_element(nrows: usize, ncols: usize, element: T) -> Self {
@@ -773,7 +773,7 @@ where
 #[cfg(feature = "alloc")]
 impl<T> DIntervalVector<T>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
 {
     /// Creates a dynamically sized interval column vector filled with one value.
     pub fn from_element(nrows: usize, element: T) -> Self {
@@ -811,7 +811,7 @@ where
 #[cfg(feature = "alloc")]
 impl<T> DIntervalRowVector<T>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
 {
     /// Creates a dynamically sized interval row vector filled with one value.
     pub fn from_element(ncols: usize, element: T) -> Self {
@@ -848,7 +848,7 @@ where
 
 impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     R: Dim,
     C: Dim,
     S: Storage<T, R, C>,
@@ -856,19 +856,19 @@ where
     /// Returns whether any entry is empty.
     #[must_use]
     pub fn has_empty_entries(&self) -> bool {
-        self.any(EnclosureScalar::is_empty)
+        self.any(EnclosureOps::is_empty)
     }
 
     /// Returns whether any entry is `NaI`.
     #[must_use]
     pub fn has_nai_entries(&self) -> bool {
-        self.any(EnclosureScalar::is_nai)
+        self.any(EnclosureOps::is_nai)
     }
 
     /// Returns whether any entry is entire.
     #[must_use]
     pub fn has_entire_entries(&self) -> bool {
-        self.any(EnclosureScalar::is_entire)
+        self.any(EnclosureOps::is_entire)
     }
 
     /// Intersects corresponding entries of two matrices.
@@ -888,7 +888,7 @@ where
         DefaultAllocator: SameShapeAllocator<R, C, R2, C2>,
         ShapeConstraint: SameNumberOfRows<R, R2> + SameNumberOfColumns<C, C2>,
     {
-        self.zip_map(rhs, EnclosureScalar::intersection)
+        self.zip_map(rhs, EnclosureOps::intersection)
     }
 
     /// Computes the convex hull of corresponding entries of two matrices.
@@ -908,7 +908,7 @@ where
         DefaultAllocator: SameShapeAllocator<R, C, R2, C2>,
         ShapeConstraint: SameNumberOfRows<R, R2> + SameNumberOfColumns<C, C2>,
     {
-        self.zip_map(rhs, EnclosureScalar::convex_hull)
+        self.zip_map(rhs, EnclosureOps::convex_hull)
     }
 
     /// Returns whether corresponding entries are interval-equal.
@@ -1147,7 +1147,7 @@ where
 
 impl<T, R, C, S> IntervalMatrix<T, R, C, S>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     T::Midpoint: Scalar,
     R: Dim,
     C: Dim,
@@ -1157,19 +1157,19 @@ where
     /// Returns the matrix of componentwise enclosure midpoints.
     #[must_use]
     pub fn mid(&self) -> OMatrix<T::Midpoint, R, C> {
-        self.map_inner(EnclosureScalar::mid)
+        self.map_inner(EnclosureOps::mid)
     }
 
     /// Returns the matrix of enclosure magnitudes.
     #[must_use]
     pub fn mag(&self) -> OMatrix<f64, R, C> {
-        self.map_inner(EnclosureScalar::mag)
+        self.map_inner(EnclosureOps::mag)
     }
 
     /// Returns the matrix of enclosure minimum magnitudes.
     #[must_use]
     pub fn mig(&self) -> OMatrix<f64, R, C> {
-        self.map_inner(EnclosureScalar::mig)
+        self.map_inner(EnclosureOps::mig)
     }
 }
 
@@ -1195,12 +1195,12 @@ where
     /// Returns the matrix of outward-rounded radii.
     #[must_use]
     pub fn rad(&self) -> OMatrix<f64, R, C> {
-        self.map_inner(IntervalOps::rad)
+        self.map_inner(EnclosureOps::rad)
     }
     /// Returns the matrix of inward-rounded radii.
     #[must_use]
     pub fn inner_rad(&self) -> OMatrix<f64, R, C> {
-        self.map_inner(IntervalOps::inner_rad)
+        self.map_inner(EnclosureOps::inner_rad)
     }
 
     /// Returns an upward-rounded upper bound for the induced matrix 1-norm.
@@ -1288,7 +1288,7 @@ mod complex_block;
 /// A verified solver for square interval linear systems.
 pub trait Solver<T, D>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     D: Dim,
     DefaultAllocator: Allocator<D, D> + Allocator<D>,
 {
@@ -1421,7 +1421,7 @@ where
 
 impl<T, D, S> IntervalMatrix<T, D, D, S>
 where
-    T: EnclosureScalar + Scalar,
+    T: EnclosureOps + Scalar,
     D: Dim,
     S: Storage<T, D, D>,
     DefaultAllocator: Allocator<D, D> + Allocator<D>,

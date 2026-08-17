@@ -3,8 +3,8 @@
 #![allow(clippy::expect_used, clippy::indexing_slicing, clippy::op_ref)]
 
 use maryada::{
-    ComplexBox, EpsilonInflationSolver, Interval, IntervalOps, SComplexIntervalMatrix,
-    SComplexIntervalVector, SolveError,
+    ComplexBox, EnclosureOps, EpsilonInflationSolver, Interval, IntervalOps,
+    SComplexIntervalMatrix, SComplexIntervalVector, SolveError,
 };
 use num_complex::Complex64;
 

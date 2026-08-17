@@ -6,7 +6,7 @@
     clippy::op_ref
 )]
 use maryada::{
-    DecoratedInterval, EnclosureScalar, EpsilonInflationSolver, GaussianEliminationSolver,
+    DecoratedInterval, EnclosureOps, EpsilonInflationSolver, GaussianEliminationSolver,
     HansenBliekRohnSolver, InitialEnclosure, Interval, IntervalMatrix, IntervalOps, JacobiSolver,
     KrawczykSolver, Preconditioned, Preconditioner, SIntervalMatrix, SIntervalRowVector,
     SIntervalVector, SolveError, Solver, StoppingTolerance,
@@ -173,7 +173,7 @@ fn interval_predicates_and_set_operations_are_componentwise() {
     assert!(narrow.equal(&narrow));
     assert_eq!(narrow.intersection(&wide), narrow);
     assert_eq!(narrow.convex_hull(&wide), wide);
-    assert!(narrow.all(EnclosureScalar::is_bounded));
+    assert!(narrow.all(EnclosureOps::is_bounded));
     assert!(narrow.any(|entry| entry.contains(1.5)));
 
     let exceptional =

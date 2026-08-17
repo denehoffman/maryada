@@ -2,7 +2,7 @@ use core::{cmp::Ordering, fmt, ops, str::FromStr};
 
 use crate::{
     DecoratedInterval, Decoration, Interval, IntervalDatum, ParseIntervalError, Signal,
-    SignalFlags, SignalSink, enclosure::EnclosureScalar,
+    SignalFlags, SignalSink, enclosure::EnclosureOps,
 };
 
 impl Interval {
@@ -433,12 +433,12 @@ macro_rules! impl_interval_neg {
 
 impl_interval_neg!(Interval, DecoratedInterval);
 
-/// Chaining-friendly operations shared by bare and decorated real intervals.
+/// Chaining-friendly operations specific to bare and decorated real intervals.
 ///
 /// This trait is sealed transitively through [`IntervalDatum`]. It can be used
 /// as a public generic bound, but external crates cannot implement it.
 pub trait IntervalOps:
-    EnclosureScalar<Midpoint = f64>
+    EnclosureOps<Midpoint = f64>
     + IntervalDatum
     + From<f64>
     + ops::Neg<Output = Self>
@@ -459,163 +459,14 @@ pub trait IntervalOps:
     + ops::MulAssign<f64>
     + ops::DivAssign<f64>
 {
-    /// The empty interval.
-    const EMPTY: Self;
-    /// The interval containing every real number.
-    const ENTIRE: Self;
-
     /// Constructs an interval from binary64 endpoints without reporting signals.
     #[must_use]
     fn new(inf: f64, sup: f64) -> Self;
-
-    /// Returns the reciprocal enclosure.
-    #[must_use]
-    fn recip(self) -> Self {
-        crate::recip(self)
-    }
-
-    /// Returns the square enclosure.
-    #[must_use]
-    fn sqr(self) -> Self {
-        crate::sqr(self)
-    }
-
-    /// Returns the square-root enclosure.
-    #[must_use]
-    fn sqrt(self) -> Self {
-        crate::sqrt(self)
-    }
-
-    /// Raises this interval to an integer power.
-    #[must_use]
-    fn pown(self, exponent: i32) -> Self {
-        crate::pown(self, exponent)
-    }
-
-    /// Alias for [`IntervalOps::pown`].
-    #[must_use]
-    fn powi(self, exponent: i32) -> Self {
-        self.pown(exponent)
-    }
-
-    /// Encloses powers with bases in `self` and exponents in `other`.
-    #[must_use]
-    fn pow(self, other: Self) -> Self {
-        crate::pow(self, other)
-    }
-
-    /// Applies the natural exponential function.
-    #[must_use]
-    fn exp(self) -> Self {
-        crate::exp(self)
-    }
-
-    /// Applies the base-two exponential function.
-    #[must_use]
-    fn exp2(self) -> Self {
-        crate::exp2(self)
-    }
-
-    /// Applies the base-ten exponential function.
-    #[must_use]
-    fn exp10(self) -> Self {
-        crate::exp10(self)
-    }
-
-    /// Applies the natural logarithm on its real domain.
-    #[must_use]
-    fn log(self) -> Self {
-        crate::log(self)
-    }
-
-    /// Applies the base-two logarithm on its real domain.
-    #[must_use]
-    fn log2(self) -> Self {
-        crate::log2(self)
-    }
-
-    /// Applies the base-ten logarithm on its real domain.
-    #[must_use]
-    fn log10(self) -> Self {
-        crate::log10(self)
-    }
-
-    /// Returns the sine enclosure.
-    #[must_use]
-    fn sin(self) -> Self {
-        crate::sin(self)
-    }
-
-    /// Returns the cosine enclosure.
-    #[must_use]
-    fn cos(self) -> Self {
-        crate::cos(self)
-    }
-
-    /// Returns the tangent enclosure over defined values.
-    #[must_use]
-    fn tan(self) -> Self {
-        crate::tan(self)
-    }
-
-    /// Returns the inverse-sine enclosure.
-    #[must_use]
-    fn asin(self) -> Self {
-        crate::asin(self)
-    }
-
-    /// Returns the inverse-cosine enclosure.
-    #[must_use]
-    fn acos(self) -> Self {
-        crate::acos(self)
-    }
-
-    /// Returns the inverse-tangent enclosure.
-    #[must_use]
-    fn atan(self) -> Self {
-        crate::atan(self)
-    }
 
     /// Returns the two-argument angle enclosure `atan2(self, x)`.
     #[must_use]
     fn atan2(self, x: Self) -> Self {
         crate::atan2(self, x)
-    }
-
-    /// Returns the hyperbolic-sine enclosure.
-    #[must_use]
-    fn sinh(self) -> Self {
-        crate::sinh(self)
-    }
-
-    /// Returns the hyperbolic-cosine enclosure.
-    #[must_use]
-    fn cosh(self) -> Self {
-        crate::cosh(self)
-    }
-
-    /// Returns the hyperbolic-tangent enclosure.
-    #[must_use]
-    fn tanh(self) -> Self {
-        crate::tanh(self)
-    }
-
-    /// Returns the inverse-hyperbolic-sine enclosure.
-    #[must_use]
-    fn asinh(self) -> Self {
-        crate::asinh(self)
-    }
-
-    /// Returns the inverse-hyperbolic-cosine enclosure.
-    #[must_use]
-    fn acosh(self) -> Self {
-        crate::acosh(self)
-    }
-
-    /// Returns the inverse-hyperbolic-tangent enclosure.
-    #[must_use]
-    fn atanh(self) -> Self {
-        crate::atanh(self)
     }
 
     /// Maps values to their signs.
@@ -728,66 +579,15 @@ pub trait IntervalOps:
     fn bounds(self) -> (f64, f64) {
         (self.inf(), self.sup())
     }
-
-    /// Returns whether finite `value` belongs to this interval.
-    #[must_use]
-    fn contains(self, value: f64) -> bool {
-        value.is_finite() && Self::from(value).subset(self)
-    }
-
-    /// Returns the upward-rounded width.
-    #[must_use]
-    fn wid(self) -> f64 {
-        crate::wid(self)
-    }
-
-    /// Returns the upward-rounded radius.
-    #[must_use]
-    fn rad(self) -> f64 {
-        crate::rad(self)
-    }
-
-    /// Returns the downward-rounded radius.
-    #[must_use]
-    fn inner_rad(self) -> f64 {
-        if self.is_nai() || self.is_empty() {
-            return f64::NAN;
-        }
-        crate::rounding::inner_radius(self.inf(), self.sup(), self.mid())
-    }
-
-    /// Returns a midpoint and radius enclosing this interval.
-    #[must_use]
-    fn mid_rad(self) -> (f64, f64) {
-        crate::mid_rad(self)
-    }
-
-    /// Returns whether this interval and `other` are disjoint.
-    #[must_use]
-    fn disjoint(self, other: Self) -> bool {
-        crate::disjoint(self, other)
-    }
-
-    /// Returns whether this interval has a nonempty intersection with `other`.
-    #[must_use]
-    fn intersects(self, other: Self) -> bool {
-        !self.is_nai() && !other.is_nai() && !self.disjoint(other)
-    }
 }
 
 impl IntervalOps for Interval {
-    const EMPTY: Self = Self::EMPTY;
-    const ENTIRE: Self = Self::ENTIRE;
-
     fn new(inf: f64, sup: f64) -> Self {
         Self::nums_to_interval(inf, sup, &mut ())
     }
 }
 
 impl IntervalOps for DecoratedInterval {
-    const EMPTY: Self = Self::EMPTY;
-    const ENTIRE: Self = Self::ENTIRE;
-
     fn new(inf: f64, sup: f64) -> Self {
         Self::nums_to_interval(inf, sup, &mut ())
     }

@@ -3,8 +3,8 @@
 use core::cmp::Ordering;
 
 use maryada::{
-    DecoratedInterval, Decoration, Interval, IntervalOps, Signal, SignalFlags, convex_hull,
-    decoration_part, disjoint, interior, intersection, set_dec, subset,
+    DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalOps, Signal, SignalFlags,
+    convex_hull, decoration_part, disjoint, interior, intersection, set_dec, subset,
 };
 
 #[test]

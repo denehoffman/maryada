@@ -40,21 +40,42 @@ where
         Self::Custom(matrix)
     }
 
-    /// Computes this preconditioner's point matrix as an interval matrix.
-    #[must_use]
+    /// Computes this preconditioner's point matrix as an interval matrix with
+    /// diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SolveError::SingularMidpoint`] when a midpoint inverse cannot
+    /// be formed, or [`SolveError::InvalidInput`] for invalid entries or a
+    /// malformed custom preconditioner.
     #[allow(clippy::indexing_slicing)]
-    pub fn matrix<T, S>(&self, lhs: &IntervalMatrix<T, D, D, S>) -> Option<OIntervalMatrix<T, D, D>>
+    pub fn try_matrix<T, S>(
+        &self,
+        lhs: &IntervalMatrix<T, D, D, S>,
+    ) -> Result<OIntervalMatrix<T, D, D>, SolveError>
     where
         T: EnclosureScalar<Midpoint = P> + Scalar,
         S: Storage<T, D, D>,
         DefaultAllocator: Allocator<D, D> + Allocator<D>,
     {
-        Some(match self {
+        if lhs.is_empty() {
+            return Err(SolveError::InvalidSystem);
+        }
+        if lhs.has_empty_entries()
+            || lhs.has_nai_entries()
+            || lhs.iter().any(|entry| !entry.is_bounded())
+        {
+            return Err(SolveError::InvalidInput);
+        }
+        Ok(match self {
             Self::InverseMidpoint => {
                 let (dim, _) = lhs.shape_generic();
                 let midpoint =
                     OMatrix::<P, D, D>::from_fn_generic(dim, dim, |i, j| lhs[(i, j)].mid());
-                let inverse = midpoint.try_inverse()?;
+                if midpoint.iter().any(|entry| !entry.is_finite()) {
+                    return Err(SolveError::InvalidInput);
+                }
+                let inverse = midpoint.try_inverse().ok_or(SolveError::SingularMidpoint)?;
                 OIntervalMatrix::from_fn_generic(dim, dim, |i, j| T::from_midpoint(inverse[(i, j)]))
             }
             Self::InverseDiagonalMidpoint => {
@@ -62,17 +83,31 @@ where
                 let midpoint = OMatrix::<P, D, D>::from_fn_generic(dim, dim, |i, j| {
                     if i == j { lhs[(i, j)].mid() } else { P::zero() }
                 });
-                let inverse = midpoint.try_inverse()?;
+                if midpoint.iter().any(|entry| !entry.is_finite()) {
+                    return Err(SolveError::InvalidInput);
+                }
+                let inverse = midpoint.try_inverse().ok_or(SolveError::SingularMidpoint)?;
                 OIntervalMatrix::from_fn_generic(dim, dim, |i, j| T::from_midpoint(inverse[(i, j)]))
             }
             Self::Custom(matrix) => {
                 if matrix.shape() != lhs.shape() || matrix.iter().any(|entry| !entry.is_finite()) {
-                    return None;
+                    return Err(SolveError::InvalidInput);
                 }
                 let (dim, _) = lhs.shape_generic();
                 OIntervalMatrix::from_fn_generic(dim, dim, |i, j| T::from_midpoint(matrix[(i, j)]))
             }
         })
+    }
+
+    /// Computes this preconditioner's point matrix as an interval matrix.
+    #[must_use]
+    pub fn matrix<T, S>(&self, lhs: &IntervalMatrix<T, D, D, S>) -> Option<OIntervalMatrix<T, D, D>>
+    where
+        T: EnclosureScalar<Midpoint = P> + Scalar,
+        S: Storage<T, D, D>,
+        DefaultAllocator: Allocator<D, D> + Allocator<D>,
+    {
+        self.try_matrix(lhs).ok()
     }
 
     /// Automatically selects a suitable preconditioner.
@@ -204,7 +239,7 @@ where
         SB: Storage<T, D, Const<1>>,
     {
         if let Some(preconditioner) = &self.preconditioner {
-            let c = preconditioner.matrix(lhs).ok_or(SolveError::InvalidInput)?;
+            let c = preconditioner.try_matrix(lhs)?;
             self.solver.try_solve(&(&c * lhs), &(&c * rhs))
         } else {
             self.solver.try_solve(lhs, rhs)

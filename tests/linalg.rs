@@ -7,9 +7,9 @@
 )]
 use maryada::{
     DecoratedInterval, EnclosureScalar, EpsilonInflationSolver, GaussianEliminationSolver,
-    HansenBliekRohnSolver, Interval, IntervalMatrix, IntervalOps, KrawczykSolver, Preconditioned,
-    Preconditioner, SIntervalMatrix, SIntervalRowVector, SIntervalVector, Solver,
-    StoppingTolerance,
+    HansenBliekRohnSolver, InitialEnclosure, Interval, IntervalMatrix, IntervalOps, JacobiSolver,
+    KrawczykSolver, Preconditioned, Preconditioner, SIntervalMatrix, SIntervalRowVector,
+    SIntervalVector, SolveError, Solver, StoppingTolerance,
 };
 use nalgebra::SMatrix;
 
@@ -552,5 +552,64 @@ fn invalid_inflation_parameters_are_rejected() {
             .with_absolute_inflation(f64::NAN)
             .solve(&lhs, &rhs)
             .is_none()
+    );
+    assert_eq!(
+        EpsilonInflationSolver::new()
+            .with_relative_inflation(-0.1)
+            .try_solve(&lhs, &rhs),
+        Err(SolveError::InvalidInput)
+    );
+}
+
+#[test]
+fn gaussian_elimination_reports_uncertified_pivots() {
+    let lhs = SIntervalMatrix::<Interval, 1, 1>::from_element(Interval::new(-1.0, 1.0));
+    let rhs = SIntervalVector::<Interval, 1>::from_element(Interval::ONE);
+
+    assert_eq!(
+        GaussianEliminationSolver.try_solve(&lhs, &rhs),
+        Err(SolveError::PivotNotCertified { index: 0 })
+    );
+}
+
+#[test]
+fn iterative_solvers_report_invalid_tolerance_and_empty_contractions() {
+    let lhs = SIntervalMatrix::<Interval, 1, 1>::identity();
+    let rhs = SIntervalVector::<Interval, 1>::from_element(Interval::ONE);
+
+    let invalid_tolerance = JacobiSolver::from_tolerance(StoppingTolerance::new(0.0));
+    assert_eq!(
+        invalid_tolerance.try_solve(&lhs, &rhs),
+        Err(SolveError::InvalidInput)
+    );
+
+    let initial = SIntervalVector::<Interval, 1>::from_element(Interval::new(2.0, 3.0));
+    let solver = JacobiSolver::from_tolerance(StoppingTolerance::new(1e-6))
+        .with_initial_enclosure(InitialEnclosure::Provided(initial));
+    assert_eq!(
+        solver.try_solve(&lhs, &rhs),
+        Err(SolveError::EmptyIntersection)
+    );
+}
+
+#[test]
+fn iterative_initializers_report_when_no_bounded_enclosure_is_available() {
+    let lhs = SIntervalMatrix::<Interval, 1, 1>::from_element(Interval::new(-1.0, 1.0));
+    let rhs = SIntervalVector::<Interval, 1>::from_element(Interval::ONE);
+
+    assert_eq!(
+        lhs.try_initial_enclosure_inf_norm(&rhs),
+        Err(SolveError::InitialEnclosureFailed)
+    );
+}
+
+#[test]
+fn hansen_bliek_rohn_reports_failed_h_matrix_certification() {
+    let lhs = SIntervalMatrix::<Interval, 1, 1>::from_element(Interval::new(-1.0, 1.0));
+    let rhs = SIntervalVector::<Interval, 1>::from_element(Interval::ONE);
+
+    assert_eq!(
+        HansenBliekRohnSolver.try_solve(&lhs, &rhs),
+        Err(SolveError::NotAnHMatrix)
     );
 }

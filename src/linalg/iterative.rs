@@ -1,5 +1,5 @@
 #![allow(clippy::arithmetic_side_effects)]
-use super::{IntervalMatrix, OIntervalMatrix, OIntervalVector};
+use super::{IntervalMatrix, OIntervalMatrix, OIntervalVector, SolveError};
 use crate::IntervalOps;
 use nalgebra::{
     Const, DefaultAllocator, Dim, DimMin, OVector, Scalar, Storage, allocator::Allocator,
@@ -51,6 +51,12 @@ impl StoppingTolerance {
     pub const fn epsilon(self) -> f64 {
         self.0
     }
+
+    /// Returns whether this tolerance can be used for convergence checks.
+    #[must_use]
+    pub const fn is_valid(self) -> bool {
+        self.0.is_finite() && self.0 > 0.0
+    }
 }
 
 /// Tests whether two consecutive enclosures satisfy the stopping criterion.
@@ -80,8 +86,7 @@ where
         "consecutive enclosure dimension mismatch",
     );
     let epsilon = tolerance.epsilon();
-    epsilon.is_finite()
-        && epsilon > 0.0
+    tolerance.is_valid()
         && current
             .iter()
             .zip(previous.iter())
@@ -111,28 +116,35 @@ where
     /// `Cb`. The weight candidate `u` is obtained by approximately solving
     /// `<CA>u = e`; the positivity condition `<CA>u > 0` is then certified
     /// using interval arithmetic.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SolveError::InvalidSystem`] or [`SolveError::InvalidInput`]
+    /// for unusable inputs, and [`SolveError::InitialEnclosureFailed`] when
+    /// the weighted-norm sufficient condition cannot produce a bounded
+    /// enclosure.
     #[allow(clippy::indexing_slicing)]
-    pub fn initial_enclosure_v_norm<SB>(
+    pub fn try_initial_enclosure_v_norm<SB>(
         &self,
         rhs: &IntervalMatrix<T, D, Const<1>, SB>,
-    ) -> Option<OIntervalVector<T, D>>
+    ) -> Result<OIntervalVector<T, D>, SolveError>
     where
         SB: Storage<T, D, Const<1>>,
     {
-        if !valid_system(self, rhs) {
-            return None;
-        }
-
-        let comparison = self.comparison_matrix()?;
+        validate_system(self, rhs)?;
+        let comparison = self.comparison_matrix().ok_or(SolveError::InvalidSystem)?;
         if comparison.iter().any(|entry| !entry.is_finite()) {
-            return None;
+            return Err(SolveError::InvalidInput);
         }
         let (dim, _) = self.shape_generic();
         let e = OVector::<f64, D>::repeat_generic(dim, Const::<1>, 1.0);
-        let u = comparison.clone().lu().solve(&e)?;
+        let u = comparison
+            .clone()
+            .lu()
+            .solve(&e)
+            .ok_or(SolveError::InitialEnclosureFailed)?;
         if u.iter().any(|entry| !entry.is_finite() || *entry < 0.0) {
-            return None;
+            return Err(SolveError::InitialEnclosureFailed);
         }
 
         // Interval arithmetic certifies a componentwise lower bound for <CA>u.
@@ -144,26 +156,82 @@ where
                 .inf()
         });
         if v.iter().any(|entry| !entry.is_finite() || *entry <= 0.0) {
-            return None;
+            return Err(SolveError::InitialEnclosureFailed);
         }
 
         let norm = rhs.v_norm(&v);
         if !norm.is_finite() {
-            return None;
+            return Err(SolveError::InitialEnclosureFailed);
         }
         let enclosure = OIntervalVector::from_fn_generic(dim, Const::<1>, |row, _| {
             T::new(-u[row], u[row]) * norm
         });
-        enclosure
-            .iter()
-            .all(|entry| entry.is_bounded())
-            .then_some(enclosure)
+        if enclosure.iter().all(|entry| entry.is_bounded()) {
+            Ok(enclosure)
+        } else {
+            Err(SolveError::InitialEnclosureFailed)
+        }
+    }
+
+    /// Finds an initial enclosure using a comparison-matrix weighted norm.
+    #[must_use]
+    pub fn initial_enclosure_v_norm<SB>(
+        &self,
+        rhs: &IntervalMatrix<T, D, Const<1>, SB>,
+    ) -> Option<OIntervalVector<T, D>>
+    where
+        SB: Storage<T, D, Const<1>>,
+    {
+        self.try_initial_enclosure_v_norm(rhs).ok()
     }
 
     /// Finds an initial enclosure using the induced infinity norm.
     ///
     /// `self` and `rhs` are expected to be the preconditioned system `CA` and
     /// `Cb`. This construction succeeds when `||I - CA||_inf < 1`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SolveError::InvalidSystem`] or [`SolveError::InvalidInput`]
+    /// for unusable inputs, and [`SolveError::InitialEnclosureFailed`] when
+    /// the contraction condition cannot produce a bounded enclosure.
+    pub fn try_initial_enclosure_inf_norm<SB>(
+        &self,
+        rhs: &IntervalMatrix<T, D, Const<1>, SB>,
+    ) -> Result<OIntervalVector<T, D>, SolveError>
+    where
+        SB: Storage<T, D, Const<1>>,
+    {
+        validate_system(self, rhs)?;
+
+        let (dim, _) = self.shape_generic();
+        let identity = OIntervalMatrix::<T, D, D>::identity_generic(dim);
+        let residual = &identity - self;
+        let residual_norm = residual.inf_norm();
+        if !residual_norm.is_finite() || residual_norm >= 1.0 {
+            return Err(SolveError::InitialEnclosureFailed);
+        }
+
+        let rhs_norm = rhs.inf_norm();
+        if !rhs_norm.is_finite() {
+            return Err(SolveError::InitialEnclosureFailed);
+        }
+
+        let denominator = T::ONE - T::singleton(residual_norm);
+        if denominator.inf() <= 0.0 {
+            return Err(SolveError::InitialEnclosureFailed);
+        }
+        let radius = (T::singleton(rhs_norm) / denominator).sup();
+        if !radius.is_finite() {
+            return Err(SolveError::InitialEnclosureFailed);
+        }
+
+        Ok(OIntervalVector::from_fn_generic(dim, Const::<1>, |_, _| {
+            T::new(-radius, radius)
+        }))
+    }
+
+    /// Finds an initial enclosure using the induced infinity norm.
     #[must_use]
     pub fn initial_enclosure_inf_norm<SB>(
         &self,
@@ -172,35 +240,7 @@ where
     where
         SB: Storage<T, D, Const<1>>,
     {
-        if !valid_system(self, rhs) {
-            return None;
-        }
-
-        let (dim, _) = self.shape_generic();
-        let identity = OIntervalMatrix::<T, D, D>::identity_generic(dim);
-        let residual = &identity - self;
-        let residual_norm = residual.inf_norm();
-        if !residual_norm.is_finite() || residual_norm >= 1.0 {
-            return None;
-        }
-
-        let rhs_norm = rhs.inf_norm();
-        if !rhs_norm.is_finite() {
-            return None;
-        }
-
-        let denominator = T::ONE - T::singleton(residual_norm);
-        if denominator.inf() <= 0.0 {
-            return None;
-        }
-        let radius = (T::singleton(rhs_norm) / denominator).sup();
-        if !radius.is_finite() {
-            return None;
-        }
-
-        Some(OIntervalVector::from_fn_generic(dim, Const::<1>, |_, _| {
-            T::new(-radius, radius)
-        }))
+        self.try_initial_enclosure_inf_norm(rhs).ok()
     }
 }
 
@@ -228,21 +268,25 @@ pub use jacobi::JacobiSolver;
 mod gauss_seidel;
 pub use gauss_seidel::GaussSeidelSolver;
 
-fn valid_system<T, D, SA, SB>(
+pub(super) fn validate_system<T, D, SA, SB>(
     lhs: &IntervalMatrix<T, D, D, SA>,
     rhs: &IntervalMatrix<T, D, Const<1>, SB>,
-) -> bool
+) -> Result<(), SolveError>
 where
     T: IntervalOps + Scalar,
     D: Dim,
     SA: Storage<T, D, D>,
     SB: Storage<T, D, Const<1>>,
 {
-    lhs.is_square()
-        && !lhs.is_empty()
-        && lhs.nrows() == rhs.nrows()
-        && !lhs.has_empty_entries()
-        && !lhs.has_nai_entries()
-        && !rhs.has_empty_entries()
-        && !rhs.has_nai_entries()
+    if !lhs.is_square() || lhs.is_empty() || lhs.nrows() != rhs.nrows() {
+        return Err(SolveError::InvalidSystem);
+    }
+    if lhs.has_empty_entries()
+        || lhs.has_nai_entries()
+        || rhs.has_empty_entries()
+        || rhs.has_nai_entries()
+    {
+        return Err(SolveError::InvalidInput);
+    }
+    Ok(())
 }

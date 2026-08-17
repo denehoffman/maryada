@@ -7,7 +7,7 @@ use nalgebra::{
 use crate::{
     InitialEnclosure, IntervalMatrix, IntervalOps, OIntervalVector, SolveError, Solver,
     StoppingTolerance,
-    linalg::iterative::{enclosures_converged, valid_system},
+    linalg::iterative::{enclosures_converged, validate_system},
 };
 
 /// The Gauss-Seidel iterative method for interval linear systems.
@@ -111,51 +111,49 @@ where
         SA: Storage<T, D, D>,
         SB: Storage<T, D, Const<1>>,
     {
-        let result = (|| -> Option<OIntervalVector<T, D>> {
-            if !valid_system(lhs, rhs) {
-                return None;
+        if !self.tolerance.is_valid() {
+            return Err(SolveError::InvalidInput);
+        }
+        validate_system(lhs, rhs)?;
+        let mut x = match &self.initializer {
+            InitialEnclosure::Provided(enclosure) => {
+                if enclosure.nrows() != lhs.nrows()
+                    || enclosure.has_empty_entries()
+                    || enclosure.has_nai_entries()
+                {
+                    return Err(SolveError::InvalidInput);
+                }
+                enclosure.clone()
             }
-            let mut x = match &self.initializer {
-                InitialEnclosure::Provided(enclosure) => {
-                    if enclosure.nrows() != lhs.nrows()
-                        || enclosure.has_empty_entries()
-                        || enclosure.has_nai_entries()
-                    {
-                        return None;
-                    }
-                    enclosure.clone()
+            InitialEnclosure::WeightedNorm => lhs.try_initial_enclosure_v_norm(rhs)?,
+            InitialEnclosure::InfinityNorm => lhs.try_initial_enclosure_inf_norm(rhs)?,
+        };
+        let mut next = x.clone();
+        let (n, _) = lhs.shape();
+        for _ in 0..self.max_iterations {
+            // NOTE: Horacek's thesis says this assumes that there are no intervals containing 0 on
+            // the main diagonal of lhs. If this is not the case, "extended interval arithmetic can
+            // be used". I need to read more on this.
+            for i in 0..n {
+                let mut residual = rhs[i];
+                for j in 0..i {
+                    residual -= lhs[(i, j)] * next[j];
                 }
-                InitialEnclosure::WeightedNorm => lhs.initial_enclosure_v_norm(rhs)?,
-                InitialEnclosure::InfinityNorm => lhs.initial_enclosure_inf_norm(rhs)?,
-            };
-            let mut next = x.clone();
-            let (n, _) = lhs.shape();
-            for _ in 0..self.max_iterations {
-                // NOTE: Horacek's thesis says this assumes that there are no intervals containing 0 on
-                // the main diagonal of lhs. If this is not the case, "extended interval arithmetic can
-                // be used". I need to read more on this.
-                for i in 0..n {
-                    let mut residual = rhs[i];
-                    for j in 0..i {
-                        residual -= lhs[(i, j)] * next[j];
-                    }
-                    for j in (i + 1)..n {
-                        residual -= lhs[(i, j)] * x[j];
-                    }
-                    next[i] = residual / lhs[(i, i)];
+                for j in (i + 1)..n {
+                    residual -= lhs[(i, j)] * x[j];
                 }
-                next = next.intersection(&x);
-                if next.has_empty_entries() || next.has_nai_entries() {
-                    return None;
-                }
-                if enclosures_converged(&next, &x, self.tolerance) {
-                    return Some(next);
-                }
-                core::mem::swap(&mut x, &mut next);
+                next[i] = residual / lhs[(i, i)];
             }
-            None
-        })();
-        result.ok_or(SolveError::CertificationFailed {
+            next = next.intersection(&x);
+            if next.has_empty_entries() || next.has_nai_entries() {
+                return Err(SolveError::EmptyIntersection);
+            }
+            if enclosures_converged(&next, &x, self.tolerance) {
+                return Ok(next);
+            }
+            core::mem::swap(&mut x, &mut next);
+        }
+        Err(SolveError::CertificationFailed {
             iterations: self.max_iterations,
         })
     }

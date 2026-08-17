@@ -5,9 +5,7 @@ use core::{
 #[cfg(feature = "num-complex")]
 use num_complex::Complex64;
 
-#[cfg(feature = "num-complex")]
-use crate::EnclosureScalar;
-use crate::{DecoratedInterval, Decoration, Interval, IntervalOps, SignalSink};
+use crate::{DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalOps, SignalSink};
 
 #[derive(Copy, Clone, Debug)]
 /// A rectangular complex interval with independent real and imaginary components.
@@ -21,20 +19,30 @@ pub struct ComplexBox<I> {
     pub im: I,
 }
 
-#[cfg(feature = "num-complex")]
 #[allow(clippy::arithmetic_side_effects, clippy::use_self)]
-impl<I: IntervalOps> EnclosureScalar for ComplexBox<I> {
+impl<I: IntervalOps> EnclosureOps for ComplexBox<I> {
+    #[cfg(feature = "num-complex")]
     type Midpoint = Complex64;
+    #[cfg(not(feature = "num-complex"))]
+    type Midpoint = (f64, f64);
 
     const ZERO: Self = Self::ZERO;
     const ONE: Self = Self::ONE;
+    const EMPTY: Self = Self::EMPTY;
+    const ENTIRE: Self = Self::ENTIRE;
 
     fn singleton(value: f64) -> Self {
         Self::from(value)
     }
 
+    #[cfg(feature = "num-complex")]
     fn from_midpoint(value: Self::Midpoint) -> Self {
         Self::from(value)
+    }
+
+    #[cfg(not(feature = "num-complex"))]
+    fn from_midpoint(value: Self::Midpoint) -> Self {
+        Self::new(I::from(value.0), I::from(value.1))
     }
 
     fn inflate(self, relative: f64, absolute: f64) -> Self {
@@ -44,31 +52,251 @@ impl<I: IntervalOps> EnclosureScalar for ComplexBox<I> {
     }
 
     fn mul_add(self, rhs: Self, addend: Self) -> Self {
-        ComplexBox::mul_add(self, rhs, addend)
+        Self::new(
+            self.re
+                .mul_add(rhs.re, self.im.mul_add(Neg::neg(rhs.im), addend.re)),
+            self.re.mul_add(rhs.im, self.im.mul_add(rhs.re, addend.im)),
+        )
     }
 
+    fn recip(self) -> Self {
+        let denominator = Add::add(self.re.sqr(), self.im.sqr());
+        Self::new(
+            Div::div(self.re, denominator),
+            Div::div(Neg::neg(self.im), denominator),
+        )
+    }
+
+    fn sqr(self) -> Self {
+        Self::new(
+            Sub::sub(self.re.sqr(), self.im.sqr()),
+            Mul::mul(Mul::mul(self.re, self.im), 2.0),
+        )
+    }
+
+    fn sqrt(self) -> Self {
+        Mul::mul(0.5, self.log()).exp()
+    }
+
+    fn pown(self, exponent: i32) -> Self {
+        if self.is_empty_raw() {
+            return Self::empty_raw();
+        }
+        if exponent == 0 {
+            return Self::from(1.0);
+        }
+        let mut base = if exponent < 0 { self.recip() } else { self };
+        let mut exponent = exponent.unsigned_abs();
+        let mut result = Self::from(1.0);
+        while exponent != 0 {
+            if exponent & 1 != 0 {
+                result = Mul::mul(result, base);
+            }
+            exponent >>= 1;
+            if exponent != 0 {
+                base = base.sqr();
+            }
+        }
+        result
+    }
+
+    fn pow(self, other: Self) -> Self {
+        Mul::mul(other, self.log()).exp()
+    }
+
+    fn exp(self) -> Self {
+        let exp_re = self.re.exp();
+        Self::new(
+            Mul::mul(exp_re, self.im.cos()),
+            Mul::mul(exp_re, self.im.sin()),
+        )
+    }
+
+    fn exp2(self) -> Self {
+        Mul::mul(self, Self::from(I::from(2.0).log())).exp()
+    }
+
+    fn exp10(self) -> Self {
+        Mul::mul(self, Self::from(I::from(10.0).log())).exp()
+    }
+
+    fn log(self) -> Self {
+        Self::new(self.abs().log(), self.arg())
+    }
+
+    fn log2(self) -> Self {
+        Div::div(self.log(), Self::from(I::from(2.0).log()))
+    }
+
+    fn log10(self) -> Self {
+        Div::div(self.log(), Self::from(I::from(10.0).log()))
+    }
+
+    fn sin(self) -> Self {
+        Self::new(
+            Mul::mul(self.re.sin(), self.im.cosh()),
+            Mul::mul(self.re.cos(), self.im.sinh()),
+        )
+    }
+
+    fn cos(self) -> Self {
+        Self::new(
+            Mul::mul(self.re.cos(), self.im.cosh()),
+            Neg::neg(Mul::mul(self.re.sin(), self.im.sinh())),
+        )
+    }
+
+    fn tan(self) -> Self {
+        let twice_re = Mul::mul(self.re, 2.0);
+        let twice_im = Mul::mul(self.im, 2.0);
+        let denominator = Add::add(twice_re.cos(), twice_im.cosh());
+        Self::new(
+            Div::div(twice_re.sin(), denominator),
+            Div::div(twice_im.sinh(), denominator),
+        )
+    }
+
+    fn asin(self) -> Self {
+        let argument = Add::add(Mul::mul(Self::I, self), Sub::sub(1.0, self.sqr()).sqrt());
+        Mul::mul(Neg::neg(Self::I), argument.log())
+    }
+
+    fn acos(self) -> Self {
+        let argument = Add::add(self, Mul::mul(Self::I, Sub::sub(1.0, self.sqr()).sqrt()));
+        Mul::mul(Neg::neg(Self::I), argument.log())
+    }
+
+    fn atan(self) -> Self {
+        let iz = Mul::mul(Self::I, self);
+        let logarithms = Sub::sub(Sub::sub(1.0, iz).log(), Add::add(1.0, iz).log());
+        Mul::mul(Div::div(Self::I, 2.0), logarithms)
+    }
+
+    fn sinh(self) -> Self {
+        Self::new(
+            Mul::mul(self.re.sinh(), self.im.cos()),
+            Mul::mul(self.re.cosh(), self.im.sin()),
+        )
+    }
+
+    fn cosh(self) -> Self {
+        Self::new(
+            Mul::mul(self.re.cosh(), self.im.cos()),
+            Mul::mul(self.re.sinh(), self.im.sin()),
+        )
+    }
+
+    fn tanh(self) -> Self {
+        let twice_re = Mul::mul(self.re, 2.0);
+        let twice_im = Mul::mul(self.im, 2.0);
+        let denominator = Add::add(twice_re.cosh(), twice_im.cos());
+        Self::new(
+            Div::div(twice_re.sinh(), denominator),
+            Div::div(twice_im.sin(), denominator),
+        )
+    }
+
+    fn asinh(self) -> Self {
+        Add::add(self, Add::add(self.sqr(), 1.0).sqrt()).log()
+    }
+
+    fn acosh(self) -> Self {
+        Add::add(
+            self,
+            Mul::mul(Sub::sub(self, 1.0).sqrt(), Add::add(self, 1.0).sqrt()),
+        )
+        .log()
+    }
+
+    fn atanh(self) -> Self {
+        Mul::mul(
+            0.5,
+            Sub::sub(Add::add(1.0, self).log(), Sub::sub(1.0, self).log()),
+        )
+    }
+
+    #[cfg(feature = "num-complex")]
     fn mid(self) -> Self::Midpoint {
-        ComplexBox::mid(self)
+        Complex64::new(self.re.mid(), self.im.mid())
+    }
+
+    #[cfg(not(feature = "num-complex"))]
+    fn mid(self) -> Self::Midpoint {
+        (self.re.mid(), self.im.mid())
+    }
+
+    #[cfg(feature = "num-complex")]
+    fn contains(self, value: Self::Midpoint) -> bool {
+        value.re.is_finite()
+            && value.im.is_finite()
+            && I::from(value.re).subset(self.re)
+            && I::from(value.im).subset(self.im)
+    }
+
+    #[cfg(not(feature = "num-complex"))]
+    fn contains(self, value: Self::Midpoint) -> bool {
+        value.0.is_finite()
+            && value.1.is_finite()
+            && I::from(value.0).subset(self.re)
+            && I::from(value.1).subset(self.im)
+    }
+
+    #[cfg(feature = "num-complex")]
+    fn wid(self) -> Self::Midpoint {
+        Complex64::new(self.re.wid(), self.im.wid())
+    }
+
+    #[cfg(not(feature = "num-complex"))]
+    fn wid(self) -> Self::Midpoint {
+        (self.re.wid(), self.im.wid())
+    }
+
+    fn rad(self) -> f64 {
+        let re = self.re.rad();
+        let im = self.im.rad();
+        if re.is_nan() || im.is_nan() {
+            return f64::NAN;
+        }
+        I::from(re).hypot(I::from(im)).sup()
+    }
+
+    fn inner_rad(self) -> f64 {
+        let re = self.re.inner_rad();
+        let im = self.im.inner_rad();
+        if re.is_nan() || im.is_nan() {
+            return f64::NAN;
+        }
+        I::from(re).hypot(I::from(im)).sup()
+    }
+
+    #[cfg(feature = "num-complex")]
+    fn mid_rad(self) -> (Self::Midpoint, Self::Midpoint) {
+        (self.mid(), Complex64::new(self.re.rad(), self.im.rad()))
+    }
+
+    #[cfg(not(feature = "num-complex"))]
+    fn mid_rad(self) -> (Self::Midpoint, Self::Midpoint) {
+        (self.mid(), (self.re.rad(), self.im.rad()))
     }
 
     fn is_empty(self) -> bool {
-        ComplexBox::is_empty(self)
+        self.is_empty_raw()
     }
 
     fn is_nai(self) -> bool {
-        ComplexBox::is_nai(self)
+        self.re.is_nai() || self.im.is_nai()
     }
 
     fn is_entire(self) -> bool {
-        ComplexBox::is_entire(self)
+        self.re.is_entire() && self.im.is_entire()
     }
 
     fn is_singleton(self) -> bool {
-        ComplexBox::is_singleton(self)
+        !self.is_nai() && !self.is_empty() && self.re.is_singleton() && self.im.is_singleton()
     }
 
     fn is_bounded(self) -> bool {
-        ComplexBox::is_bounded(self)
+        self.re.is_bounded() && self.im.is_bounded()
     }
 
     fn equal(self, other: Self) -> bool {
@@ -76,27 +304,57 @@ impl<I: IntervalOps> EnclosureScalar for ComplexBox<I> {
     }
 
     fn subset(self, other: Self) -> bool {
-        ComplexBox::subset(self, other)
+        if self.is_nai() || other.is_nai() {
+            return false;
+        }
+        if self.is_empty() {
+            return true;
+        }
+        !other.is_empty() && self.re.subset(other.re) && self.im.subset(other.im)
     }
 
     fn interior(self, other: Self) -> bool {
-        ComplexBox::interior(self, other)
+        if self.is_nai() || other.is_nai() {
+            return false;
+        }
+        if self.is_empty() {
+            return true;
+        }
+        !other.is_empty() && self.re.interior(other.re) && self.im.interior(other.im)
+    }
+
+    fn disjoint(self, other: Self) -> bool {
+        self.re.disjoint(other.re) || self.im.disjoint(other.im)
     }
 
     fn intersection(self, other: Self) -> Self {
-        ComplexBox::intersection(self, other)
+        let result = Self::new(
+            self.re.intersection(other.re),
+            self.im.intersection(other.im),
+        );
+        if result.is_empty() {
+            Self::empty_raw()
+        } else {
+            result
+        }
     }
 
     fn convex_hull(self, other: Self) -> Self {
-        ComplexBox::convex_hull(self, other)
+        if self.is_empty() {
+            return other;
+        }
+        if other.is_empty() {
+            return self;
+        }
+        Self::new(self.re.convex_hull(other.re), self.im.convex_hull(other.im))
     }
 
     fn mag(self) -> f64 {
-        ComplexBox::mag(self)
+        self.abs().sup()
     }
 
     fn mig(self) -> f64 {
-        ComplexBox::mig(self)
+        self.abs().inf()
     }
 }
 
@@ -161,48 +419,16 @@ impl<I: IntervalOps> ComplexBox<I> {
         self.abs()
     }
 
-    /// Returns the componentwise midpoint as a complex scalar.
-    #[cfg(feature = "num-complex")]
-    pub fn mid(self) -> Complex64 {
-        Complex64::new(self.re.mid(), self.im.mid())
-    }
-
     /// Returns the componentwise interval widths.
     #[cfg(feature = "num-complex")]
     pub fn wid_box(self) -> Complex64 {
         Complex64::new(self.re.wid(), self.im.wid())
     }
 
-    /// Alias for [`ComplexBox::wid_box`].
-    #[cfg(feature = "num-complex")]
-    pub fn wid(self) -> Complex64 {
-        self.wid_box()
-    }
-
     /// Returns the componentwise interval radii.
     #[cfg(feature = "num-complex")]
     pub fn rad_box(self) -> Complex64 {
         Complex64::new(self.re.rad(), self.im.rad())
-    }
-
-    /// Returns the Euclidean radius of the rectangular box.
-    pub fn rad(self) -> f64 {
-        let re = self.re.rad();
-        let im = self.im.rad();
-        if re.is_nan() || im.is_nan() {
-            return f64::NAN;
-        }
-        I::from(re).hypot(I::from(im)).sup()
-    }
-
-    /// Returns the Euclidean radius of the rectangular box rounded down
-    pub fn inner_rad(self) -> f64 {
-        let re = self.re.inner_rad();
-        let im = self.im.inner_rad();
-        if re.is_nan() || im.is_nan() {
-            return f64::NAN;
-        }
-        I::from(re).hypot(I::from(im)).sup()
     }
 
     /// Returns the Euclidean length of the box diagonal.
@@ -213,16 +439,6 @@ impl<I: IntervalOps> ComplexBox<I> {
             return f64::NAN;
         }
         I::from(re).hypot(I::from(im)).sup()
-    }
-
-    /// Returns an upper bound on the modulus of every represented value.
-    pub fn mag(self) -> f64 {
-        self.abs().sup()
-    }
-
-    /// Returns a lower bound on the modulus of every represented value.
-    pub fn mig(self) -> f64 {
-        self.abs().inf()
     }
 
     /// Encloses the complex argument in radians.
@@ -270,44 +486,6 @@ impl<I: IntervalOps> ComplexBox<I> {
         ]
     }
 
-    /// Returns componentwise midpoints and radii.
-    #[cfg(feature = "num-complex")]
-    pub fn mid_rad(self) -> (Complex64, Complex64) {
-        (self.mid(), self.rad_box())
-    }
-
-    /// Returns whether either component is empty.
-    pub fn is_empty(self) -> bool {
-        self.is_empty_raw()
-    }
-
-    /// Returns whether both components are entire intervals.
-    pub fn is_entire(self) -> bool {
-        self.re.is_entire() && self.im.is_entire()
-    }
-
-    /// Returns whether either component is `NaI`.
-    pub fn is_nai(self) -> bool {
-        self.re.is_nai() || self.im.is_nai()
-    }
-
-    /// Returns whether the box contains exactly one complex value.
-    #[allow(clippy::float_cmp)]
-    pub fn is_singleton(self) -> bool {
-        !self.is_nai()
-            && !self.is_empty()
-            && self.re.inf() == self.re.sup()
-            && self.im.inf() == self.im.sup()
-    }
-
-    /// Returns whether all component endpoints are finite.
-    pub fn is_bounded(self) -> bool {
-        self.re.inf().is_finite()
-            && self.im.inf().is_finite()
-            && self.re.sup().is_finite()
-            && self.im.sup().is_finite()
-    }
-
     /// Returns whether this is the singleton complex zero.
     pub fn is_zero(self) -> bool {
         self.is_singleton() && self.re.inf() == 0.0 && self.im.inf() == 0.0
@@ -316,292 +494,6 @@ impl<I: IntervalOps> ComplexBox<I> {
     /// Returns whether every represented value is real.
     pub fn is_real(self) -> bool {
         !self.is_empty() && !self.is_nai() && self.im.inf() == 0.0 && self.im.sup() == 0.0
-    }
-
-    /// Returns whether the finite complex scalar belongs to this box.
-    #[cfg(feature = "num-complex")]
-    pub fn contains(self, value: Complex64) -> bool {
-        !value.re.is_nan()
-            && !value.im.is_nan()
-            && I::from(value.re).subset(self.re)
-            && I::from(value.im).subset(self.im)
-    }
-
-    /// Returns whether this rectangular set is a subset of `other`.
-    pub fn subset(self, other: Self) -> bool {
-        if self.is_nai() || other.is_nai() {
-            return false;
-        }
-        if self.is_empty() {
-            return true;
-        }
-        if other.is_empty() {
-            return false;
-        }
-        self.re.subset(other.re) && self.im.subset(other.im)
-    }
-
-    /// Returns whether this box lies in the interior of `other`.
-    pub fn interior(self, other: Self) -> bool {
-        if self.is_nai() || other.is_nai() {
-            return false;
-        }
-        if self.is_empty() {
-            return true;
-        }
-        if other.is_empty() {
-            return false;
-        }
-        self.re.interior(other.re) && self.im.interior(other.im)
-    }
-
-    /// Returns whether the two boxes have no common complex value.
-    pub fn disjoint(self, other: Self) -> bool {
-        self.re.disjoint(other.re) || self.im.disjoint(other.im)
-    }
-
-    /// Returns whether the two boxes share at least one complex value.
-    pub fn intersects(self, other: Self) -> bool {
-        !self.disjoint(other)
-    }
-
-    /// Returns the rectangular intersection of two boxes.
-    #[must_use]
-    pub fn intersection(self, other: Self) -> Self {
-        let result = Self::new(
-            self.re.intersection(other.re),
-            self.im.intersection(other.im),
-        );
-        if result.is_empty() {
-            Self::empty_raw()
-        } else {
-            result
-        }
-    }
-
-    /// Returns the smallest rectangular box containing both operands.
-    #[must_use]
-    pub fn convex_hull(self, other: Self) -> Self {
-        if self.is_empty() {
-            return other;
-        }
-        if other.is_empty() {
-            return self;
-        }
-        Self::new(self.re.convex_hull(other.re), self.im.convex_hull(other.im))
-    }
-
-    /// Encloses the complex reciprocal.
-    #[must_use]
-    pub fn recip(self) -> Self {
-        let denom = Add::add(self.re.sqr(), self.im.sqr());
-        Self::new(Div::div(self.re, denom), Div::div(Neg::neg(self.im), denom))
-    }
-
-    /// Encloses the complex square.
-    #[must_use]
-    pub fn sqr(self) -> Self {
-        Self::new(
-            Sub::sub(self.re.sqr(), self.im.sqr()),
-            Mul::mul(Mul::mul(self.re, self.im), 2.0),
-        )
-    }
-
-    /// Encloses the principal complex square root.
-    #[must_use]
-    pub fn sqrt(self) -> Self {
-        Mul::mul(0.5, self.log()).exp()
-    }
-
-    /// Encloses `self * y + z` componentwise using fused operations.
-    #[must_use]
-    pub fn mul_add(self, y: Self, z: Self) -> Self {
-        Self::new(
-            self.re.mul_add(y.re, self.im.mul_add(Neg::neg(y.im), z.re)),
-            self.re.mul_add(y.im, self.im.mul_add(y.re, z.im)),
-        )
-    }
-
-    /// Raises this box to an integer power by exponentiation by squaring.
-    #[must_use]
-    pub fn pown(self, p: i32) -> Self {
-        if self.is_empty_raw() {
-            return Self::empty_raw();
-        }
-        if p == 0 {
-            return Self::from(1.0);
-        }
-        let mut base = if p < 0 { self.recip() } else { self };
-        let mut exponent = p.unsigned_abs();
-        let mut result = Self::from(1.0);
-        while exponent != 0 {
-            if exponent & 1 != 0 {
-                result = Mul::mul(result, base);
-            }
-            exponent >>= 1;
-            if exponent != 0 {
-                base = base.sqr();
-            }
-        }
-        result
-    }
-
-    /// Alias for [`ComplexBox::pown`].
-    #[must_use]
-    pub fn powi(self, i: i32) -> Self {
-        self.pown(i)
-    }
-
-    /// Encloses the principal complex power with exponents in `other`.
-    #[must_use]
-    pub fn pow(self, other: Self) -> Self {
-        Mul::mul(other, self.log()).exp()
-    }
-
-    /// Encloses the complex exponential.
-    #[must_use]
-    pub fn exp(self) -> Self {
-        Self::new(
-            Mul::mul(self.re.exp(), self.im.cos()),
-            Mul::mul(self.re.exp(), self.im.sin()),
-        )
-    }
-
-    /// Encloses the base-two complex exponential.
-    #[must_use]
-    pub fn exp2(self) -> Self {
-        Mul::mul(self, Self::from(I::from(2.0).log())).exp()
-    }
-
-    /// Encloses the base-ten complex exponential.
-    #[must_use]
-    pub fn exp10(self) -> Self {
-        Mul::mul(self, Self::from(I::from(10.0).log())).exp()
-    }
-
-    /// Encloses the principal complex logarithm.
-    #[must_use]
-    pub fn log(self) -> Self {
-        Self::new(self.abs().log(), self.arg())
-    }
-
-    /// Encloses the principal base-two complex logarithm.
-    #[must_use]
-    pub fn log2(self) -> Self {
-        Div::div(self.log(), Self::from(I::from(2.0).log()))
-    }
-
-    /// Encloses the principal base-ten complex logarithm.
-    #[must_use]
-    pub fn log10(self) -> Self {
-        Div::div(self.log(), Self::from(I::from(10.0).log()))
-    }
-
-    /// Encloses the complex sine.
-    #[must_use]
-    pub fn sin(self) -> Self {
-        Self::new(
-            Mul::mul(self.re.sin(), self.im.cosh()),
-            Mul::mul(self.re.cos(), self.im.sinh()),
-        )
-    }
-
-    /// Encloses the complex cosine.
-    #[must_use]
-    pub fn cos(self) -> Self {
-        Self::new(
-            Mul::mul(self.re.cos(), self.im.cosh()),
-            Neg::neg(Mul::mul(self.re.sin(), self.im.sinh())),
-        )
-    }
-
-    /// Encloses the complex tangent.
-    #[must_use]
-    pub fn tan(self) -> Self {
-        let twice_re = Mul::mul(self.re, 2.0);
-        let twice_im = Mul::mul(self.im, 2.0);
-        let denom = Add::add(twice_re.cos(), twice_im.cosh());
-        Self::new(
-            Div::div(twice_re.sin(), denom),
-            Div::div(twice_im.sinh(), denom),
-        )
-    }
-
-    /// Encloses the principal complex inverse sine.
-    #[must_use]
-    pub fn asin(self) -> Self {
-        let argument = Add::add(Mul::mul(Self::I, self), Sub::sub(1.0, self.sqr()).sqrt());
-        Mul::mul(Neg::neg(Self::I), argument.log())
-    }
-
-    /// Encloses the principal complex inverse cosine.
-    #[must_use]
-    pub fn acos(self) -> Self {
-        let argument = Add::add(self, Mul::mul(Self::I, Sub::sub(1.0, self.sqr()).sqrt()));
-        Mul::mul(Neg::neg(Self::I), argument.log())
-    }
-
-    /// Encloses the principal complex inverse tangent.
-    #[must_use]
-    pub fn atan(self) -> Self {
-        let iz = Mul::mul(Self::I, self);
-        let logarithms = Sub::sub(Sub::sub(1.0, iz).log(), Add::add(1.0, iz).log());
-        Mul::mul(Div::div(Self::I, 2.0), logarithms)
-    }
-
-    /// Encloses the complex hyperbolic sine.
-    #[must_use]
-    pub fn sinh(self) -> Self {
-        Self::new(
-            Mul::mul(self.re.sinh(), self.im.cos()),
-            Mul::mul(self.re.cosh(), self.im.sin()),
-        )
-    }
-
-    /// Encloses the complex hyperbolic cosine.
-    #[must_use]
-    pub fn cosh(self) -> Self {
-        Self::new(
-            Mul::mul(self.re.cosh(), self.im.cos()),
-            Mul::mul(self.re.sinh(), self.im.sin()),
-        )
-    }
-
-    /// Encloses the complex hyperbolic tangent.
-    #[must_use]
-    pub fn tanh(self) -> Self {
-        let twice_re = Mul::mul(self.re, 2.0);
-        let twice_im = Mul::mul(self.im, 2.0);
-        let denom = Add::add(twice_re.cosh(), twice_im.cos());
-        Self::new(
-            Div::div(twice_re.sinh(), denom),
-            Div::div(twice_im.sin(), denom),
-        )
-    }
-
-    /// Encloses the principal complex inverse hyperbolic sine.
-    #[must_use]
-    pub fn asinh(self) -> Self {
-        Add::add(self, Add::add(self.sqr(), 1.0).sqrt()).log()
-    }
-
-    /// Encloses the principal complex inverse hyperbolic cosine.
-    #[must_use]
-    pub fn acosh(self) -> Self {
-        Add::add(
-            self,
-            Mul::mul(Sub::sub(self, 1.0).sqrt(), Add::add(self, 1.0).sqrt()),
-        )
-        .log()
-    }
-
-    /// Encloses the principal complex inverse hyperbolic tangent.
-    #[must_use]
-    pub fn atanh(self) -> Self {
-        Mul::mul(
-            0.5,
-            Sub::sub(Add::add(1.0, self).log(), Sub::sub(1.0, self).log()),
-        )
     }
 }
 

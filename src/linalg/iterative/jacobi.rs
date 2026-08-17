@@ -5,8 +5,8 @@ use nalgebra::{
 };
 
 use crate::{
-    InitialEnclosure, IntervalMatrix, IntervalOps, OIntervalMatrix, OIntervalVector, SolveError,
-    Solver, StoppingTolerance,
+    EnclosureOps, InitialEnclosure, IntervalMatrix, IntervalOps, OIntervalMatrix, OIntervalVector,
+    SolveError, Solver, StoppingTolerance,
     linalg::iterative::{enclosures_converged, validate_system},
 };
 
@@ -129,7 +129,7 @@ where
         };
         let (dim, _) = lhs.shape_generic();
         let d_inv =
-            OIntervalMatrix::<T, D, D>::from_diagonal(&lhs.diagonal().map(IntervalOps::recip));
+            OIntervalMatrix::<T, D, D>::from_diagonal(&lhs.diagonal().map(EnclosureOps::recip));
         let j = OIntervalMatrix::<T, D, D>::from_fn_generic(dim, dim, |i, j| {
             if i == j { T::ZERO } else { lhs[(i, j)] }
         });

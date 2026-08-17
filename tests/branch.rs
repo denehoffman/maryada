@@ -4,9 +4,9 @@
 #![allow(clippy::indexing_slicing)]
 
 use maryada::{
-    BestFirstQueue, Bisect, BranchAndBound, GlobalMinimizationResult, GlobalMinimizer,
-    GlobalMinimizerError, GlobalMinimizerOptions, GlobalMinimizerOptionsError, Interval,
-    IntervalOps, PruneDecision, Pruner, RunStatus, StepOutcome, Unresolved, WorkQueue,
+    BestFirstQueue, Bisect, BranchAndBound, EnclosureOps, GlobalMinimizationResult,
+    GlobalMinimizer, GlobalMinimizerError, GlobalMinimizerOptions, GlobalMinimizerOptionsError,
+    Interval, IntervalOps, PruneDecision, Pruner, RunStatus, StepOutcome, Unresolved, WorkQueue,
 };
 
 #[test]

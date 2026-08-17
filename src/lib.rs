@@ -9,10 +9,12 @@
 //! generic over [`IntervalDatum`], so the same standards-oriented free-function
 //! API works with bare and decorated intervals.
 //!
-//! [`IntervalOps`] offers the same operations in a chaining-friendly form:
+//! [`EnclosureOps`] provides chaining-friendly operations shared by real
+//! intervals and complex boxes. [`IntervalOps`] adds operations specific to
+//! real intervals:
 //!
 //! ```
-//! use maryada::{Interval, IntervalOps};
+//! use maryada::{EnclosureOps, Interval, IntervalOps};
 //!
 //! let x = Interval::new(1.0, 2.0);
 //! let y = x.sqr();
@@ -48,7 +50,7 @@ mod ux;
 pub use branch::*;
 #[cfg(feature = "complex")]
 pub use complex::ComplexBox;
-pub use enclosure::EnclosureScalar;
+pub use enclosure::EnclosureOps;
 pub use interchange::*;
 #[cfg(all(feature = "linalg", feature = "num-complex", feature = "alloc"))]
 pub use linalg::{DComplexIntervalMatrix, DComplexIntervalRowVector, DComplexIntervalVector};
@@ -75,5 +77,5 @@ pub use ux::IntervalOps;
 pub mod prelude {
     //! Common interval types for glob imports.
 
-    pub use crate::{DecoratedInterval, Decoration, Interval, IntervalOps};
+    pub use crate::{DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalOps};
 }

@@ -3,7 +3,8 @@
 #![cfg(feature = "num-complex")]
 
 use maryada::{
-    ComplexBox, DecoratedInterval, Decoration, Interval, IntervalOps, decoration_part, set_dec,
+    ComplexBox, DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalOps,
+    decoration_part, set_dec,
 };
 use num_complex::Complex64;
 

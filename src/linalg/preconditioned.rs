@@ -6,7 +6,7 @@ use nalgebra::{
 
 use crate::OIntervalMatrix;
 
-use super::{EnclosureScalar, IntervalMatrix, SolveError, Solver};
+use super::{EnclosureOps, IntervalMatrix, SolveError, Solver};
 
 /// Strategy used to left-precondition an interval linear system.
 #[derive(Default)]
@@ -54,7 +54,7 @@ where
         lhs: &IntervalMatrix<T, D, D, S>,
     ) -> Result<OIntervalMatrix<T, D, D>, SolveError>
     where
-        T: EnclosureScalar<Midpoint = P> + Scalar,
+        T: EnclosureOps<Midpoint = P> + Scalar,
         S: Storage<T, D, D>,
         DefaultAllocator: Allocator<D, D> + Allocator<D>,
     {
@@ -103,7 +103,7 @@ where
     #[must_use]
     pub fn matrix<T, S>(&self, lhs: &IntervalMatrix<T, D, D, S>) -> Option<OIntervalMatrix<T, D, D>>
     where
-        T: EnclosureScalar<Midpoint = P> + Scalar,
+        T: EnclosureOps<Midpoint = P> + Scalar,
         S: Storage<T, D, D>,
         DefaultAllocator: Allocator<D, D> + Allocator<D>,
     {
@@ -114,7 +114,7 @@ where
     #[must_use]
     pub fn auto<T, S>(lhs: &IntervalMatrix<T, D, D, S>) -> Option<Self>
     where
-        T: EnclosureScalar<Midpoint = P> + Scalar,
+        T: EnclosureOps<Midpoint = P> + Scalar,
         S: Storage<T, D, D>,
         DefaultAllocator: Allocator<D, D> + Allocator<D>,
     {
@@ -191,7 +191,7 @@ where
     #[must_use]
     pub fn auto<T, SA>(solver: S, lhs: &IntervalMatrix<T, D, D, SA>) -> Self
     where
-        T: EnclosureScalar<Midpoint = P> + Scalar,
+        T: EnclosureOps<Midpoint = P> + Scalar,
         SA: Storage<T, D, D>,
         DefaultAllocator: Allocator<D, D> + Allocator<D>,
     {
@@ -223,7 +223,7 @@ where
 
 impl<T, D, S, P> Solver<T, D> for Preconditioned<D, S, P>
 where
-    T: EnclosureScalar<Midpoint = P> + Scalar,
+    T: EnclosureOps<Midpoint = P> + Scalar,
     P: ComplexField + Copy,
     D: Dim,
     S: Solver<T, D>,

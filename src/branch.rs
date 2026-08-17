@@ -16,7 +16,7 @@ extern crate alloc;
 use alloc::{collections::BinaryHeap, vec::Vec};
 use core::{cmp::Ordering, fmt};
 
-use crate::{Interval, IntervalOps};
+use crate::{EnclosureOps, Interval, IntervalOps};
 
 #[cfg(feature = "complex")]
 use crate::ComplexBox;

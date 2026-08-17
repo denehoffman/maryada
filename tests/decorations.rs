@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 use maryada::{
-    DecoratedInterval, Decoration, Interval, IntervalOps, add, ceil, decoration_part, fma,
-    intersection, neg, new_dec, set_dec, sign, sqrt,
+    DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalOps, add, ceil, decoration_part,
+    fma, intersection, neg, new_dec, set_dec, sign, sqrt,
 };
 
 fn assert_decoration(value: DecoratedInterval, expected: Decoration) {

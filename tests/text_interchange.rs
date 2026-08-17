@@ -6,8 +6,8 @@
     clippy::unwrap_used
 )]
 use maryada::{
-    DecoratedInterval, Decoration, Interval, IntervalOps, Signal, SignalFlags, TextError,
-    decoration_part, interval_to_text, set_dec, subset,
+    DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalOps, Signal, SignalFlags,
+    TextError, decoration_part, interval_to_text, set_dec, subset,
 };
 
 #[test]

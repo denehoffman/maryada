@@ -32,7 +32,26 @@ The `branch` feature provides a resumable generic `BranchAndBound` scheduler,
 pluggable evaluators, pruners, branching rules, and work queues. Its
 `GlobalMinimizer` convenience layer implements best-first interval subdivision;
 domains can be real intervals, complex boxes, vectors, or custom types that
-implement `Bisect` and optionally `Midpoint`.
+implement `Bisect` and optionally `Midpoint`. A new minimizer has finite
+value-width, parameter-width, and global-gap defaults and no step limit:
+
+```rust,ignore
+let result = GlobalMinimizer::new(domain, objective).solve()?;
+```
+
+Use `with_value_tolerance`, `with_domain_tolerance`, `with_gap_tolerance`, and
+`with_max_steps` to build a different policy. `advance(n)` is available when
+an explicit bounded, resumable step is desired. Disabled tolerances are
+represented by `None`; `solve` rejects a configuration with neither a
+tolerance nor a step limit.
+
+In a `GlobalMinimizationResult`, `minimum` is the rigorous enclosure of the
+global minimum value. `best_point`, `best_domain`, and `best_value` identify the
+point that supplied the current upper bound, the associated parameter domain,
+and the objective enclosure over that domain, respectively. `best_value` is
+therefore not expected to equal `minimum`: the lower global bound can come
+from a different queued, unresolved, or certified box. `unresolved` contains
+live domains when the result stopped before the queue was exhausted.
 
 I have added some basic support for complex-valued operations (not defined in the IEEE standard). Note that complex functions transform interval spaces in nontrivial ways, so while the resulting image from this library will contain the true image, it is not guaranteed to be equal to it, though it may be equal under certain operations.
 

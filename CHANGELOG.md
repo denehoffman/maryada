@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.1](https://github.com/denehoffman/maryada/compare/v0.2.0...v0.2.1) (2026-08-17)
+
+
+### Features
+
+* Add branch and bound and some complex matrix solves ([9f3deeb](https://github.com/denehoffman/maryada/commit/9f3deeb6670a65960874398523ec61bea7e7bcd4))
+* **linalg:** Add diagnostic errors to interval solvers ([1f6677f](https://github.com/denehoffman/maryada/commit/1f6677fe49ad17532d544f58c6a3630a22e7c9c8))
+* Make BnB easier to use ([03d71da](https://github.com/denehoffman/maryada/commit/03d71daf569136ef80e57846e7ac0004d9f9b1c3))
+
+
+### Bug fixes
+
+* Clippy lints ([d22f9db](https://github.com/denehoffman/maryada/commit/d22f9db3de317f34d75808fc03bafd6f852afc12))
+
+
+### Code refactoring
+
+* Rework trait interface ([2810880](https://github.com/denehoffman/maryada/commit/28108801d912f644231066adf0ec607703c2253b))
+
 ## [0.2.0](https://github.com/denehoffman/maryada/compare/v0.1.2...v0.2.0) (2026-08-16)
 
 

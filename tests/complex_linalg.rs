@@ -1,5 +1,5 @@
-#![cfg(feature = "complex-linalg")]
 #![allow(missing_docs)]
+#![cfg(feature = "complex-linalg")]
 #![allow(clippy::expect_used, clippy::indexing_slicing, clippy::op_ref)]
 
 use maryada::{

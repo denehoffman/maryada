@@ -1,5 +1,5 @@
-#![cfg(feature = "branch")]
 #![allow(missing_docs)]
+#![cfg(feature = "branch")]
 #![allow(clippy::float_cmp, clippy::unwrap_used)]
 #![allow(clippy::indexing_slicing)]
 

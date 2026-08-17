@@ -125,9 +125,7 @@ where
 
         let (dim, _) = lhs.shape_generic();
 
-        // R ~ inv(mid(A)). The point inverse is kept separate from its
-        // singleton interval embedding so the midpoint solve remains a point
-        // operation and all subsequent products use interval arithmetic.
+        // R ~ inv(mid(A)).
         let midpoint = lhs.mid();
         if midpoint.iter().any(|entry| !entry.is_finite()) {
             return Err(SolveError::InvalidInput);
@@ -141,11 +139,11 @@ where
         });
         let identity = OIntervalMatrix::<T, D, D>::identity_generic(dim);
 
-        // Let x̃ = R mid(b).  Writing x = x̃ + d gives
+        // Let x̃ = R mid(b). Writing x = x̃ + d gives
         //
         //     d = R (b - A x̃) + (I - R A) d = Z + C d.
         //
-        // This residual-centred form is important for thick right-hand
+        // This residual-centered form is important for thick right-hand
         // sides (and is the form used by the verified Rump/Krawczyk method).
         let midpoint_rhs = rhs.mid();
         if midpoint_rhs.iter().any(|entry| !entry.is_finite()) {
@@ -164,12 +162,12 @@ where
         let correction = &r_interval * &residual_rhs;
         let iteration_matrix = &identity - &(&r_interval * lhs);
 
-        // Start from the residual enclosure.  Every iterate below is an
+        // Start from the residual enclosure. Every iterate below is an
         // enclosure for the correction d, not for the absolute solution x.
         let mut correction_enclosure = correction.clone();
         for _ in 0..self.max_iterations {
             // Inflate the current correction enclosure before applying the
-            // fixed-point map.  The strict interior test is the existence
+            // fixed-point map. The strict interior test is the existence
             // certificate: if F(Y) ⊂ int(Y), then the united solution set is
             // contained in F(Y), hence x̃ + F(Y) encloses every solution.
             let inflated = correction_enclosure

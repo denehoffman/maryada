@@ -17,7 +17,7 @@ nalgebra = { version = "0.35.0", default-features = false, optional = true, feat
 num-complex = { version = "0.4.6", default-features = false, optional = true }
 
 [features]
-default = ["branch"]
+default = []
 alloc = ["nalgebra?/alloc"]
 branch = ["alloc"]
 complex = []

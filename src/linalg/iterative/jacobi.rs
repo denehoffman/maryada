@@ -7,7 +7,7 @@ use nalgebra::{
 use crate::{
     InitialEnclosure, IntervalMatrix, IntervalOps, OIntervalMatrix, OIntervalVector, SolveError,
     Solver, StoppingTolerance,
-    linalg::iterative::{enclosures_converged, valid_system},
+    linalg::iterative::{enclosures_converged, validate_system},
 };
 
 /// The Jacobi iterative method for interval linear systems.
@@ -110,46 +110,44 @@ where
         SA: Storage<T, D, D>,
         SB: Storage<T, D, Const<1>>,
     {
-        let result = (|| -> Option<OIntervalVector<T, D>> {
-            if !valid_system(lhs, rhs) {
-                return None;
+        if !self.tolerance.is_valid() {
+            return Err(SolveError::InvalidInput);
+        }
+        validate_system(lhs, rhs)?;
+        let mut x = match &self.initializer {
+            InitialEnclosure::Provided(enclosure) => {
+                if enclosure.nrows() != lhs.nrows()
+                    || enclosure.has_empty_entries()
+                    || enclosure.has_nai_entries()
+                {
+                    return Err(SolveError::InvalidInput);
+                }
+                enclosure.clone()
             }
-            let mut x = match &self.initializer {
-                InitialEnclosure::Provided(enclosure) => {
-                    if enclosure.nrows() != lhs.nrows()
-                        || enclosure.has_empty_entries()
-                        || enclosure.has_nai_entries()
-                    {
-                        return None;
-                    }
-                    enclosure.clone()
-                }
-                InitialEnclosure::WeightedNorm => lhs.initial_enclosure_v_norm(rhs)?,
-                InitialEnclosure::InfinityNorm => lhs.initial_enclosure_inf_norm(rhs)?,
-            };
-            let (dim, _) = lhs.shape_generic();
-            let d_inv =
-                OIntervalMatrix::<T, D, D>::from_diagonal(&lhs.diagonal().map(IntervalOps::recip));
-            let j = OIntervalMatrix::<T, D, D>::from_fn_generic(dim, dim, |i, j| {
-                if i == j { T::ZERO } else { lhs[(i, j)] }
-            });
-            for _ in 0..self.max_iterations {
-                // NOTE: Horacek's thesis says this assumes that there are no intervals containing 0 on
-                // the main diagonal of lhs. If this is not the case, "extended interval arithmetic can
-                // be used". I need to read more on this.
-                let y = &d_inv * (rhs - &j * &x);
-                let next = y.intersection(&x);
-                if next.has_empty_entries() || next.has_nai_entries() {
-                    return None;
-                }
-                if enclosures_converged(&next, &x, self.tolerance) {
-                    return Some(next);
-                }
-                x = next;
+            InitialEnclosure::WeightedNorm => lhs.try_initial_enclosure_v_norm(rhs)?,
+            InitialEnclosure::InfinityNorm => lhs.try_initial_enclosure_inf_norm(rhs)?,
+        };
+        let (dim, _) = lhs.shape_generic();
+        let d_inv =
+            OIntervalMatrix::<T, D, D>::from_diagonal(&lhs.diagonal().map(IntervalOps::recip));
+        let j = OIntervalMatrix::<T, D, D>::from_fn_generic(dim, dim, |i, j| {
+            if i == j { T::ZERO } else { lhs[(i, j)] }
+        });
+        for _ in 0..self.max_iterations {
+            // NOTE: Horacek's thesis says this assumes that there are no intervals containing 0 on
+            // the main diagonal of lhs. If this is not the case, "extended interval arithmetic can
+            // be used". I need to read more on this.
+            let y = &d_inv * (rhs - &j * &x);
+            let next = y.intersection(&x);
+            if next.has_empty_entries() || next.has_nai_entries() {
+                return Err(SolveError::EmptyIntersection);
             }
-            None
-        })();
-        result.ok_or(SolveError::CertificationFailed {
+            if enclosures_converged(&next, &x, self.tolerance) {
+                return Ok(next);
+            }
+            x = next;
+        }
+        Err(SolveError::CertificationFailed {
             iterations: self.max_iterations,
         })
     }

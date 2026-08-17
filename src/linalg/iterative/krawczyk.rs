@@ -7,7 +7,7 @@ use nalgebra::{
 use crate::{
     InitialEnclosure, IntervalMatrix, IntervalOps, OIntervalMatrix, OIntervalVector, SolveError,
     Solver, StoppingTolerance,
-    linalg::iterative::{enclosures_converged, valid_system},
+    linalg::iterative::{enclosures_converged, validate_system},
 };
 
 /// Krawczyk's iterative method for interval linear systems.
@@ -110,40 +110,38 @@ where
         SA: Storage<T, D, D>,
         SB: Storage<T, D, Const<1>>,
     {
-        let result = (|| -> Option<OIntervalVector<T, D>> {
-            if !valid_system(lhs, rhs) {
-                return None;
+        if !self.tolerance.is_valid() {
+            return Err(SolveError::InvalidInput);
+        }
+        validate_system(lhs, rhs)?;
+        let mut x = match &self.initializer {
+            InitialEnclosure::Provided(enclosure) => {
+                if enclosure.nrows() != lhs.nrows()
+                    || enclosure.has_empty_entries()
+                    || enclosure.has_nai_entries()
+                {
+                    return Err(SolveError::InvalidInput);
+                }
+                enclosure.clone()
             }
-            let mut x = match &self.initializer {
-                InitialEnclosure::Provided(enclosure) => {
-                    if enclosure.nrows() != lhs.nrows()
-                        || enclosure.has_empty_entries()
-                        || enclosure.has_nai_entries()
-                    {
-                        return None;
-                    }
-                    enclosure.clone()
-                }
-                InitialEnclosure::WeightedNorm => lhs.initial_enclosure_v_norm(rhs)?,
-                InitialEnclosure::InfinityNorm => lhs.initial_enclosure_inf_norm(rhs)?,
-            };
-            let (dim, _) = lhs.shape_generic();
-            let identity = OIntervalMatrix::<T, D, D>::identity_generic(dim);
-            let residual = &identity - lhs;
-            for _ in 0..self.max_iterations {
-                let y = rhs + &residual * &x;
-                let next = y.intersection(&x);
-                if next.has_empty_entries() || next.has_nai_entries() {
-                    return None;
-                }
-                if enclosures_converged(&next, &x, self.tolerance) {
-                    return Some(next);
-                }
-                x = next;
+            InitialEnclosure::WeightedNorm => lhs.try_initial_enclosure_v_norm(rhs)?,
+            InitialEnclosure::InfinityNorm => lhs.try_initial_enclosure_inf_norm(rhs)?,
+        };
+        let (dim, _) = lhs.shape_generic();
+        let identity = OIntervalMatrix::<T, D, D>::identity_generic(dim);
+        let residual = &identity - lhs;
+        for _ in 0..self.max_iterations {
+            let y = rhs + &residual * &x;
+            let next = y.intersection(&x);
+            if next.has_empty_entries() || next.has_nai_entries() {
+                return Err(SolveError::EmptyIntersection);
             }
-            None
-        })();
-        result.ok_or(SolveError::CertificationFailed {
+            if enclosures_converged(&next, &x, self.tolerance) {
+                return Ok(next);
+            }
+            x = next;
+        }
+        Err(SolveError::CertificationFailed {
             iterations: self.max_iterations,
         })
     }

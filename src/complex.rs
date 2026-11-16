@@ -75,6 +75,13 @@ impl<I: IntervalOps> EnclosureOps for ComplexBox<I> {
     }
 
     fn sqrt(self) -> Self {
+        if self.is_zero() {
+            // The logarithmic formula is undefined at zero.
+            let zero = self
+                .re
+                .__binary_result(self.im, Interval::ZERO, Decoration::Com);
+            return Self::new(zero, zero);
+        }
         Mul::mul(0.5, self.log()).exp()
     }
 

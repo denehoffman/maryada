@@ -1,7 +1,9 @@
 #![allow(missing_docs)]
 #![cfg(feature = "complex")]
 
-use maryada::{ComplexBox, DecoratedInterval, EnclosureOps, Interval, IntervalOps};
+use maryada::{
+    ComplexBox, DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalOps, set_dec,
+};
 
 #[test]
 fn complex_boxes_work_without_num_complex() {
@@ -13,6 +15,50 @@ fn complex_boxes_work_without_num_complex() {
     assert_eq!(sum.im.bounds(), (4.0, 5.0));
     assert!(x.is_bounded());
     assert!(x.diameter().is_finite());
+}
+
+#[test]
+fn complex_square_root_maps_zero_to_zero() {
+    assert_eq!(
+        ComplexBox::<Interval>::ZERO.sqrt(),
+        ComplexBox::<Interval>::ZERO
+    );
+
+    let zero = ComplexBox::new(
+        set_dec(Interval::ZERO, Decoration::Def),
+        DecoratedInterval::ZERO,
+    );
+    let root = zero.sqrt();
+    assert!(root.is_zero());
+    assert_eq!(root.re.decoration(), Decoration::Def);
+    assert_eq!(root.im.decoration(), Decoration::Def);
+}
+
+#[test]
+fn complex_square_root_encloses_a_box_containing_the_origin() {
+    let root = ComplexBox::new(Interval::new(-4.0, 4.0), Interval::new(-2.0, 2.0)).sqrt();
+
+    for (re, im) in [(0.0, 0.0), (2.0, 0.0), (0.0, 2.0), (1.0, 1.0), (1.0, -1.0)] {
+        assert!(root.re.contains(re) && root.im.contains(im));
+    }
+}
+
+#[test]
+fn complex_square_root_uses_the_principal_branch_on_the_negative_real_axis() {
+    let real = Interval::from(-4.0);
+    let on_axis = ComplexBox::new(real, Interval::ZERO).sqrt();
+    assert!(on_axis.re.contains(0.0));
+    assert!(on_axis.im.contains(2.0));
+    assert!(on_axis.im.inf() > 0.0);
+
+    let above = ComplexBox::new(real, Interval::new(0.0, 7.5)).sqrt();
+    assert!(above.re.contains(1.5));
+    assert!(above.im.contains(2.0) && above.im.contains(2.5));
+    assert!(above.im.inf() > 0.0);
+
+    let below = ComplexBox::new(real, Interval::new(-7.5, 0.0)).sqrt();
+    assert!(below.re.contains(1.5));
+    assert!(below.im.contains(-2.5) && below.im.contains(2.0));
 }
 
 #[test]

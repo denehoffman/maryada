@@ -16,7 +16,10 @@ extern crate alloc;
 use alloc::{collections::BinaryHeap, vec::Vec};
 use core::{cmp::Ordering, fmt};
 
-use crate::{EnclosureOps, Interval, IntervalOps};
+use crate::{
+    EnclosureOps, Interval, IntervalOps,
+    rounding::{self, Direction},
+};
 
 #[cfg(feature = "complex")]
 use crate::ComplexBox;
@@ -989,7 +992,7 @@ where
             return false;
         }
         let lower = self.frontier_lower_bound();
-        lower.is_finite() && self.upper - lower <= tolerance
+        lower.is_finite() && rounding::sub(self.upper, lower, Direction::Up) <= tolerance
     }
 
     fn advance_with_limit(

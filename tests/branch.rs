@@ -153,6 +153,28 @@ fn global_minimizer_default_is_unbounded_and_convergent() {
 }
 
 #[test]
+fn global_minimizer_rounds_the_gap_upward() {
+    let value = Interval::new(-f64::from_bits(1), 1.0);
+    let mut minimizer = GlobalMinimizer::new(Interval::new(-1.0, 1.0), |_: &Interval| {
+        Ok::<Interval, core::convert::Infallible>(value)
+    })
+    .without_value_tolerance()
+    .without_domain_tolerance()
+    .with_gap_tolerance(1.0);
+
+    let result = minimizer.advance(1).unwrap();
+    assert_eq!(result.minimum, value);
+    assert_eq!(result.unresolved.len(), 2);
+    assert_eq!(result.status, RunStatus::StepLimit);
+
+    let result = minimizer
+        .with_gap_tolerance(1.0_f64.next_up())
+        .advance(0)
+        .unwrap();
+    assert_eq!(result.status, RunStatus::Converged);
+}
+
+#[test]
 fn global_minimizer_rejects_an_unbounded_configuration_without_tolerances() {
     let mut minimizer = GlobalMinimizer::with_options(
         Interval::new(0.0, 1.0),

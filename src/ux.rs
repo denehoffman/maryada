@@ -6,7 +6,10 @@ use crate::{
 };
 
 impl Interval {
-    /// Converts this bare interval to a decorated interval.
+    /// Constructs a decorated interval by revalidating this interval's bounds.
+    ///
+    /// Empty raises [`Signal::UndefinedOperation`] and returns [`DecoratedInterval::NAI`].
+    /// Use [`crate::new_dec`] to decorate the interval datum and preserve Empty.
     pub fn decorate<S: SignalSink>(self, signals: &mut S) -> DecoratedInterval {
         Self::from_nums(self.inf_raw(), self.sup_raw()).map_or_else(
             || {
@@ -54,13 +57,13 @@ impl From<&f64> for Interval {
 
 impl From<&Interval> for DecoratedInterval {
     fn from(value: &Interval) -> Self {
-        value.decorate(&mut ())
+        (*value).into()
     }
 }
 
 impl From<Interval> for DecoratedInterval {
     fn from(value: Interval) -> Self {
-        value.decorate(&mut ())
+        Self::new_dec_raw(value)
     }
 }
 

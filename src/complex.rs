@@ -998,6 +998,9 @@ impl ComplexBox<DecoratedInterval> {
 
 impl ComplexBox<Interval> {
     /// Decorates both components, reporting construction signals to `signals`.
+    ///
+    /// This revalidates each component through [`Interval::decorate`]. Use
+    /// `ComplexBox::<DecoratedInterval>::from` to preserve Empty components.
     pub fn decorate<S: SignalSink>(self, signals: &mut S) -> ComplexBox<DecoratedInterval> {
         ComplexBox::new(self.re.decorate(signals), self.im.decorate(signals))
     }
@@ -1005,13 +1008,13 @@ impl ComplexBox<Interval> {
 
 impl From<&ComplexBox<Interval>> for ComplexBox<DecoratedInterval> {
     fn from(value: &ComplexBox<Interval>) -> Self {
-        value.decorate(&mut ())
+        (*value).into()
     }
 }
 
 impl From<ComplexBox<Interval>> for ComplexBox<DecoratedInterval> {
     fn from(value: ComplexBox<Interval>) -> Self {
-        value.decorate(&mut ())
+        Self::new(value.re.into(), value.im.into())
     }
 }
 

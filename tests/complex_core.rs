@@ -62,6 +62,42 @@ fn complex_square_root_uses_the_principal_branch_on_the_negative_real_axis() {
 }
 
 #[test]
+fn complex_box_promotion_preserves_empty_components() {
+    let bare = ComplexBox::new(Interval::EMPTY, Interval::ONE);
+    let expected = ComplexBox::new(DecoratedInterval::EMPTY, DecoratedInterval::ONE);
+    assert_eq!(ComplexBox::<DecoratedInterval>::from(bare), expected);
+    assert_eq!(ComplexBox::<DecoratedInterval>::from(&bare), expected);
+    assert_eq!(
+        ComplexBox::<DecoratedInterval>::from(ComplexBox::<Interval>::EMPTY),
+        ComplexBox::<DecoratedInterval>::EMPTY
+    );
+}
+
+#[test]
+fn mixed_complex_arithmetic_propagates_empty() {
+    let empty_real = Interval::EMPTY;
+    let empty_box = ComplexBox::new(Interval::EMPTY, Interval::ONE);
+    let one_real = DecoratedInterval::ONE;
+    let one_box = ComplexBox::<DecoratedInterval>::ONE;
+
+    let mut assigned = one_box;
+    assigned += empty_box;
+    for result in [
+        empty_box + one_box,
+        one_box + empty_box,
+        empty_box + one_real,
+        one_real + empty_box,
+        empty_real + one_box,
+        one_box + empty_real,
+        assigned,
+    ] {
+        assert!(result.is_empty());
+        assert!(!result.is_nai());
+        assert_eq!(result.decoration(), Decoration::Trv);
+    }
+}
+
+#[test]
 fn complex_operators_cover_real_and_box_combinations() {
     type BareBox = ComplexBox<Interval>;
     type DecoratedBox = ComplexBox<DecoratedInterval>;

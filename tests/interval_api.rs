@@ -28,6 +28,41 @@ fn constructors_and_set_operations_follow_the_set_based_model() {
 }
 
 #[test]
+fn bare_interval_promotion_uses_the_datum_decoration() {
+    for (bare, expected) in [
+        (Interval::EMPTY, DecoratedInterval::EMPTY),
+        (Interval::ENTIRE, DecoratedInterval::ENTIRE),
+        (Interval::ONE, DecoratedInterval::ONE),
+    ] {
+        assert_eq!(DecoratedInterval::from(bare), expected);
+        assert_eq!(DecoratedInterval::from(&bare), expected);
+    }
+}
+
+#[test]
+fn mixed_real_arithmetic_propagates_empty() {
+    let empty = Interval::EMPTY;
+    let value = DecoratedInterval::from(2.0);
+
+    for result in [
+        empty + value,
+        value + empty,
+        empty - value,
+        value - empty,
+        empty * value,
+        value * empty,
+        empty / value,
+        value / empty,
+    ] {
+        assert_eq!(result, DecoratedInterval::EMPTY);
+    }
+
+    let mut assigned = value;
+    assigned += empty;
+    assert_eq!(assigned, DecoratedInterval::EMPTY);
+}
+
+#[test]
 fn ergonomic_protocols_preserve_interval_semantics_and_edge_states() {
     let x = Interval::new(1.0, 2.0);
     let y = Interval::new(3.0, 4.0);

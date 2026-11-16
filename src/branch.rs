@@ -1133,6 +1133,24 @@ impl<I: IntervalOps> Midpoint for I {
     }
 }
 
+fn widest_bisection<'a, D: Bisect + 'a>(
+    coordinates: impl IntoIterator<Item = &'a D>,
+) -> Option<(usize, (D, D))> {
+    let mut selected = None;
+    let mut widest = f64::NAN;
+    for (index, coordinate) in coordinates.into_iter().enumerate() {
+        let width = coordinate.branch_width();
+        if !width.is_nan()
+            && (widest.is_nan() || width > widest)
+            && let Some(split) = coordinate.bisect()
+        {
+            selected = Some((index, split));
+            widest = width;
+        }
+    }
+    selected
+}
+
 #[cfg(feature = "complex")]
 #[allow(clippy::use_self)]
 impl<I: IntervalOps> Bisect for ComplexBox<I> {
@@ -1152,14 +1170,13 @@ impl<I: IntervalOps> Bisect for ComplexBox<I> {
         if self.is_nai() || self.is_empty() || self.is_singleton() {
             return None;
         }
-        if self.re.wid() >= self.im.wid() {
-            let (left, right) = Bisect::bisect(&self.re)?;
+        let (index, (left, right)) = widest_bisection([&self.re, &self.im])?;
+        if index == 0 {
             Some((
                 ComplexBox::new(left, self.im),
                 ComplexBox::new(right, self.im),
             ))
         } else {
-            let (left, right) = Bisect::bisect(&self.im)?;
             Some((
                 ComplexBox::new(self.re, left),
                 ComplexBox::new(self.re, right),
@@ -1201,26 +1218,11 @@ where
     }
 
     fn bisect(&self) -> Option<(Self, Self)> {
-        let mut index = None;
-        let mut widest = f64::NAN;
-        for (candidate, value) in self.iter().enumerate() {
-            let width = value.branch_width();
-            if !width.is_nan() && (widest.is_nan() || width > widest) {
-                index = Some(candidate);
-                widest = width;
-            }
-        }
-        let index = index?;
-        let value = self.get(index)?;
-        let (left, right) = value.bisect()?;
+        let (index, (left, right)) = widest_bisection(self)?;
         let mut first = self.clone();
         let mut second = self.clone();
-        if let Some(slot) = first.get_mut(index) {
-            *slot = left;
-        }
-        if let Some(slot) = second.get_mut(index) {
-            *slot = right;
-        }
+        *first.get_mut(index)? = left;
+        *second.get_mut(index)? = right;
         Some((first, second))
     }
 }

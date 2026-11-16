@@ -19,12 +19,35 @@ fn widest_bisection_selects_the_largest_component() {
     );
     assert!(Bisect::bisect(&Interval::from(2.0)).is_none());
 
-    let vector = vec![Interval::new(0.0, 1.0), Interval::new(-4.0, 4.0)];
+    let vector = vec![
+        Interval::new(0.0, 1.0),
+        Interval::new(-4.0, 4.0),
+        Interval::new(2.0, 10.0),
+    ];
     let (left, right) = vector.bisect().unwrap();
     assert_eq!(left[0], vector[0]);
     assert_eq!(right[0], vector[0]);
     assert_eq!(left[1], Interval::new(-4.0, 0.0));
     assert_eq!(right[1], Interval::new(0.0, 4.0));
+    assert_eq!(left[2], vector[2]);
+    assert_eq!(right[2], vector[2]);
+}
+
+#[test]
+fn vector_bisection_skips_unsplittable_coordinates() {
+    let adjacent = Interval::new(1e16, 1e16_f64.next_up());
+    let narrow = Interval::new(0.0, 0.25);
+    let splittable = Interval::new(0.0, 1.0);
+    let vector = vec![adjacent, narrow, splittable];
+
+    assert_eq!(
+        vector.bisect(),
+        Some((
+            vec![adjacent, narrow, Interval::new(0.0, 0.5)],
+            vec![adjacent, narrow, Interval::new(0.5, 1.0)],
+        ))
+    );
+    assert!(vec![adjacent, adjacent].bisect().is_none());
 }
 
 #[test]
@@ -279,4 +302,33 @@ fn complex_boxes_split_the_widest_real_or_imaginary_component() {
     assert_eq!(right.re, box_domain.re);
     assert_eq!(left.im, Interval::new(-4.0, 0.0));
     assert_eq!(right.im, Interval::new(0.0, 4.0));
+}
+
+#[cfg(feature = "complex")]
+#[test]
+fn complex_bisection_skips_unsplittable_coordinates() {
+    use maryada::ComplexBox;
+
+    let adjacent = Interval::new(1e16, 1e16_f64.next_up());
+    let splittable = Interval::new(0.0, 1.0);
+    let lower_half = Interval::new(0.0, 0.5);
+    let upper_half = Interval::new(0.5, 1.0);
+
+    assert_eq!(
+        ComplexBox::new(adjacent, splittable).bisect(),
+        Some((
+            ComplexBox::new(adjacent, lower_half),
+            ComplexBox::new(adjacent, upper_half),
+        ))
+    );
+    for imaginary in [adjacent, splittable] {
+        assert_eq!(
+            ComplexBox::new(splittable, imaginary).bisect(),
+            Some((
+                ComplexBox::new(lower_half, imaginary),
+                ComplexBox::new(upper_half, imaginary),
+            ))
+        );
+    }
+    assert!(ComplexBox::new(adjacent, adjacent).bisect().is_none());
 }

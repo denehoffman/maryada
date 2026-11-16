@@ -28,6 +28,10 @@
 
 #![no_std]
 
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+mod readme {}
+
 #[cfg(feature = "branch")]
 extern crate alloc;
 

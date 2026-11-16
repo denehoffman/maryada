@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use maryada::{Interval, IntervalOps, exp, exp2, log};
+use maryada::{EnclosureOps, Interval, IntervalOps, exp, exp2, log};
 
 #[test]
 fn addition_and_subtraction_enclose_finite_sums_near_overflow() {
@@ -32,6 +32,46 @@ fn addition_and_subtraction_round_outward_past_finite_range() {
             assert_eq!(x - (-y), result);
         }
     }
+}
+
+#[test]
+fn cancellation_recognizes_equal_widths_near_overflow() {
+    let x = Interval::new(-f64::MAX, -libm::scalbn(3.0, 970));
+
+    assert_eq!(x.cancel_minus(x), Interval::ZERO);
+    assert_eq!(x.cancel_plus(-x), Interval::ZERO);
+}
+
+#[test]
+fn cancellation_distinguishes_widths_a_half_step_apart() {
+    let half_step = libm::scalbn(1.0, -53);
+    let x = Interval::new(-half_step, 1.0);
+    let y = Interval::new(0.0, 1.0);
+
+    assert_eq!(x.cancel_minus(y), Interval::new(-half_step, 0.0));
+    assert_eq!(y.cancel_minus(x), Interval::ENTIRE);
+    assert_eq!(x.cancel_plus(-y), Interval::new(-half_step, 0.0));
+    assert_eq!(y.cancel_plus(-x), Interval::ENTIRE);
+}
+
+#[test]
+fn cancellation_compares_widths_beyond_the_finite_range() {
+    // Their halved widths round to the same finite value.
+    let x = Interval::new(-f64::MAX, f64::MAX.next_down());
+    let y = Interval::new(-f64::MAX, f64::MAX.next_down().next_down());
+    let finite_width = Interval::new(0.0, f64::MAX);
+    let step = libm::scalbn(1.0, 971);
+
+    assert_eq!(x.wid(), f64::INFINITY);
+    assert_eq!(y.wid(), f64::INFINITY);
+    assert_eq!(x.cancel_minus(x), Interval::ZERO);
+    assert_eq!(x.cancel_minus(y), Interval::new(0.0, step));
+    assert_eq!(y.cancel_minus(x), Interval::ENTIRE);
+    assert_eq!(
+        x.cancel_minus(finite_width),
+        Interval::new(-f64::MAX, -step)
+    );
+    assert_eq!(finite_width.cancel_minus(x), Interval::ENTIRE);
 }
 
 #[test]

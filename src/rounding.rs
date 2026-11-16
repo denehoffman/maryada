@@ -418,6 +418,16 @@ pub fn neg(x: f64) -> f64 {
     -x
 }
 
+/// Returns the exact residual of the finite round-to-nearest sum `sum = x + y`.
+#[inline]
+pub fn sum_residual(x: f64, y: f64, sum: f64) -> f64 {
+    debug_assert!(sum.is_finite());
+    // FastTwoSum with the larger magnitude first keeps both subtractions
+    // finite whenever the rounded sum is finite.
+    let (large, small) = if x.abs() < y.abs() { (y, x) } else { (x, y) };
+    small - (sum - large)
+}
+
 pub fn add(x: f64, y: f64, direction: Direction) -> f64 {
     let sum = x + y;
     if sum.is_nan() {
@@ -429,10 +439,7 @@ pub fn add(x: f64, y: f64, direction: Direction) -> f64 {
     if !sum.is_finite() {
         return sum;
     }
-    // FastTwoSum with the larger magnitude first keeps both subtractions
-    // finite whenever the rounded sum is finite.
-    let (large, small) = if x.abs() < y.abs() { (y, x) } else { (x, y) };
-    let error = small - (sum - large);
+    let error = sum_residual(x, y, sum);
     if sum == 0.0 && error == 0.0 {
         return direction.exact_zero();
     }

@@ -1425,34 +1425,25 @@ fn cancel_plus_bare(x: Interval, y: Interval) -> BareResult {
 }
 
 fn cancel_minus_interval(x: Interval, y: Interval) -> Interval {
-    fn exact_difference_parts(sup: f64, inf: f64) -> (f64, f64) {
-        let neg_inf = -inf;
-        let difference = sup + neg_inf;
-        debug_assert!(difference.is_finite());
-        let neg_inf_rounded = difference - sup;
-        let error = (sup - (difference - neg_inf_rounded)) + (neg_inf - neg_inf_rounded);
-        (difference, error)
-    }
-
-    fn width_at_least(x: Interval, y: Interval) -> bool {
-        let x_width = x.sup_raw() - x.inf_raw();
-        let y_width = y.sup_raw() - y.inf_raw();
-
-        if x_width == f64::INFINITY || y_width == f64::INFINITY {
-            if x_width != y_width {
-                return x_width == f64::INFINITY;
-            }
-
-            // Both unscaled widths overflow. Halving these large finite
-            // endpoints is exact and brings both differences into range.
-            let x_parts = exact_difference_parts(x.sup_raw() * 0.5, x.inf_raw() * 0.5);
-            let y_parts = exact_difference_parts(y.sup_raw() * 0.5, y.inf_raw() * 0.5);
-            return x_parts.0 > y_parts.0 || (x_parts.0 == y_parts.0 && x_parts.1 >= y_parts.1);
-        }
-
-        let x_parts = exact_difference_parts(x.sup_raw(), x.inf_raw());
-        let y_parts = exact_difference_parts(y.sup_raw(), y.inf_raw());
-        x_parts.0 > y_parts.0 || (x_parts.0 == y_parts.0 && x_parts.1 >= y_parts.1)
+    fn width_parts(interval: Interval) -> (bool, f64, f64) {
+        let upper = interval.sup_raw();
+        let neg_lower = -interval.inf_raw();
+        let width = upper + neg_lower;
+        let overflowed = width.is_infinite();
+        let (upper, neg_lower, width) = if overflowed {
+            // Each endpoint has magnitude at least 2^970 when the width
+            // rounds to infinity, so halving is exact and the sum is finite.
+            let upper = upper * 0.5;
+            let neg_lower = neg_lower * 0.5;
+            (upper, neg_lower, upper + neg_lower)
+        } else {
+            (upper, neg_lower, width)
+        };
+        (
+            overflowed,
+            width,
+            rounding::sum_residual(upper, neg_lower, width),
+        )
     }
 
     if x.is_empty_raw() {
@@ -1465,7 +1456,9 @@ fn cancel_minus_interval(x: Interval, y: Interval) -> Interval {
     if y.is_empty_raw() || !x.is_bounded_raw() || !y.is_bounded_raw() {
         return Interval::ENTIRE;
     }
-    if !width_at_least(x, y) {
+    // Widths that round to infinity sort after all other widths. Within
+    // each group, the residual breaks ties in the rounded width.
+    if width_parts(x) < width_parts(y) {
         return Interval::ENTIRE;
     }
 

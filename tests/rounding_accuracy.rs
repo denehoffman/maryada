@@ -3,6 +3,38 @@
 use maryada::{Interval, IntervalOps, exp, exp2, log};
 
 #[test]
+fn addition_and_subtraction_enclose_finite_sums_near_overflow() {
+    let small = Interval::from(libm::scalbn(3.0, 970));
+    let negative_max = -f64::MAX;
+    let large = Interval::from(negative_max);
+    // The exact sum is one and a half representable steps toward zero.
+    let expected = Interval::new(negative_max.next_up(), negative_max.next_up().next_up());
+
+    for (x, y, result) in [(small, large, expected), (-small, -large, -expected)] {
+        assert_eq!(x + y, result);
+        assert_eq!(y + x, result);
+        assert_eq!(x - (-y), result);
+        assert_eq!(y - (-x), result);
+    }
+}
+
+#[test]
+fn addition_and_subtraction_round_outward_past_finite_range() {
+    let max = Interval::from(f64::MAX);
+    let overflow = Interval::new(f64::MAX, f64::INFINITY);
+
+    // These offsets push the exact sum past MAX with a finite or infinite rounded sum.
+    for offset in [f64::from_bits(1), libm::scalbn(1.0, 970)] {
+        let small = Interval::from(offset);
+        for (x, y, result) in [(max, small, overflow), (-max, -small, -overflow)] {
+            assert_eq!(x + y, result);
+            assert_eq!(y + x, result);
+            assert_eq!(x - (-y), result);
+        }
+    }
+}
+
+#[test]
 fn exp_and_log_take_one_outward_step_from_libm() {
     let exp_lower = libm::exp(0.5);
     let exp_upper = libm::exp(1.5);

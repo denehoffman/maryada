@@ -429,8 +429,10 @@ pub fn add(x: f64, y: f64, direction: Direction) -> f64 {
     if !sum.is_finite() {
         return sum;
     }
-    let y_v = sum - x;
-    let error = (x - (sum - y_v)) + (y - y_v);
+    // FastTwoSum with the larger magnitude first keeps both subtractions
+    // finite whenever the rounded sum is finite.
+    let (large, small) = if x.abs() < y.abs() { (y, x) } else { (x, y) };
+    let error = small - (sum - large);
     if sum == 0.0 && error == 0.0 {
         return direction.exact_zero();
     }

@@ -18,6 +18,19 @@ fn complex_boxes_work_without_num_complex() {
 }
 
 #[test]
+fn complex_addition_encloses_both_components_near_overflow() {
+    let small = Interval::from(libm::scalbn(3.0, 970));
+    let negative_max = -f64::MAX;
+    let large = Interval::from(negative_max);
+    let expected = Interval::new(negative_max.next_up(), negative_max.next_up().next_up());
+
+    assert_eq!(
+        ComplexBox::new(small, -small) + ComplexBox::new(large, -large),
+        ComplexBox::new(expected, -expected)
+    );
+}
+
+#[test]
 fn complex_square_root_maps_zero_to_zero() {
     assert_eq!(
         ComplexBox::<Interval>::ZERO.sqrt(),

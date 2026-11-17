@@ -656,10 +656,7 @@ impl Default for GlobalMinimizerOptions {
 }
 
 impl GlobalMinimizerOptions {
-    fn validate(
-        &self,
-        require_termination_criterion: bool,
-    ) -> Result<(), GlobalMinimizerOptionsError> {
+    fn validate(&self) -> Result<(), GlobalMinimizerOptionsError> {
         for (name, tolerance) in [
             ("value_tolerance", self.value_tolerance),
             ("domain_tolerance", self.domain_tolerance),
@@ -671,8 +668,7 @@ impl GlobalMinimizerOptions {
                 return Err(GlobalMinimizerOptionsError::InvalidTolerance { name, value });
             }
         }
-        if require_termination_criterion
-            && self.max_steps.is_none()
+        if self.max_steps.is_none()
             && self.value_tolerance.is_none()
             && self.domain_tolerance.is_none()
             && self.gap_tolerance.is_none()
@@ -741,6 +737,27 @@ pub struct GlobalMinimizationResult<D> {
     pub branched: usize,
 }
 
+/// A summary of a minimization run without copying its domains.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GlobalMinimizationProgress {
+    /// A rigorous enclosure of the global minimum, as in [`GlobalMinimizationResult::minimum`].
+    pub minimum: Interval,
+    /// Whether the search converged, exhausted its queue, or reached its step limit.
+    pub status: RunStatus,
+    /// Number of domains queued for evaluation.
+    pub pending: usize,
+    /// Number of domains certified at the configured tolerances.
+    pub candidates: usize,
+    /// Number of terminal unresolved domains.
+    pub unresolved: usize,
+    /// Number of objective calls, including midpoint calls and failed attempts.
+    pub evaluations: usize,
+    /// Number of pruned domains.
+    pub discarded: usize,
+    /// Number of successful subdivisions.
+    pub branched: usize,
+}
+
 /// An objective-driven interval global minimizer.
 pub struct GlobalMinimizer<D, O, B = WidestBranch>
 where
@@ -756,7 +773,7 @@ where
     options: GlobalMinimizerOptions,
     lower: f64,
     upper: f64,
-    candidate_lower_bounds: Vec<f64>,
+    terminal_lower_bound: f64,
     best_point: Option<D>,
     best_domain: Option<D>,
     best_value: Option<Interval>,
@@ -818,7 +835,7 @@ where
             options,
             lower: f64::INFINITY,
             upper: f64::INFINITY,
-            candidate_lower_bounds: Vec::new(),
+            terminal_lower_bound: f64::INFINITY,
             best_point: None,
             best_domain: None,
             best_value: None,
@@ -922,6 +939,7 @@ where
 
         let domain = PeekMut::pop(entry).domain;
         if value.is_nai() {
+            self.terminal_lower_bound = f64::NEG_INFINITY;
             self.unresolved.push(Unresolved {
                 domain,
                 priority: f64::NEG_INFINITY,
@@ -943,7 +961,8 @@ where
             self.update_upper_bound(&domain, value, &point, point_value);
         }
 
-        if value.inf() > self.upper {
+        let priority = value.inf();
+        if priority > self.upper {
             self.discarded = self.discarded.saturating_add(1);
             return Ok(GlobalStep::Discarded);
         }
@@ -957,22 +976,19 @@ where
             .domain_tolerance
             .is_some_and(|tolerance| domain.branch_width() <= tolerance);
         if value_small || domain_small {
-            self.candidate_lower_bounds.push(value.inf());
+            self.terminal_lower_bound = self.terminal_lower_bound.min(priority);
             self.candidates.push(domain);
             return Ok(GlobalStep::Certified);
         }
 
         if let Some((left, right)) = self.brancher.split(&domain) {
-            let priority = value.inf();
             self.queue.push(left, priority);
             self.queue.push(right, priority);
             self.branched = self.branched.saturating_add(1);
             Ok(GlobalStep::Branched)
         } else {
-            self.unresolved.push(Unresolved {
-                domain,
-                priority: value.inf(),
-            });
+            self.terminal_lower_bound = self.terminal_lower_bound.min(priority);
+            self.unresolved.push(Unresolved { domain, priority });
             Ok(GlobalStep::Unsplittable)
         }
     }
@@ -998,27 +1014,17 @@ where
         }
     }
 
-    fn frontier_lower_bound(&self) -> f64
-    where
-        D: Clone,
-    {
-        let mut lower = f64::INFINITY;
-        for bound in &self.candidate_lower_bounds {
-            lower = lower.min(*bound);
-        }
-        for unresolved in &self.unresolved {
-            lower = lower.min(unresolved.priority);
-        }
-        for entry in self.queue.snapshot() {
-            lower = lower.min(entry.priority);
-        }
-        lower
+    fn frontier_lower_bound(&self) -> f64 {
+        // A queued priority comes from a valid enclosure or is -infinity for the root.
+        let queued_lower = self
+            .queue
+            .entries
+            .peek()
+            .map_or(f64::INFINITY, |entry| entry.priority);
+        self.terminal_lower_bound.min(queued_lower)
     }
 
-    fn gap_reached(&self) -> bool
-    where
-        D: Clone,
-    {
+    fn gap_reached(&self) -> bool {
         let Some(tolerance) = self.options.gap_tolerance else {
             return false;
         };
@@ -1032,7 +1038,14 @@ where
     fn advance_with_limit(
         &mut self,
         max_steps: Option<usize>,
-    ) -> Result<GlobalMinimizationResult<D>, GlobalMinimizerError<O::Error>> {
+    ) -> Result<RunStatus, GlobalMinimizerError<O::Error>> {
+        GlobalMinimizerOptions {
+            max_steps,
+            ..self.options
+        }
+        .validate()
+        .map_err(GlobalMinimizerError::InvalidOptions)?;
+
         let mut steps = 0usize;
         let status = loop {
             if self.queue.is_empty() {
@@ -1050,7 +1063,7 @@ where
             }
             steps = steps.saturating_add(1);
         };
-        Ok(self.result(status))
+        Ok(status)
     }
 
     /// Solves using the stopping policy configured on this minimizer.
@@ -1065,10 +1078,8 @@ where
     /// Returns an invalid-options error before doing work, or the objective
     /// error from the first failed objective call.
     pub fn solve(&mut self) -> Result<GlobalMinimizationResult<D>, GlobalMinimizerError<O::Error>> {
-        self.options
-            .validate(true)
-            .map_err(GlobalMinimizerError::InvalidOptions)?;
-        self.advance_with_limit(self.options.max_steps)
+        let status = self.advance_with_limit(self.options.max_steps)?;
+        Ok(self.result(status))
     }
 
     /// Performs at most `max_steps` domain iterations and returns a rigorous
@@ -1087,37 +1098,57 @@ where
         &mut self,
         max_steps: usize,
     ) -> Result<GlobalMinimizationResult<D>, GlobalMinimizerError<O::Error>> {
-        self.options
-            .validate(false)
-            .map_err(GlobalMinimizerError::InvalidOptions)?;
-        self.advance_with_limit(Some(max_steps))
+        let status = self.advance_with_limit(Some(max_steps))?;
+        Ok(self.result(status))
+    }
+
+    /// Performs at most `max_steps` domain iterations and summarizes the run
+    /// without cloning the domains for a result snapshot. A zero budget reports
+    /// the current enclosure, counts, and stopping status without evaluating a domain.
+    /// Use [`Self::result`] when the full domain snapshot is needed.
+    /// # Errors
+    /// Returns an invalid-options error before doing work, or the objective
+    /// error from the first failed objective call.
+    pub fn advance_progress(
+        &mut self,
+        max_steps: usize,
+    ) -> Result<GlobalMinimizationProgress, GlobalMinimizerError<O::Error>> {
+        let status = self.advance_with_limit(Some(max_steps))?;
+        Ok(GlobalMinimizationProgress {
+            minimum: self.minimum(),
+            status,
+            pending: self.pending_count(),
+            candidates: self.candidates.len(),
+            unresolved: self.unresolved.len(),
+            evaluations: self.evaluations,
+            discarded: self.discarded,
+            branched: self.branched,
+        })
+    }
+
+    fn minimum(&self) -> Interval {
+        if self.lower == f64::INFINITY {
+            return Interval::EMPTY;
+        }
+        let frontier_lower = self.frontier_lower_bound();
+        let lower = if frontier_lower == f64::INFINITY {
+            self.lower
+        } else {
+            frontier_lower
+        };
+        Interval::new(lower, self.upper)
     }
 
     /// Returns a result snapshot without changing search state.
     #[must_use]
     pub fn result(&self, status: RunStatus) -> GlobalMinimizationResult<D> {
-        let lower = if self.lower == f64::INFINITY {
-            f64::INFINITY
-        } else {
-            let frontier_lower = self.frontier_lower_bound();
-            if frontier_lower == f64::INFINITY {
-                self.lower
-            } else {
-                frontier_lower
-            }
-        };
-        let minimum = if lower == f64::INFINITY {
-            Interval::EMPTY
-        } else {
-            Interval::new(lower, self.upper)
-        };
         let mut unresolved = self.unresolved.clone();
         unresolved.extend(self.queue.snapshot().into_iter().map(|entry| Unresolved {
             domain: entry.domain,
             priority: entry.priority,
         }));
         GlobalMinimizationResult {
-            minimum,
+            minimum: self.minimum(),
             best_point: self.best_point.clone(),
             best_domain: self.best_domain.clone(),
             best_value: self.best_value,

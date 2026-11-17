@@ -4,7 +4,7 @@
 #![allow(clippy::indexing_slicing)]
 
 use maryada::{
-    BestFirstQueue, Bisect, BranchAndBound, EnclosureOps, GlobalMinimizationResult,
+    BestFirstQueue, Bisect, BranchAndBound, BranchRule, EnclosureOps, GlobalMinimizationResult,
     GlobalMinimizer, GlobalMinimizerError, GlobalMinimizerOptions, GlobalMinimizerOptionsError,
     Interval, IntervalOps, PruneDecision, Pruner, RunStatus, SearchError, StepOutcome, Unresolved,
     WorkQueue,
@@ -316,6 +316,68 @@ fn global_minimizer_rounds_the_gap_upward() {
         .advance(0)
         .unwrap();
     assert_eq!(result.status, RunStatus::Converged);
+}
+
+#[test]
+fn global_minimizer_progress_keeps_lower_bounds_from_terminal_domains() {
+    struct KeepLeft;
+
+    impl BranchRule<Interval> for KeepLeft {
+        fn split(&self, domain: &Interval) -> Option<(Interval, Interval)> {
+            if *domain == Interval::new(0.0, 0.5) {
+                None
+            } else {
+                Bisect::bisect(domain)
+            }
+        }
+    }
+
+    for value_tolerance in [None, Some(0.5)] {
+        // All enclosures contain the constant objective 0.25. The left child
+        // becomes terminal and has a smaller lower bound than the right descendants.
+        let objective = |domain: &Interval| {
+            let value = if Bisect::is_singleton(domain) {
+                Interval::from(0.25)
+            } else if *domain == Interval::new(0.0, 0.5) {
+                Interval::new(0.0, 0.5)
+            } else if domain.inf() >= 0.5 {
+                Interval::new(0.25, 2.0)
+            } else {
+                Interval::new(0.0, 2.0)
+            };
+            Ok::<_, core::convert::Infallible>(value)
+        };
+        let options = GlobalMinimizerOptions {
+            value_tolerance,
+            domain_tolerance: None,
+            gap_tolerance: Some(0.125),
+            max_steps: None,
+        };
+        let mut minimizer = GlobalMinimizer::with_branch_and_options(
+            Interval::new(0.0, 1.0),
+            objective,
+            KeepLeft,
+            options,
+        );
+        assert_eq!(minimizer.advance_progress(1).unwrap().pending, 2);
+        let progress = minimizer.advance_progress(2).unwrap();
+        assert_eq!(progress.status, RunStatus::StepLimit);
+        assert_eq!(progress.minimum, Interval::new(0.0, 0.25));
+        assert_eq!(progress.pending, 2);
+        assert_eq!(progress.candidates, usize::from(value_tolerance.is_some()));
+        assert_eq!(progress.unresolved, usize::from(value_tolerance.is_none()));
+        assert_eq!(progress.evaluations, 6);
+        assert_eq!(progress.branched, 2);
+        assert_eq!(minimizer.advance_progress(0).unwrap(), progress);
+
+        let result = minimizer.result(progress.status);
+        assert_eq!(result.minimum, progress.minimum);
+        assert_eq!(result.candidates.len(), progress.candidates);
+        assert_eq!(
+            result.unresolved.len(),
+            if value_tolerance.is_some() { 2 } else { 3 }
+        );
+    }
 }
 
 #[test]

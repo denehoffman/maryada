@@ -45,6 +45,8 @@ mod interchange;
 mod linalg;
 mod ops;
 mod rounding;
+#[cfg(feature = "serde")]
+mod serialization;
 mod signals;
 mod text;
 mod types;

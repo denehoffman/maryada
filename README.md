@@ -21,6 +21,14 @@ assert_eq!(y.bounds(), (1.0, 4.0));
 - `linalg` enables the linear algebra API, namely `IntervalMatrix` and its associated operations.
 - `complex-linalg` enables allocation-backed complex interval matrices and verified complex solves.
 - `branch` enables the `no_std` branch-and-bound engine and its allocation-backed work queues.
+- `serde` enables serialization of `Interval` and `DecoratedInterval` without requiring `std` or an allocator in maryada.
+
+Serde writes intervals as exact IEEE interval literals in human-readable formats.
+For example, JSON encodes `[1,2]` as `"[0x1p+0,0x1p+1]"`. Deserialization accepts
+literal strings that parse without IEEE exception flags. In binary formats,
+Serde writes a byte string with the same big-endian payload as `to_be_bytes`.
+The payload contains 16 bytes for an `Interval` and 17 for a `DecoratedInterval`.
+The outer byte-string framing is provided by the format.
 
 Complex systems use the same matrix-facing API as real systems. The default
 verified solve first applies a residual-centered complex epsilon-inflation

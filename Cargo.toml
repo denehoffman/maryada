@@ -15,9 +15,12 @@ categories = ["mathematics", "no-std", "science"]
 libm = { version = "=0.2.16", default-features = false }
 nalgebra = { version = "0.35.0", default-features = false, optional = true, features = ["libm"] }
 num-complex = { version = "0.4.6", default-features = false, optional = true }
+serde = { version = "1.0", default-features = false, optional = true }
 
 [dev-dependencies]
+ciborium = "0.2.2"
 criterion = { version = "0.8.2", default-features = false }
+serde_json = "1.0"
 
 [features]
 default = []
@@ -27,6 +30,7 @@ complex = []
 complex-linalg = ["linalg", "num-complex", "alloc"]
 num-complex = ["complex", "dep:num-complex"]
 linalg = ["dep:nalgebra"]
+serde = ["dep:serde"]
 
 [[example]]
 name = "linalg"

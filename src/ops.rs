@@ -1,5 +1,5 @@
 use crate::{
-    DecoratedInterval, Decoration, Interval, IntervalDatum,
+    DecoratedInterval, Decoration, Interval, IntervalDatum, IntervalSet,
     rounding::{self, Direction},
     signals::{Signal, SignalSink},
 };
@@ -86,9 +86,82 @@ pub fn div<T: IntervalDatum>(x: T, y: T) -> T {
     binary(x, y, div_bare)
 }
 
+/// Encloses the defined quotients `x / y` in up to two intervals.
+///
+/// A denominator crossing zero can produce disjoint negative and positive
+/// components. Bounds are rounded outward, and components are sorted and
+/// merged when they overlap or touch after rounding. Storage is fixed and
+/// requires no allocation.
+///
+/// Empty operands or a zero-only denominator produce no components. A `NaI`
+/// operand produces a single `NaI` component. Decorated components have at most
+/// `trv` decoration whenever the original denominator contains zero, including
+/// when zero is an endpoint. Otherwise decorations follow [`div`].
+///
+/// ```
+/// use maryada::{Interval, IntervalOps, div_split};
+///
+/// let quotient = div_split(Interval::new(1.0, 2.0), Interval::new(-1.0, 1.0));
+/// assert_eq!(quotient.components(), &[
+///     Interval::new(f64::NEG_INFINITY, -1.0),
+///     Interval::new(1.0, f64::INFINITY),
+/// ]);
+/// assert_eq!(quotient.hull(), Interval::ENTIRE);
+/// ```
+pub fn div_split<T: IntervalDatum>(x: T, y: T) -> IntervalSet<T> {
+    let numerator = x.__interval();
+    let denominator = y.__interval();
+    if x.__is_nai()
+        || y.__is_nai()
+        || numerator.is_empty_raw()
+        || numerator.contains_raw(0.0)
+        || !(denominator.inf_raw() < 0.0 && denominator.sup_raw() > 0.0)
+    {
+        return IntervalSet {
+            components: [div(x, y), T::__empty()],
+        };
+    }
+
+    let mut left = div_interval(
+        numerator,
+        Interval::from_valid_bounds(denominator.inf_raw(), 0.0),
+    );
+    let mut right = div_interval(
+        numerator,
+        Interval::from_valid_bounds(0.0, denominator.sup_raw()),
+    );
+    if left.inf_raw() > right.inf_raw() {
+        core::mem::swap(&mut left, &mut right);
+    }
+    if left.sup_raw() >= right.inf_raw() {
+        let interval = Interval::from_valid_bounds(left.inf_raw(), right.sup_raw());
+        return IntervalSet {
+            components: [
+                x.__binary_result(y, interval, Decoration::Trv),
+                T::__empty(),
+            ],
+        };
+    }
+    IntervalSet {
+        components: [
+            x.__binary_result(y, left, Decoration::Trv),
+            x.__binary_result(y, right, Decoration::Trv),
+        ],
+    }
+}
+
 /// Encloses the reciprocals of the nonzero values in `x`.
 pub fn recip<T: IntervalDatum>(x: T) -> T {
     unary(x, recip_bare)
+}
+
+/// Encloses the reciprocals of nonzero values in up to two intervals.
+///
+/// Uses the ordering, merging, Empty, `NaI`, and decoration rules of [`div_split`].
+/// A zero-only input produces no components.
+pub fn recip_split<T: IntervalDatum>(x: T) -> IntervalSet<T> {
+    let one = x.__unary_result(Interval::ONE, Decoration::Com);
+    div_split(one, x)
 }
 
 /// Encloses the squares of all values in `x`.

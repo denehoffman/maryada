@@ -79,7 +79,7 @@ pub use text::{
     interval_to_text,
 };
 pub use types::{
-    DecoratedInterval, Decoration, Interval, IntervalConstructionError, IntervalDatum,
+    DecoratedInterval, Decoration, Interval, IntervalConstructionError, IntervalDatum, IntervalSet,
     InvalidDecoration,
 };
 pub use ux::IntervalOps;

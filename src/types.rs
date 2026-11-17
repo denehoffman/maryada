@@ -541,3 +541,44 @@ impl IntervalDatum for DecoratedInterval {
         )
     }
 }
+
+/// An allocation-free union of up to two closed interval enclosures.
+///
+/// [`crate::div_split`] and [`crate::recip_split`] return sorted, disjoint
+/// components. Overlapping or touching components are merged. Empty has no
+/// components. A decorated `NaI` result has a single `NaI` component.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IntervalSet<T: IntervalDatum = Interval> {
+    pub(crate) components: [T; 2],
+}
+
+impl<T: IntervalDatum> IntervalSet<T> {
+    /// Returns the zero, one, or two components in increasing order.
+    #[must_use]
+    #[allow(clippy::indexing_slicing)]
+    pub fn components(&self) -> &[T] {
+        let [first, second] = self.components;
+        if first.__interval().is_empty_raw() && !first.__is_nai() {
+            &[]
+        } else if second.__interval().is_empty_raw() {
+            &self.components[..1]
+        } else {
+            &self.components
+        }
+    }
+
+    /// Returns the smallest single interval enclosing all components.
+    ///
+    /// Preserves Empty, `NaI`, and the weakest component decoration.
+    #[must_use]
+    pub fn hull(self) -> T {
+        let [first, second] = self.components;
+        let right = second.__interval();
+        if right.is_empty_raw() {
+            return first;
+        }
+        let left = first.__interval();
+        let interval = Interval::from_valid_bounds(left.inf_raw(), right.sup_raw());
+        first.__binary_result(second, interval, Decoration::Com)
+    }
+}

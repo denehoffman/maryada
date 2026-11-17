@@ -1280,7 +1280,7 @@ where
 mod ops;
 
 mod diagnostics;
-pub use diagnostics::SolveError;
+pub use diagnostics::{MatrixShapeError, SolveError};
 
 #[cfg(feature = "complex-linalg")]
 mod complex_block;

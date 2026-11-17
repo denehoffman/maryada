@@ -1,6 +1,9 @@
 //! Standard matrix arithmetic operations.
 
-use core::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use core::{
+    alloc::Layout,
+    ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign},
+};
 
 use nalgebra::{
     DefaultAllocator, Dim, OMatrix, Scalar, Storage, StorageMut,
@@ -8,9 +11,38 @@ use nalgebra::{
     constraint::{AreMultipliable, SameNumberOfColumns, SameNumberOfRows, ShapeConstraint},
 };
 
-use super::EnclosureOps;
+use super::{EnclosureOps, IntervalMatrix, MatrixShapeError, OIntervalMatrix, OIntervalVector};
 
-use super::{IntervalMatrix, OIntervalMatrix, OIntervalVector};
+macro_rules! checked_elementwise {
+    ($(#[$doc:meta])* $name:ident, $operation:path) => {
+        $(#[$doc])*
+        ///
+        /// # Errors
+        ///
+        /// Returns [`MatrixShapeError::IncompatibleOperands`] if the matrix shapes differ.
+        pub fn $name<R2, C2, SB>(
+            &self,
+            rhs: &IntervalMatrix<T, R2, C2, SB>,
+        ) -> Result<OIntervalMatrix<T, SameShapeR<R1, R2>, SameShapeC<C1, C2>>, MatrixShapeError>
+        where
+            R2: Dim,
+            C2: Dim,
+            SB: Storage<T, R2, C2>,
+            DefaultAllocator: SameShapeAllocator<R1, C1, R2, C2>,
+            ShapeConstraint: SameNumberOfRows<R1, R2> + SameNumberOfColumns<C1, C2>,
+        {
+            let lhs_shape = self.shape();
+            let rhs_shape = rhs.shape();
+            if lhs_shape != rhs_shape {
+                return Err(MatrixShapeError::IncompatibleOperands {
+                    lhs: lhs_shape,
+                    rhs: rhs_shape,
+                });
+            }
+            Ok($operation(self, rhs))
+        }
+    };
+}
 
 impl<T, D, S> IntervalMatrix<T, D, D, S>
 where
@@ -184,6 +216,122 @@ where
         OIntervalMatrix::from_iterator_generic(nrows, ncols, elements)
     }
 
+    checked_elementwise!(
+        /// Adds two matrices of the same shape.
+        try_add, Add::add
+    );
+    checked_elementwise!(
+        /// Subtracts `rhs` from this matrix entry by entry.
+        try_sub, Sub::sub
+    );
+    checked_elementwise!(
+        /// Multiplies two matrices componentwise.
+        try_component_mul, Self::component_mul
+    );
+    checked_elementwise!(
+        /// Divides two matrices componentwise.
+        try_component_div, Self::component_div
+    );
+
+    /// Multiplies two matrices, checking their runtime dimensions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MatrixShapeError::IncompatibleOperands`] when the inner
+    /// dimensions differ, or [`MatrixShapeError::ProductTooLarge`] when the
+    /// result size cannot be represented by the allocator.
+    pub fn try_mul<R2, C2, SB>(
+        &self,
+        rhs: &IntervalMatrix<T, R2, C2, SB>,
+    ) -> Result<OIntervalMatrix<T, R1, C2>, MatrixShapeError>
+    where
+        R2: Dim,
+        C2: Dim,
+        SB: Storage<T, R2, C2>,
+        DefaultAllocator: Allocator<R1, C2>,
+        ShapeConstraint: AreMultipliable<R1, C1, R2, C2>,
+    {
+        let lhs_shape = self.shape();
+        let rhs_shape = rhs.shape();
+        let (rows, columns) = product_shape(lhs_shape, rhs_shape)?;
+        if rows
+            .checked_mul(columns)
+            .is_none_or(|entries| Layout::array::<T>(entries).is_err())
+        {
+            return Err(MatrixShapeError::ProductTooLarge {
+                lhs: lhs_shape,
+                rhs: rhs_shape,
+            });
+        }
+        let (nrows, _) = self.shape_generic();
+        let (_, ncols) = rhs.shape_generic();
+        let mut output = OIntervalMatrix::zeros_generic(nrows, ncols);
+        if !output.is_empty() {
+            self.accumulate_product(rhs, &mut output);
+        }
+        Ok(output)
+    }
+
+    /// Computes `self * rhs` in place in an existing output matrix.
+    ///
+    /// The output must have `self.nrows()` rows and `rhs.ncols()` columns.
+    /// A successful call overwrites every output entry without allocating a result matrix.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`MatrixShapeError`] for incompatible operands or output.
+    /// All shapes are checked before writing to `output`.
+    pub fn try_mul_into<R2, C2, SB, RO, CO, SO>(
+        &self,
+        rhs: &IntervalMatrix<T, R2, C2, SB>,
+        output: &mut IntervalMatrix<T, RO, CO, SO>,
+    ) -> Result<(), MatrixShapeError>
+    where
+        R2: Dim,
+        C2: Dim,
+        SB: Storage<T, R2, C2>,
+        RO: Dim,
+        CO: Dim,
+        SO: StorageMut<T, RO, CO>,
+        ShapeConstraint: AreMultipliable<R1, C1, R2, C2>,
+    {
+        let expected = product_shape(self.shape(), rhs.shape())?;
+        let actual = output.shape();
+        if actual != expected {
+            return Err(MatrixShapeError::OutputMismatch { expected, actual });
+        }
+        if output.is_empty() {
+            return Ok(());
+        }
+        output.fill(T::ZERO);
+        self.accumulate_product(rhs, output);
+        Ok(())
+    }
+
+    #[inline]
+    fn accumulate_product<R2, C2, SB, RO, CO, SO>(
+        &self,
+        rhs: &IntervalMatrix<T, R2, C2, SB>,
+        output: &mut IntervalMatrix<T, RO, CO, SO>,
+    ) where
+        R2: Dim,
+        C2: Dim,
+        SB: Storage<T, R2, C2>,
+        RO: Dim,
+        CO: Dim,
+        SO: StorageMut<T, RO, CO>,
+    {
+        for (mut output_column, rhs_column) in output.column_iter_mut().zip(rhs.column_iter()) {
+            for (lhs_column, rhs_entry) in self.column_iter().zip(rhs_column.iter().copied()) {
+                for (output_entry, lhs_entry) in
+                    output_column.iter_mut().zip(lhs_column.iter().copied())
+                {
+                    *output_entry = lhs_entry.mul_add(rhs_entry, *output_entry);
+                }
+            }
+        }
+    }
+
     /// Multiplies every entry by a real scalar.
     #[must_use = "Did you mean to use scale_mut()?"]
     pub fn scale(&self, value: f64) -> OIntervalMatrix<T, R1, C1>
@@ -209,6 +357,17 @@ where
         DefaultAllocator: Allocator<R1, C1>,
     {
         self.map(|entry| Add::add(entry, value))
+    }
+}
+
+const fn product_shape(
+    lhs: (usize, usize),
+    rhs: (usize, usize),
+) -> Result<(usize, usize), MatrixShapeError> {
+    if lhs.1 == rhs.0 {
+        Ok((lhs.0, rhs.1))
+    } else {
+        Err(MatrixShapeError::IncompatibleOperands { lhs, rhs })
     }
 }
 
@@ -514,15 +673,7 @@ where
         let (nrows, _) = self.shape_generic();
         let (_, ncols) = rhs.shape_generic();
         let mut output = OIntervalMatrix::<T, R1, C2>::zeros_generic(nrows, ncols);
-        for (mut output_column, rhs_column) in output.column_iter_mut().zip(rhs.column_iter()) {
-            for (lhs_column, rhs_entry) in self.column_iter().zip(rhs_column.iter().copied()) {
-                for (output_entry, lhs_entry) in
-                    output_column.iter_mut().zip(lhs_column.iter().copied())
-                {
-                    *output_entry = lhs_entry.mul_add(rhs_entry, *output_entry);
-                }
-            }
-        }
+        self.accumulate_product(rhs, &mut output);
         output
     }
 }

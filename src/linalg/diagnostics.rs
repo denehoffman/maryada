@@ -1,5 +1,55 @@
 use core::fmt;
 
+/// A shape error from checked interval matrix arithmetic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MatrixShapeError {
+    /// The operands do not have compatible dimensions for the operation.
+    IncompatibleOperands {
+        /// Rows and columns of the left operand.
+        lhs: (usize, usize),
+        /// Rows and columns of the right operand.
+        rhs: (usize, usize),
+    },
+    /// The caller-provided output has the wrong dimensions.
+    OutputMismatch {
+        /// Rows and columns required by the operation.
+        expected: (usize, usize),
+        /// Rows and columns of the supplied output.
+        actual: (usize, usize),
+    },
+    /// The product dimensions exceed the representable allocation size.
+    ProductTooLarge {
+        /// Rows and columns of the left operand.
+        lhs: (usize, usize),
+        /// Rows and columns of the right operand.
+        rhs: (usize, usize),
+    },
+}
+
+impl fmt::Display for MatrixShapeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::IncompatibleOperands { lhs, rhs } => write!(
+                formatter,
+                "incompatible matrix operands of shape {}×{} and {}×{}",
+                lhs.0, lhs.1, rhs.0, rhs.1
+            ),
+            Self::OutputMismatch { expected, actual } => write!(
+                formatter,
+                "matrix output requires shape {}×{} but has shape {}×{}",
+                expected.0, expected.1, actual.0, actual.1
+            ),
+            Self::ProductTooLarge { lhs, rhs } => write!(
+                formatter,
+                "product of {}×{} and {}×{} matrices is too large",
+                lhs.0, lhs.1, rhs.0, rhs.1
+            ),
+        }
+    }
+}
+
+impl core::error::Error for MatrixShapeError {}
+
 /// Explains why a verified linear solve did not produce an enclosure.
 ///
 /// A certification failure is deliberately distinct from singularity: verified

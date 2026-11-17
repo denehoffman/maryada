@@ -13,6 +13,124 @@ use maryada::{
 };
 use nalgebra::SMatrix;
 
+#[cfg(feature = "alloc")]
+#[test]
+fn checked_elementwise_operations_report_both_shapes() {
+    use maryada::{DIntervalMatrix, MatrixShapeError};
+
+    let lhs = DIntervalMatrix::from_element(2, 3, Interval::new(1.0, 2.0));
+    let rhs = SIntervalMatrix::<Interval, 2, 3>::from_element(Interval::new(3.0, 4.0));
+    assert_eq!(lhs.try_add(&rhs), Ok(&lhs + &rhs));
+    assert_eq!(lhs.try_sub(&rhs), Ok(&lhs - &rhs));
+    assert_eq!(lhs.try_component_mul(&rhs), Ok(lhs.component_mul(&rhs)));
+    assert_eq!(lhs.try_component_div(&rhs), Ok(lhs.component_div(&rhs)));
+
+    let rhs = DIntervalMatrix::<Interval>::zeros(3, 2);
+    let error = MatrixShapeError::IncompatibleOperands {
+        lhs: (2, 3),
+        rhs: (3, 2),
+    };
+    assert_eq!(lhs.try_add(&rhs), Err(error));
+    assert_eq!(lhs.try_sub(&rhs), Err(error));
+    assert_eq!(lhs.try_component_mul(&rhs), Err(error));
+    assert_eq!(lhs.try_component_div(&rhs), Err(error));
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn checked_product_overwrites_output_views_and_validates_before_writing() {
+    use maryada::{DIntervalMatrix, MatrixShapeError};
+
+    let lhs = SIntervalMatrix::<DecoratedInterval, 2, 3>::from_fn(|row, col| {
+        if row == col {
+            DecoratedInterval::ONE
+        } else {
+            DecoratedInterval::ZERO
+        }
+    });
+    let rhs = DIntervalMatrix::from_row_slice(
+        3,
+        2,
+        &[
+            DecoratedInterval::new(1.0, 2.0),
+            DecoratedInterval::NAI,
+            DecoratedInterval::EMPTY,
+            DecoratedInterval::new(-2.0, -1.0),
+            DecoratedInterval::ONE,
+            DecoratedInterval::ONE,
+        ],
+    );
+    let expected = &lhs * &rhs;
+    assert_eq!(lhs.try_mul(&rhs), Ok(expected.clone()));
+
+    let mut backing = DIntervalMatrix::from_element(4, 4, DecoratedInterval::ENTIRE);
+    let before = backing.clone();
+    assert_eq!(
+        lhs.try_mul_into(&rhs, &mut backing),
+        Err(MatrixShapeError::OutputMismatch {
+            expected: (2, 2),
+            actual: (4, 4),
+        })
+    );
+    assert_eq!(backing, before);
+    let wrong_rhs = DIntervalMatrix::<DecoratedInterval>::zeros(1, 2);
+    let error = MatrixShapeError::IncompatibleOperands {
+        lhs: (2, 3),
+        rhs: (1, 2),
+    };
+    assert_eq!(lhs.try_mul(&wrong_rhs), Err(error));
+    assert_eq!(lhs.try_mul_into(&wrong_rhs, &mut backing), Err(error));
+    assert_eq!(backing, before);
+
+    {
+        let mut output =
+            IntervalMatrix::from_inner(backing.as_inner_mut().view_mut((1, 1), (2, 2)));
+        assert_eq!(lhs.try_mul_into(&rhs, &mut output), Ok(()));
+        assert_eq!(output.as_inner(), expected.as_inner());
+        let rhs = DIntervalMatrix::<DecoratedInterval>::zeros(3, 2);
+        assert_eq!(lhs.try_mul_into(&rhs, &mut output), Ok(()));
+        assert!(output.iter().all(|entry| *entry == DecoratedInterval::ZERO));
+    }
+    for row in 0..4 {
+        for column in 0..4 {
+            if !(1..3).contains(&row) || !(1..3).contains(&column) {
+                assert_eq!(backing[(row, column)], DecoratedInterval::ENTIRE);
+            }
+        }
+    }
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+fn checked_products_handle_empty_dimensions_and_reject_oversized_allocations() {
+    use maryada::{DIntervalMatrix, MatrixShapeError};
+
+    let lhs = DIntervalMatrix::<Interval>::zeros(2, 0);
+    let rhs = DIntervalMatrix::<Interval>::zeros(0, 3);
+    let mut output = DIntervalMatrix::from_element(2, 3, Interval::ENTIRE);
+    assert_eq!(lhs.try_mul_into(&rhs, &mut output), Ok(()));
+    assert_eq!(output, DIntervalMatrix::<Interval>::zeros(2, 3));
+    assert_eq!(lhs.try_mul(&rhs), Ok(output));
+
+    let rhs = DIntervalMatrix::<Interval>::zeros(0, 2);
+    for rows in [usize::MAX, usize::MAX / 2] {
+        let lhs = DIntervalMatrix::<Interval>::zeros(rows, 0);
+        assert_eq!(
+            lhs.try_mul(&rhs),
+            Err(MatrixShapeError::ProductTooLarge {
+                lhs: (rows, 0),
+                rhs: (0, 2),
+            })
+        );
+    }
+    let lhs = DIntervalMatrix::<Interval>::zeros(0, 0);
+    let rhs = DIntervalMatrix::<Interval>::zeros(0, 3);
+    assert_eq!(
+        lhs.try_mul(&rhs),
+        Ok(DIntervalMatrix::<Interval>::zeros(0, 3))
+    );
+}
+
 #[test]
 fn basic_access_matches_underlying_matrix() {
     let mut matrix: SIntervalMatrix<Interval, 2, 2> = SMatrix::<Interval, 2, 2>::from_row_slice(&[

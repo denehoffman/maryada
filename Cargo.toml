@@ -16,6 +16,9 @@ libm = { version = "=0.2.16", default-features = false }
 nalgebra = { version = "0.35.0", default-features = false, optional = true, features = ["libm"] }
 num-complex = { version = "0.4.6", default-features = false, optional = true }
 
+[dev-dependencies]
+criterion = { version = "0.8.2", default-features = false }
+
 [features]
 default = []
 alloc = ["nalgebra?/alloc"]
@@ -32,6 +35,12 @@ required-features = ["linalg"]
 [[example]]
 name = "bnb"
 required-features = ["branch"]
+
+[[bench]]
+name = "performance"
+path = "benches/performance/main.rs"
+harness = false
+required-features = ["branch", "linalg"]
 
 [lints.rust]
 missing_docs = "warn"

@@ -47,6 +47,32 @@ Linear algebra has been implemented mostly by following the work of Jaroslav Hor
 }
 ```
 
+## Benchmarks
+
+```sh
+cargo bench --locked --bench performance --features branch,linalg
+```
+
+Criterion measures five scalar input classes, 4×4 and 32×32 matrix products
+and repeated verified solves, and an eight-dimensional search with gap checks
+enabled and disabled. Time is reported per batch of inputs. Throughput counts
+one operation per scalar call, matrix product, solve, or 512-step search.
+The defaults are a 250 ms warmup, 30 samples, and a one-second measurement
+target per workload. Criterion's command-line flags can override them.
+Add `-- --test` to exercise the workloads once for a smoke check.
+
+Save a named baseline before changing the code, then compare the same workloads
+afterward. The commands below select the search workloads.
+
+```sh
+cargo bench --locked --bench performance --features branch,linalg -- 'search/' --save-baseline before
+cargo bench --locked --bench performance --features branch,linalg -- 'search/' --baseline before
+```
+
+Use the same machine and Rust toolchain for before-and-after measurements. Run
+`cargo test --locked --all-features` alongside benchmark comparisons to check
+exactness and containment.
+
 # Future plans
 
 - Support for alternate complex interval space formulations, like disks and polyarcs

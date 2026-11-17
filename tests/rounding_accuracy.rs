@@ -3,6 +3,57 @@
 use maryada::{EnclosureOps, Interval, IntervalOps, exp, exp2, log};
 
 #[test]
+fn product_extrema_and_fused_addends_cover_mixed_signs_and_unbounded_inputs() {
+    let x = Interval::new(-5.0, 2.0);
+    let y = Interval::new(-3.0, 7.0);
+    assert_eq!(x * y, Interval::new(-35.0, 15.0));
+    assert_eq!(
+        x.mul_add(y, Interval::new(5.0, 6.0)),
+        Interval::new(-30.0, 21.0)
+    );
+
+    let nonpositive = Interval::new(f64::NEG_INFINITY, -1.0);
+    let nonnegative = Interval::new(0.0, f64::INFINITY);
+    assert_eq!(
+        nonpositive * nonnegative,
+        Interval::new(f64::NEG_INFINITY, 0.0)
+    );
+    assert_eq!(
+        nonpositive.mul_add(nonnegative, Interval::ONE),
+        Interval::new(f64::NEG_INFINITY, 1.0)
+    );
+    assert_eq!(
+        nonpositive.mul_add(nonpositive, Interval::new(f64::NEG_INFINITY, 0.0)),
+        Interval::ENTIRE
+    );
+    assert_eq!(Interval::ZERO.mul_add(Interval::ENTIRE, x), x);
+
+    let max = Interval::from(f64::MAX);
+    assert_eq!(max.mul_add(Interval::from(2.0), -max), max);
+}
+
+#[test]
+fn quotient_extrema_use_the_appropriate_denominator_limits() {
+    let numerator = Interval::new(-2.0, 4.0);
+    assert_eq!(
+        numerator / Interval::new(-4.0, -2.0),
+        Interval::new(-2.0, 1.0)
+    );
+    assert_eq!(
+        numerator / Interval::new(0.0, f64::INFINITY),
+        Interval::ENTIRE
+    );
+    assert_eq!(
+        Interval::new(0.0, 4.0) / Interval::new(f64::NEG_INFINITY, 0.0),
+        Interval::new(f64::NEG_INFINITY, 0.0)
+    );
+    assert_eq!(
+        Interval::new(2.0, f64::INFINITY) / Interval::new(4.0, f64::INFINITY),
+        Interval::new(0.0, f64::INFINITY)
+    );
+}
+
+#[test]
 fn addition_and_subtraction_enclose_finite_sums_near_overflow() {
     let small = Interval::from(libm::scalbn(3.0, 970));
     let negative_max = -f64::MAX;

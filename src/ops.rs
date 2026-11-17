@@ -594,31 +594,68 @@ fn mul_interval(x: Interval, y: Interval) -> Interval {
     if x.is_empty_raw() || y.is_empty_raw() {
         return Interval::EMPTY;
     }
+    product_bounds(x, y, mul_endpoint)
+}
+
+enum IntervalSign {
+    Nonnegative,
+    Nonpositive,
+    Mixed,
+}
+
+impl IntervalSign {
+    fn of(lower: f64, upper: f64) -> Self {
+        if lower >= 0.0 {
+            Self::Nonnegative
+        } else if upper <= 0.0 {
+            Self::Nonpositive
+        } else {
+            Self::Mixed
+        }
+    }
+}
+
+// Select corners by the exact product order. Adding an endpoint of the
+// addend in FMA preserves this order and keeps the rounding fused.
+#[inline]
+fn product_bounds(
+    x: Interval,
+    y: Interval,
+    evaluate: impl Fn(f64, f64, Direction) -> f64,
+) -> Interval {
+    use IntervalSign::{Mixed, Nonnegative, Nonpositive};
+
     let x_inf = x.inf_raw();
     let x_sup = x.sup_raw();
     let y_inf = y.inf_raw();
     let y_sup = y.sup_raw();
-    let lower = f64::min(
-        f64::min(
-            mul_endpoint(x_inf, y_inf, Direction::Down),
-            mul_endpoint(x_inf, y_sup, Direction::Down),
-        ),
-        f64::min(
-            mul_endpoint(x_sup, y_inf, Direction::Down),
-            mul_endpoint(x_sup, y_sup, Direction::Down),
-        ),
-    );
-    let upper = f64::max(
-        f64::max(
-            mul_endpoint(x_inf, y_inf, Direction::Up),
-            mul_endpoint(x_inf, y_sup, Direction::Up),
-        ),
-        f64::max(
-            mul_endpoint(x_sup, y_inf, Direction::Up),
-            mul_endpoint(x_sup, y_sup, Direction::Up),
-        ),
-    );
-    Interval::from_valid_bounds(lower, upper)
+    let (lower, upper) = match (
+        IntervalSign::of(x_inf, x_sup),
+        IntervalSign::of(y_inf, y_sup),
+    ) {
+        (Nonnegative, Nonnegative) => ((x_inf, y_inf), (x_sup, y_sup)),
+        (Nonnegative, Nonpositive) => ((x_sup, y_inf), (x_inf, y_sup)),
+        (Nonnegative, Mixed) => ((x_sup, y_inf), (x_sup, y_sup)),
+        (Nonpositive, Nonnegative) => ((x_inf, y_sup), (x_sup, y_inf)),
+        (Nonpositive, Nonpositive) => ((x_sup, y_sup), (x_inf, y_inf)),
+        (Nonpositive, Mixed) => ((x_inf, y_sup), (x_inf, y_inf)),
+        (Mixed, Nonnegative) => ((x_inf, y_sup), (x_sup, y_sup)),
+        (Mixed, Nonpositive) => ((x_sup, y_inf), (x_inf, y_inf)),
+        (Mixed, Mixed) => {
+            return Interval::from_valid_bounds(
+                evaluate(x_inf, y_sup, Direction::Down).min(evaluate(
+                    x_sup,
+                    y_inf,
+                    Direction::Down,
+                )),
+                evaluate(x_inf, y_inf, Direction::Up).max(evaluate(x_sup, y_sup, Direction::Up)),
+            );
+        }
+    };
+    Interval::from_valid_bounds(
+        evaluate(lower.0, lower.1, Direction::Down),
+        evaluate(upper.0, upper.1, Direction::Up),
+    )
 }
 
 fn mul_bare(x: Interval, y: Interval) -> BareResult {
@@ -668,40 +705,25 @@ fn div_interval(x: Interval, y: Interval) -> Interval {
     if x_inf == 0.0 && x_sup == 0.0 {
         return Interval::ZERO;
     }
-    let mut lower = f64::INFINITY;
-    let mut upper = f64::NEG_INFINITY;
-    for numerator in [x_inf, x_sup] {
-        for denominator in [y_inf, y_sup] {
-            if denominator == 0.0 {
-                continue;
-            }
-            let down = rounding::div(numerator, denominator, Direction::Down);
-            let up = rounding::div(numerator, denominator, Direction::Up);
-            if !down.is_nan() {
-                lower = lower.min(down);
-            }
-            if !up.is_nan() {
-                upper = upper.max(up);
-            }
-        }
+    if y_inf < 0.0 && y_sup > 0.0 {
+        return Interval::ENTIRE;
     }
-    if y_inf == 0.0 || (y_inf < 0.0 && y_sup > 0.0) {
-        if x_inf < 0.0 {
-            lower = f64::NEG_INFINITY;
-        }
-        if x_sup > 0.0 {
-            upper = f64::INFINITY;
-        }
-    }
-    if y_sup == 0.0 || (y_inf < 0.0 && y_sup > 0.0) {
-        if x_sup > 0.0 {
-            lower = f64::NEG_INFINITY;
-        }
-        if x_inf < 0.0 {
-            upper = f64::INFINITY;
-        }
-    }
-    Interval::from_valid_bounds(lower, upper)
+
+    // Negate both operands for a nonpositive divisor. In the resulting
+    // positive half-line the near endpoint magnifies |x|, and the far
+    // endpoint reduces it. At zero, use the limit from the positive side.
+    let (lower, upper, near, far) = if y_sup <= 0.0 {
+        (-x_sup, -x_inf, -y_sup, -y_inf)
+    } else {
+        (x_inf, x_sup, y_inf, y_sup)
+    };
+    let near = near.abs();
+    let lower_denominator = if lower < 0.0 { near } else { far };
+    let upper_denominator = if upper > 0.0 { near } else { far };
+    Interval::from_valid_bounds(
+        rounding::div(lower, lower_denominator, Direction::Down),
+        rounding::div(upper, upper_denominator, Direction::Up),
+    )
 }
 
 fn div_bare(x: Interval, y: Interval) -> BareResult {
@@ -782,48 +804,23 @@ fn sqrt_bare(x: Interval) -> BareResult {
     BareResult { interval, local }
 }
 
-fn fma_endpoint(x: f64, y: f64, z: f64, direction: Direction) -> Option<f64> {
-    if x == 0.0 || y == 0.0 {
-        return Some(z);
-    }
-    let value = rounding::fma(x, y, z, direction);
-    // We can still get NaN here from subtracting infinity from infinity
-    if value.is_nan() { None } else { Some(value) }
-}
-
-fn fma_interval(x: Interval, y: Interval, z: Interval) -> Interval {
-    let x_bounds = [x.inf_raw(), x.sup_raw()];
-    let y_bounds = [y.inf_raw(), y.sup_raw()];
-    let mut lower = f64::INFINITY;
-    let mut upper = f64::NEG_INFINITY;
-    let mut found_lower = false;
-    let mut found_upper = false;
-    for x_bound in x_bounds {
-        for y_bound in y_bounds {
-            if let Some(value) = fma_endpoint(x_bound, y_bound, z.inf_raw(), Direction::Down) {
-                if !found_lower || value < lower {
-                    lower = value;
-                }
-                found_lower = true;
-            }
-            if let Some(value) = fma_endpoint(x_bound, y_bound, z.sup_raw(), Direction::Up) {
-                if !found_upper || value > upper {
-                    upper = value;
-                }
-                found_upper = true;
-            }
-        }
-    }
-    debug_assert!(found_lower);
-    debug_assert!(found_upper);
-    Interval::from_valid_bounds(lower, upper)
-}
-
 fn fma_bare(x: Interval, y: Interval, z: Interval) -> BareResult {
     if x.is_empty_raw() || y.is_empty_raw() || z.is_empty_raw() {
         return empty_result();
     }
-    let interval = fma_interval(x, y, z);
+    let interval = product_bounds(x, y, |left, right, direction| {
+        let addend = match direction {
+            Direction::Down => z.inf_raw(),
+            Direction::Up => z.sup_raw(),
+        };
+        if left == 0.0 || right == 0.0 {
+            addend
+        } else {
+            // The minimum product cannot be +infinity and the maximum
+            // cannot be -infinity, so an infinite addend cannot cancel them.
+            rounding::fma(left, right, addend, direction)
+        }
+    });
     BareResult {
         interval,
         local: continuous_ternary_decoration(x, y, z, interval),

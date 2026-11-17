@@ -6,9 +6,123 @@
     clippy::unwrap_used
 )]
 use maryada::{
-    DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalOps, Signal, SignalFlags,
-    TextError, decoration_part, interval_to_text, set_dec, subset,
+    DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalOps, ParseIntervalDiagnostic,
+    ParseIntervalError, ParseIntervalErrorKind, Signal, SignalFlags, TextError, decoration_part,
+    interval_to_text, set_dec, subset,
 };
+
+#[test]
+fn checked_parsing_reports_causes_and_original_utf8_byte_offsets() {
+    use ParseIntervalErrorKind::{
+        InvalidInfinity, InvalidNumber, InvalidSyntax, InvalidUncertainty, ReversedBounds,
+    };
+
+    for (literal, kind, byte_offset) in [
+        ("", InvalidSyntax, 0),
+        ("not an interval", InvalidSyntax, 0),
+        (" [1,2  ", InvalidSyntax, 5),
+        ("[1,2] trailing", InvalidSyntax, 6),
+        ("[1]]", InvalidSyntax, 3),
+        ("[1,2,3]", InvalidSyntax, 4),
+        ("[1/0]", InvalidNumber, 1),
+        ("[0x1]", InvalidNumber, 1),
+        (" \t[ 0, nope ] ", InvalidNumber, 7),
+        ("\u{2003}[1, \u{2002}bad]", InvalidNumber, 10),
+        ("[inf]", InvalidInfinity, 1),
+        ("[+inf,1]", InvalidInfinity, 1),
+        ("[0,-inf]", InvalidInfinity, 3),
+        ("[2,1]", ReversedBounds, 3),
+        (" \u{2003}[3, 2]", ReversedBounds, 8),
+        ("[0.100000000000000001,0.1]", ReversedBounds, 22),
+        ("-1x?2", InvalidUncertainty, 0),
+        (" 1?oops ", InvalidUncertainty, 3),
+        ("1?2e+", InvalidUncertainty, 4),
+        ("1?2e", InvalidUncertainty, 4),
+        (" 1?µ", InvalidUncertainty, 3),
+    ] {
+        let expected = ParseIntervalDiagnostic { kind, byte_offset };
+        assert_eq!(
+            Interval::parse_checked(literal),
+            Err(expected),
+            "{literal:?}"
+        );
+        assert_eq!(
+            DecoratedInterval::parse_checked(literal),
+            Err(expected),
+            "{literal:?}"
+        );
+        assert!(literal.is_char_boundary(byte_offset));
+
+        // FromStr keeps its unit error type and IEEE constructors keep their signals.
+        assert_eq!(literal.parse::<Interval>(), Err(ParseIntervalError));
+        let mut signals = SignalFlags::NONE;
+        assert!(Interval::text_to_interval(literal, &mut signals).is_empty());
+        assert_eq!(signals.bits(), u8::from(Signal::UndefinedOperation));
+    }
+}
+
+#[test]
+fn checked_decorated_parsing_reports_incompatible_and_unknown_decorations() {
+    for (literal, byte_offset) in [
+        ("[1]_invalid", 4),
+        ("[1]_ill", 4),
+        ("[1]_", 4),
+        (" [empty]  _com ", 11),
+        ("[,]_com", 4),
+        ("1??_com", 4),
+    ] {
+        let error = DecoratedInterval::parse_checked(literal).unwrap_err();
+        assert_eq!(
+            error.kind,
+            ParseIntervalErrorKind::InvalidDecoration,
+            "{literal:?}"
+        );
+        assert_eq!(error.byte_offset, byte_offset, "{literal:?}");
+        assert_eq!(
+            literal.parse::<DecoratedInterval>(),
+            Err(ParseIntervalError)
+        );
+        let mut signals = SignalFlags::NONE;
+        assert!(DecoratedInterval::text_to_interval(literal, &mut signals).is_nai());
+        assert_eq!(signals.bits(), u8::from(Signal::UndefinedOperation));
+    }
+    let error = DecoratedInterval::parse_checked("\u{2003}[1,x]_def").unwrap_err();
+    assert_eq!(error.kind, ParseIntervalErrorKind::InvalidNumber);
+    assert_eq!(error.byte_offset, 6);
+    let displayed: &dyn core::error::Error = &error;
+    assert_eq!(displayed.to_string(), "invalid endpoint literal at byte 6");
+}
+
+#[test]
+fn checked_parsing_distinguishes_explicit_special_values_and_finite_overflow() {
+    for (literal, expected) in [
+        (" [empty] ", Interval::EMPTY),
+        ("[,]", Interval::ENTIRE),
+        ("1.0?2uE3", Interval::new(1000.0, 1200.0)),
+        ("[1e999]", Interval::new(f64::MAX, f64::INFINITY)),
+    ] {
+        assert_eq!(
+            Interval::parse_checked(literal),
+            Ok((expected, SignalFlags::NONE))
+        );
+    }
+    for (literal, expected) in [
+        ("[empty]_trv", DecoratedInterval::EMPTY),
+        ("[,]_dac", DecoratedInterval::ENTIRE),
+        (
+            "[1e999]_com",
+            set_dec(Interval::new(f64::MAX, f64::INFINITY), Decoration::Dac),
+        ),
+    ] {
+        assert_eq!(
+            DecoratedInterval::parse_checked(literal),
+            Ok((expected, SignalFlags::NONE))
+        );
+    }
+    let (value, signals) = DecoratedInterval::parse_checked(" [NaI] ").unwrap();
+    assert!(value.is_nai());
+    assert!(signals.is_empty());
+}
 
 #[test]
 fn required_text_literal_forms_are_accepted() {
@@ -304,6 +418,21 @@ fn ambiguous_relaxed_endpoints_report_the_signal_in_both_constructors() {
         ),
     ] {
         let mut signals = SignalFlags::NONE;
+        let mut expected_flags = SignalFlags::NONE;
+        expected_flags.insert(Signal::PossiblyUndefinedOperation);
+        assert_eq!(
+            Interval::parse_checked(literal),
+            Ok((expected, expected_flags))
+        );
+        assert_eq!(
+            DecoratedInterval::parse_checked(literal),
+            Ok((DecoratedInterval::from(expected), expected_flags))
+        );
+        assert_eq!(
+            DecoratedInterval::parse_checked(&format!("{literal}_def")),
+            Ok((set_dec(expected, Decoration::Def), expected_flags))
+        );
+        assert_eq!(literal.parse::<Interval>(), Ok(expected));
         assert_eq!(
             Interval::text_to_interval(literal, &mut signals),
             expected,

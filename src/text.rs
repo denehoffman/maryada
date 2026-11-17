@@ -3,7 +3,7 @@ use core::cmp::Ordering;
 use crate::{
     DecoratedInterval, Decoration, Interval, IntervalDatum,
     rounding::{self, Direction},
-    signals::{Signal, SignalSink},
+    signals::{Signal, SignalFlags, SignalSink},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -19,6 +19,72 @@ pub enum TextError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 /// Error returned by [`core::str::FromStr`] for an invalid interval literal.
 pub struct ParseIntervalError;
+
+impl core::fmt::Display for ParseIntervalError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("invalid interval literal")
+    }
+}
+
+impl core::error::Error for ParseIntervalError {}
+
+/// The cause of a checked interval parse failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ParseIntervalErrorKind {
+    /// The input does not have the required interval syntax.
+    InvalidSyntax,
+    /// An endpoint is not a valid decimal, hexadecimal, rational, or infinity literal.
+    InvalidNumber,
+    /// A decoration is unknown or incompatible with the source interval.
+    InvalidDecoration,
+    /// The exact lower endpoint exceeds the exact upper endpoint.
+    ReversedBounds,
+    /// An infinity literal is used as a singleton or on the wrong side.
+    InvalidInfinity,
+    /// The uncertain mantissa, radius, or exponent is malformed.
+    InvalidUncertainty,
+}
+
+/// A checked parse failure with a byte offset in the original input.
+///
+/// The offset identifies the start of the offending token. A missing closing
+/// bracket is reported at the end of the trimmed literal, where the bracket
+/// was expected. Every failure corresponds to [`Signal::UndefinedOperation`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParseIntervalDiagnostic {
+    /// The cause of the failure.
+    pub kind: ParseIntervalErrorKind,
+    /// Zero-based UTF-8 byte offset in the original input.
+    pub byte_offset: usize,
+}
+
+impl core::fmt::Display for ParseIntervalDiagnostic {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let message = match self.kind {
+            ParseIntervalErrorKind::InvalidSyntax => "invalid interval syntax",
+            ParseIntervalErrorKind::InvalidNumber => "invalid endpoint literal",
+            ParseIntervalErrorKind::InvalidDecoration => "invalid interval decoration",
+            ParseIntervalErrorKind::ReversedBounds => "lower endpoint exceeds upper endpoint",
+            ParseIntervalErrorKind::InvalidInfinity => "invalid infinity endpoint",
+            ParseIntervalErrorKind::InvalidUncertainty => "invalid uncertain literal",
+        };
+        write!(formatter, "{message} at byte {}", self.byte_offset)
+    }
+}
+
+impl core::error::Error for ParseIntervalDiagnostic {}
+
+impl core::fmt::Display for TextError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::BufferTooSmall { required } => {
+                write!(formatter, "interval text requires {required} bytes")
+            }
+        }
+    }
+}
+
+impl core::error::Error for TextError {}
 
 struct ParsedBare {
     interval: Interval,
@@ -42,48 +108,98 @@ enum ParsedDecorated {
 /// Bare IEEE textToInterval.
 #[allow(clippy::arithmetic_side_effects)]
 pub fn text_to_interval<S: SignalSink>(s: &str, signals: &mut S) -> Interval {
-    let Ok(parsed) = parse_bare_literal(s) else {
+    let Ok((interval, flags)) = Interval::parse_checked(s) else {
         signals.raise(Signal::UndefinedOperation);
         return Interval::EMPTY;
     };
-    if parsed.possibly_undefined {
+    if flags.contains(Signal::PossiblyUndefinedOperation) {
         signals.raise(Signal::PossiblyUndefinedOperation);
     }
-    parsed.interval
+    interval
 }
 
 /// Decorated IEEE textToInterval.
 #[allow(clippy::arithmetic_side_effects)]
 pub fn text_to_decorated_interval<S: SignalSink>(s: &str, signals: &mut S) -> DecoratedInterval {
-    match parse_decorated_literal(s) {
-        Ok(ParsedDecorated::NaI) => DecoratedInterval::NAI,
-        Ok(ParsedDecorated::Interval { bare, decoration }) => {
-            if bare.possibly_undefined {
-                signals.raise(Signal::PossiblyUndefinedOperation);
-            }
-            let Some(decoration) = decoration else {
-                return DecoratedInterval::new_dec_raw(bare.interval);
-            };
-            // The parser must reject combinations forbidden at
-            // Level 1. setDec normalization is only applied after
-            // that validation.
-            //
-            // If the source was bounded, but conversion overflowed
-            // and produced an unbounded interval, com becomes dac.
-            let decoration = if decoration == Decoration::Com
-                && bare.source_bounded
-                && !bare.interval.is_bounded_raw()
-            {
-                Decoration::Dac
-            } else {
-                decoration
-            };
+    let Ok((interval, flags)) = DecoratedInterval::parse_checked(s) else {
+        signals.raise(Signal::UndefinedOperation);
+        return DecoratedInterval::NAI;
+    };
+    if flags.contains(Signal::PossiblyUndefinedOperation) {
+        signals.raise(Signal::PossiblyUndefinedOperation);
+    }
+    interval
+}
 
-            DecoratedInterval::set_dec_raw(bare.interval, decoration)
+impl Interval {
+    /// Parses a bare literal and returns its IEEE exception flags.
+    ///
+    /// Successful accuracy-relaxed parses may report
+    /// [`Signal::PossiblyUndefinedOperation`]. Explicit Empty is a successful parse.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed diagnostic and byte offset for an invalid literal.
+    ///
+    /// ```
+    /// use maryada::{Interval, ParseIntervalErrorKind, Signal};
+    ///
+    /// let (_, flags) = Interval::parse_checked("[0.100000000000000001,1/10]")?;
+    /// assert!(flags.contains(Signal::PossiblyUndefinedOperation));
+    /// let error = Interval::parse_checked("[2,1]").unwrap_err();
+    /// assert_eq!(error.kind, ParseIntervalErrorKind::ReversedBounds);
+    /// assert_eq!(error.byte_offset, 3);
+    /// # Ok::<(), maryada::ParseIntervalDiagnostic>(())
+    /// ```
+    pub fn parse_checked(s: &str) -> Result<(Self, SignalFlags), ParseIntervalDiagnostic> {
+        let parsed = parse_bare_literal(s)?;
+        let mut signals = SignalFlags::NONE;
+        if parsed.possibly_undefined {
+            signals.insert(Signal::PossiblyUndefinedOperation);
         }
-        Err(()) => {
-            signals.raise(Signal::UndefinedOperation);
-            DecoratedInterval::NAI
+        Ok((parsed.interval, signals))
+    }
+}
+
+impl DecoratedInterval {
+    /// Parses a decorated literal and returns its IEEE exception flags.
+    ///
+    /// Successful accuracy-relaxed parses may report
+    /// [`Signal::PossiblyUndefinedOperation`]. Explicit Empty and `[nai]` are
+    /// successful parses. Bounded source intervals that overflow binary64 have
+    /// their requested `com` decoration reduced to `dac`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed diagnostic and byte offset for an invalid literal or decoration.
+    pub fn parse_checked(s: &str) -> Result<(Self, SignalFlags), ParseIntervalDiagnostic> {
+        let mut signals = SignalFlags::NONE;
+        match parse_decorated_literal(s)? {
+            ParsedDecorated::NaI => Ok((Self::NAI, signals)),
+            ParsedDecorated::Interval { bare, decoration } => {
+                if bare.possibly_undefined {
+                    signals.insert(Signal::PossiblyUndefinedOperation);
+                }
+                let Some(decoration) = decoration else {
+                    return Ok((Self::new_dec_raw(bare.interval), signals));
+                };
+                // The parser must reject combinations forbidden at
+                // Level 1. setDec normalization is only applied after
+                // that validation.
+                //
+                // If the source was bounded, but conversion overflowed
+                // and produced an unbounded interval, com becomes dac.
+                let decoration = if decoration == Decoration::Com
+                    && bare.source_bounded
+                    && !bare.interval.is_bounded_raw()
+                {
+                    Decoration::Dac
+                } else {
+                    decoration
+                };
+
+                Ok((Self::set_dec_raw(bare.interval, decoration), signals))
+            }
         }
     }
 }
@@ -162,38 +278,61 @@ pub fn interval_to_text<T: IntervalDatum>(
 // Alphabetic matching is case-insensitive.
 
 #[allow(clippy::arithmetic_side_effects, clippy::string_slice)]
-fn parse_bare_literal(s: &str) -> Result<ParsedBare, ()> {
+fn parse_bare_literal(s: &str) -> Result<ParsedBare, ParseIntervalDiagnostic> {
+    let offset = s.len() - s.trim_start_matches(char::is_whitespace).len();
     let s = trim_ascii_space(s);
-    if s.starts_with('[') && s.ends_with(']') {
-        return parse_bracket_literal(&s[1..s.len() - 1]);
+    if s.starts_with('[') {
+        let Some(closing) = s.find(']') else {
+            return Err(ParseIntervalDiagnostic {
+                kind: ParseIntervalErrorKind::InvalidSyntax,
+                byte_offset: offset + s.len(),
+            });
+        };
+        if closing + 1 != s.len() {
+            let trailing = s[closing + 1..].trim_start_matches(char::is_whitespace);
+            return Err(ParseIntervalDiagnostic {
+                kind: ParseIntervalErrorKind::InvalidSyntax,
+                byte_offset: offset + s.len() - trailing.len(),
+            });
+        }
+        return parse_bracket_literal(&s[1..closing], offset + 1);
     }
-    parse_uncertain_literal(s)
+    parse_uncertain_literal(s, offset)
 }
 
 #[allow(clippy::arithmetic_side_effects, clippy::string_slice)]
-fn parse_decorated_literal(s: &str) -> Result<ParsedDecorated, ()> {
+fn parse_decorated_literal(s: &str) -> Result<ParsedDecorated, ParseIntervalDiagnostic> {
+    let offset = s.len() - s.trim_start_matches(char::is_whitespace).len();
     let s = trim_ascii_space(s);
     if eq_ascii_case(s, "[nai]") {
         return Ok(ParsedDecorated::NaI);
     }
 
     let (bare_text, decoration) = if let Some(index) = s.rfind('_') {
-        let decoration: Decoration = s[index + 1..].parse().map_err(|_| ())?;
+        let invalid_decoration = ParseIntervalDiagnostic {
+            kind: ParseIntervalErrorKind::InvalidDecoration,
+            byte_offset: offset + index + 1,
+        };
+        let decoration: Decoration = s[index + 1..].parse().map_err(|_| invalid_decoration)?;
         if decoration == Decoration::Ill {
-            return Err(());
+            return Err(invalid_decoration);
         }
-        (trim_ascii_space(&s[..index]), Some(decoration))
+        (&s[..index], Some(decoration))
     } else {
         (s, None)
     };
-    let bare = parse_bare_literal(bare_text)?;
-    if let Some(decoration) = decoration {
-        if bare.interval.is_empty_raw() && decoration != Decoration::Trv {
-            return Err(());
-        }
-        if decoration == Decoration::Com && !bare.source_bounded {
-            return Err(());
-        }
+    let bare = parse_bare_literal(bare_text).map_err(|mut error| {
+        error.byte_offset += offset;
+        error
+    })?;
+    if let Some(decoration) = decoration
+        && (bare.interval.is_empty_raw() && decoration != Decoration::Trv
+            || decoration == Decoration::Com && !bare.source_bounded)
+    {
+        return Err(ParseIntervalDiagnostic {
+            kind: ParseIntervalErrorKind::InvalidDecoration,
+            byte_offset: offset + bare_text.len() + 1,
+        });
     }
     Ok(ParsedDecorated::Interval { bare, decoration })
 }
@@ -363,9 +502,14 @@ fn compare_same_radix_literals(left: &str, right: &str, hexadecimal: bool) -> Op
 #[allow(
     clippy::arithmetic_side_effects,
     clippy::indexing_slicing,
-    clippy::string_slice
+    clippy::string_slice,
+    clippy::too_many_lines
 )]
-fn parse_bracket_literal(inner: &str) -> Result<ParsedBare, ()> {
+fn parse_bracket_literal(
+    inner: &str,
+    offset: usize,
+) -> Result<ParsedBare, ParseIntervalDiagnostic> {
+    let offset = offset + inner.len() - inner.trim_start_matches(char::is_whitespace).len();
     let inner = trim_ascii_space(inner);
     if inner.is_empty() || eq_ascii_case(inner, "empty") {
         return Ok(ParsedBare {
@@ -386,10 +530,17 @@ fn parse_bracket_literal(inner: &str) -> Result<ParsedBare, ()> {
     if comma.is_none() {
         let value = trim_ascii_space(inner);
         let kind = number_kind(value);
-        let lower = parse_number_lower(value).ok_or(())?;
-        let upper = parse_number_upper(value).ok_or(())?;
+        let invalid_number = ParseIntervalDiagnostic {
+            kind: ParseIntervalErrorKind::InvalidNumber,
+            byte_offset: offset,
+        };
+        let lower = parse_number_lower(value).ok_or(invalid_number)?;
+        let upper = parse_number_upper(value).ok_or(invalid_number)?;
         if kind == NumberKind::Infinity {
-            return Err(());
+            return Err(ParseIntervalDiagnostic {
+                kind: ParseIntervalErrorKind::InvalidInfinity,
+                byte_offset: offset,
+            });
         }
         return Ok(ParsedBare {
             interval: Interval::from_valid_bounds(lower, upper),
@@ -398,41 +549,67 @@ fn parse_bracket_literal(inner: &str) -> Result<ParsedBare, ()> {
         });
     }
 
-    let comma = comma.ok_or(())?;
-    if inner[comma + 1..].contains(',') {
-        return Err(());
+    let comma = comma.ok_or(ParseIntervalDiagnostic {
+        kind: ParseIntervalErrorKind::InvalidSyntax,
+        byte_offset: offset,
+    })?;
+    if let Some(extra_comma) = inner[comma + 1..].find(',') {
+        return Err(ParseIntervalDiagnostic {
+            kind: ParseIntervalErrorKind::InvalidSyntax,
+            byte_offset: offset + comma + 1 + extra_comma,
+        });
     }
     let lower_text = trim_ascii_space(&inner[..comma]);
     let upper_text = trim_ascii_space(&inner[comma + 1..]);
     let lower_kind = (!lower_text.is_empty()).then(|| number_kind(lower_text));
     let upper_kind = (!upper_text.is_empty()).then(|| number_kind(upper_text));
+    let lower_error = ParseIntervalDiagnostic {
+        kind: ParseIntervalErrorKind::InvalidNumber,
+        byte_offset: offset,
+    };
+    let upper_error = ParseIntervalDiagnostic {
+        kind: ParseIntervalErrorKind::InvalidNumber,
+        byte_offset: offset + inner.len()
+            - inner[comma + 1..]
+                .trim_start_matches(char::is_whitespace)
+                .len(),
+    };
 
     let (lower_down, lower_up) = if lower_text.is_empty() {
         (f64::NEG_INFINITY, f64::NEG_INFINITY)
     } else {
         (
-            parse_number_lower(lower_text).ok_or(())?,
-            parse_number_upper(lower_text).ok_or(())?,
+            parse_number_lower(lower_text).ok_or(lower_error)?,
+            parse_number_upper(lower_text).ok_or(lower_error)?,
         )
     };
     let (upper_down, upper_up) = if upper_text.is_empty() {
         (f64::INFINITY, f64::INFINITY)
     } else {
         (
-            parse_number_lower(upper_text).ok_or(())?,
-            parse_number_upper(upper_text).ok_or(())?,
+            parse_number_lower(upper_text).ok_or(upper_error)?,
+            parse_number_upper(upper_text).ok_or(upper_error)?,
         )
     };
     if lower_kind == Some(NumberKind::Infinity) && lower_down == f64::INFINITY {
-        return Err(());
+        return Err(ParseIntervalDiagnostic {
+            kind: ParseIntervalErrorKind::InvalidInfinity,
+            ..lower_error
+        });
     }
     if upper_kind == Some(NumberKind::Infinity) && upper_up == f64::NEG_INFINITY {
-        return Err(());
+        return Err(ParseIntervalDiagnostic {
+            kind: ParseIntervalErrorKind::InvalidInfinity,
+            ..upper_error
+        });
     }
     let mut possibly_undefined = false;
     if lower_up > upper_down {
         if lower_down >= upper_up {
-            return Err(());
+            return Err(ParseIntervalDiagnostic {
+                kind: ParseIntervalErrorKind::ReversedBounds,
+                ..upper_error
+            });
         }
         // Both exact endpoints are inside the same gap between binary64 values.
         if lower_kind == upper_kind
@@ -442,10 +619,14 @@ fn parse_bracket_literal(inner: &str) -> Result<ParsedBare, ()> {
             )
         {
             let hexadecimal = lower_kind == Some(NumberKind::Hexadecimal);
-            if compare_same_radix_literals(lower_text, upper_text, hexadecimal).ok_or(())?
+            if compare_same_radix_literals(lower_text, upper_text, hexadecimal)
+                .ok_or(upper_error)?
                 == Ordering::Greater
             {
-                return Err(());
+                return Err(ParseIntervalDiagnostic {
+                    kind: ParseIntervalErrorKind::ReversedBounds,
+                    ..upper_error
+                });
             }
         } else {
             // Rational and mixed-radix pairs may use the hull of this gap.
@@ -614,15 +795,25 @@ fn write_i64_decimal(value: i64, output: &mut [u8]) -> Option<usize> {
 }
 
 #[allow(clippy::arithmetic_side_effects, clippy::string_slice)]
-fn parse_uncertain_suffix(suffix: &str) -> Result<(&str, i128, Option<u8>), ()> {
+fn parse_uncertain_suffix(
+    suffix: &str,
+    offset: usize,
+) -> Result<(&str, i128, Option<u8>), ParseIntervalDiagnostic> {
+    let invalid_suffix = ParseIntervalDiagnostic {
+        kind: ParseIntervalErrorKind::InvalidUncertainty,
+        byte_offset: offset,
+    };
     let mut suffix_without_exponent = suffix;
     let exponent_index = suffix
         .bytes()
         .position(|byte| byte.eq_ignore_ascii_case(&b'e'));
     let exponent = if let Some(index) = exponent_index {
-        let exponent = suffix.get(index + 1..).ok_or(())?;
-        suffix_without_exponent = suffix.get(..index).ok_or(())?;
-        parse_uncertain_exponent(exponent).ok_or(())?
+        let exponent = suffix.get(index + 1..).ok_or(invalid_suffix)?;
+        suffix_without_exponent = suffix.get(..index).ok_or(invalid_suffix)?;
+        parse_uncertain_exponent(exponent).ok_or(ParseIntervalDiagnostic {
+            byte_offset: offset + index + 1,
+            ..invalid_suffix
+        })?
     } else {
         0
     };
@@ -630,13 +821,13 @@ fn parse_uncertain_suffix(suffix: &str) -> Result<(&str, i128, Option<u8>), ()> 
         Some(byte) if byte.eq_ignore_ascii_case(&b'u') => {
             suffix_without_exponent = suffix_without_exponent
                 .get(..suffix_without_exponent.len() - 1)
-                .ok_or(())?;
+                .ok_or(invalid_suffix)?;
             Some(b'u')
         }
         Some(byte) if byte.eq_ignore_ascii_case(&b'd') => {
             suffix_without_exponent = suffix_without_exponent
                 .get(..suffix_without_exponent.len() - 1)
-                .ok_or(())?;
+                .ok_or(invalid_suffix)?;
             Some(b'd')
         }
         _ => None,
@@ -645,8 +836,20 @@ fn parse_uncertain_suffix(suffix: &str) -> Result<(&str, i128, Option<u8>), ()> 
 }
 
 #[allow(clippy::arithmetic_side_effects)]
-fn parse_uncertain_literal(s: &str) -> Result<ParsedBare, ()> {
-    let (mantissa, suffix) = s.split_once('?').ok_or(())?;
+fn parse_uncertain_literal(s: &str, offset: usize) -> Result<ParsedBare, ParseIntervalDiagnostic> {
+    let (mantissa, suffix) = s.split_once('?').ok_or(ParseIntervalDiagnostic {
+        kind: ParseIntervalErrorKind::InvalidSyntax,
+        byte_offset: offset,
+    })?;
+    let invalid_mantissa = ParseIntervalDiagnostic {
+        kind: ParseIntervalErrorKind::InvalidUncertainty,
+        byte_offset: offset,
+    };
+    let suffix_offset = offset + mantissa.len() + 1;
+    let invalid_radius = ParseIntervalDiagnostic {
+        byte_offset: suffix_offset,
+        ..invalid_mantissa
+    };
     let negative = mantissa.starts_with('-');
     let mantissa = mantissa.strip_prefix(['+', '-']).unwrap_or(mantissa);
     let (integer, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
@@ -656,9 +859,9 @@ fn parse_uncertain_literal(s: &str) -> Result<ParsedBare, ()> {
             .chain(fraction.bytes())
             .all(|byte| byte.is_ascii_digit())
     {
-        return Err(());
+        return Err(invalid_mantissa);
     }
-    let (suffix, exponent, direction) = parse_uncertain_suffix(suffix)?;
+    let (suffix, exponent, direction) = parse_uncertain_suffix(suffix, suffix_offset)?;
 
     let unbounded = suffix == "?";
     let half_unit = suffix.is_empty();
@@ -667,7 +870,7 @@ fn parse_uncertain_literal(s: &str) -> Result<ParsedBare, ()> {
             "" => "5",
             "?" => "",
             digits if digits.bytes().all(|byte| byte.is_ascii_digit()) => digits,
-            _ => return Err(()),
+            _ => return Err(invalid_radius),
         },
         append_zero: false,
     };
@@ -677,7 +880,8 @@ fn parse_uncertain_literal(s: &str) -> Result<ParsedBare, ()> {
     };
     // For the default half-unit radius, add one decimal place so that both
     // the center and the radius are exact integers in the same units.
-    let places = i128::try_from(fraction.len()).map_err(|_| ())? + i128::from(half_unit);
+    let places =
+        i128::try_from(fraction.len()).map_err(|_| invalid_mantissa)? + i128::from(half_unit);
     let exponent = exponent.saturating_sub(places);
 
     let lower = if unbounded && direction != Some(b'u') {
@@ -688,7 +892,8 @@ fn parse_uncertain_literal(s: &str) -> Result<ParsedBare, ()> {
         } else {
             radius
         };
-        round_uncertain_endpoint(center, negative, radius, exponent, Direction::Down).ok_or(())?
+        round_uncertain_endpoint(center, negative, radius, exponent, Direction::Down)
+            .ok_or(invalid_radius)?
     };
     let upper = if unbounded && direction != Some(b'd') {
         f64::INFINITY
@@ -698,7 +903,8 @@ fn parse_uncertain_literal(s: &str) -> Result<ParsedBare, ()> {
         } else {
             radius
         };
-        round_uncertain_endpoint(center, negative, radius, exponent, Direction::Up).ok_or(())?
+        round_uncertain_endpoint(center, negative, radius, exponent, Direction::Up)
+            .ok_or(invalid_radius)?
     };
 
     Ok(ParsedBare {

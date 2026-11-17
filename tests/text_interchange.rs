@@ -199,7 +199,7 @@ fn invalid_text_signals_and_output_round_trips() {
     assert!(relaxed.inf() <= 0.1 && relaxed.sup() >= 1.0);
     assert!(signals.is_empty());
 
-    for literal in ["[1.0,0x0p0]", "[2/3,1/3]"] {
+    for literal in ["[1.0,0x0p0]", "[2/3,1/3]", "[1.00000000000000001,0x1p0]"] {
         assert!(Interval::text_to_interval(literal, &mut signals).is_empty());
         assert!(signals.contains(Signal::UndefinedOperation));
         signals.clear();
@@ -219,6 +219,115 @@ fn invalid_text_signals_and_output_round_trips() {
 
     let length = interval_to_text(DecoratedInterval::NAI, Some("hex"), &mut output).unwrap();
     assert_eq!(&output[..length], b"[nai]");
+}
+
+#[test]
+fn reversed_same_radix_endpoints_are_rejected_even_when_they_round_together() {
+    for literal in [
+        "[0.100000000000000001,0.1]",
+        "[-0.1,-0.100000000000000001]",
+        "[1.00000000000000001,1]",
+        "[0x1.00000000000002p0,0x1.00000000000001p0]",
+        "[-0x1.00000000000001p0,-0x1.00000000000002p0]",
+        "[0x1.00000000000000000000000000000000002p0,0x1.00000000000000000000000000000000001p0]",
+        "[1e100000000000000000000,1e99999999999999999999]",
+        "[1e-99999999999999999999,1e-100000000000000000000]",
+        "[0x1p100000000000000000000,0x1p99999999999999999999]",
+    ] {
+        let mut signals = SignalFlags::NONE;
+        assert!(
+            Interval::text_to_interval(literal, &mut signals).is_empty(),
+            "{literal}"
+        );
+        assert_eq!(
+            signals.take().bits(),
+            u8::from(Signal::UndefinedOperation),
+            "{literal}"
+        );
+        assert!(
+            DecoratedInterval::text_to_interval(literal, &mut signals).is_nai(),
+            "{literal}"
+        );
+        assert_eq!(
+            signals.bits(),
+            u8::from(Signal::UndefinedOperation),
+            "{literal}"
+        );
+    }
+}
+
+#[test]
+fn correctly_ordered_same_radix_endpoints_keep_the_tight_hull() {
+    for (literal, expected) in [
+        (
+            "[1e-1,0.100000000000000001]",
+            Interval::new(0.1_f64.next_down(), 0.1),
+        ),
+        (
+            "[-0.100000000000000001,-1e-1]",
+            Interval::new(-0.1, (-0.1_f64).next_up()),
+        ),
+        (
+            "[0x1.00000000000001p0,0x2.00000000000002p-1]",
+            Interval::new(1.0, 1.0_f64.next_up()),
+        ),
+        (
+            "[10e99999999999999999999,1e100000000000000000000]",
+            Interval::new(f64::MAX, f64::INFINITY),
+        ),
+        (
+            "[0x2p99999999999999999999,0x1p100000000000000000000]",
+            Interval::new(f64::MAX, f64::INFINITY),
+        ),
+    ] {
+        let mut signals = SignalFlags::NONE;
+        assert_eq!(
+            Interval::text_to_interval(literal, &mut signals),
+            expected,
+            "{literal}"
+        );
+        assert!(signals.is_empty(), "{literal}");
+    }
+}
+
+#[test]
+fn ambiguous_relaxed_endpoints_report_the_signal_in_both_constructors() {
+    let gap = Interval::new(0.1_f64.next_down(), 0.1);
+    for (literal, expected) in [
+        ("[0.100000000000000001,1/10]", gap),
+        ("[1/10,0.100000000000000001]", gap),
+        ("[-1/10,-0.100000000000000001]", -gap),
+        ("[-0.100000000000000001,-1/10]", -gap),
+        (
+            "[0x1.00000000000001p0,1.00000000000000001]",
+            Interval::new(1.0, 1.0_f64.next_up()),
+        ),
+    ] {
+        let mut signals = SignalFlags::NONE;
+        assert_eq!(
+            Interval::text_to_interval(literal, &mut signals),
+            expected,
+            "{literal}"
+        );
+        assert_eq!(
+            signals.take().bits(),
+            u8::from(Signal::PossiblyUndefinedOperation)
+        );
+        assert_eq!(
+            DecoratedInterval::text_to_interval(literal, &mut signals),
+            DecoratedInterval::from(expected),
+            "{literal}"
+        );
+        assert_eq!(
+            signals.take().bits(),
+            u8::from(Signal::PossiblyUndefinedOperation)
+        );
+
+        let decorated =
+            DecoratedInterval::text_to_interval(&format!("{literal}_def"), &mut signals);
+        assert_eq!(decorated, set_dec(expected, Decoration::Def), "{literal}");
+        assert_eq!(signals.bits(), u8::from(Signal::PossiblyUndefinedOperation));
+    }
 }
 
 #[test]

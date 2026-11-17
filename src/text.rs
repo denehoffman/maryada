@@ -1,3 +1,5 @@
+use core::cmp::Ordering;
+
 use crate::{
     DecoratedInterval, Decoration, Interval, IntervalDatum,
     rounding::{self, Direction},
@@ -24,6 +26,9 @@ struct ParsedBare {
     /// Whether the Level 1 source interval was bounded before
     /// conversion to binary64.
     source_bounded: bool,
+
+    /// Whether an accuracy-relaxed pair could have reversed endpoints.
+    possibly_undefined: bool,
 }
 
 enum ParsedDecorated {
@@ -37,22 +42,14 @@ enum ParsedDecorated {
 /// Bare IEEE textToInterval.
 #[allow(clippy::arithmetic_side_effects)]
 pub fn text_to_interval<S: SignalSink>(s: &str, signals: &mut S) -> Interval {
-    parse_bare_literal(s).map_or_else(
-        |()| {
-            signals.raise(Signal::UndefinedOperation);
-            Interval::EMPTY
-        },
-        |parsed| {
-            // This implementation chooses the most accurate permitted
-            // behavior for accuracy-relaxed input:
-            //
-            // - return the exact binary64 hull when l <= u;
-            // - fail when l > u.
-            //
-            // Therefore PossiblyUndefinedOperation need not be raised.
-            parsed.interval
-        },
-    )
+    let Ok(parsed) = parse_bare_literal(s) else {
+        signals.raise(Signal::UndefinedOperation);
+        return Interval::EMPTY;
+    };
+    if parsed.possibly_undefined {
+        signals.raise(Signal::PossiblyUndefinedOperation);
+    }
+    parsed.interval
 }
 
 /// Decorated IEEE textToInterval.
@@ -60,14 +57,13 @@ pub fn text_to_interval<S: SignalSink>(s: &str, signals: &mut S) -> Interval {
 pub fn text_to_decorated_interval<S: SignalSink>(s: &str, signals: &mut S) -> DecoratedInterval {
     match parse_decorated_literal(s) {
         Ok(ParsedDecorated::NaI) => DecoratedInterval::NAI,
-        Ok(ParsedDecorated::Interval {
-            bare,
-            decoration: None,
-        }) => DecoratedInterval::new_dec_raw(bare.interval),
-        Ok(ParsedDecorated::Interval {
-            bare,
-            decoration: Some(decoration),
-        }) => {
+        Ok(ParsedDecorated::Interval { bare, decoration }) => {
+            if bare.possibly_undefined {
+                signals.raise(Signal::PossiblyUndefinedOperation);
+            }
+            let Some(decoration) = decoration else {
+                return DecoratedInterval::new_dec_raw(bare.interval);
+            };
             // The parser must reject combinations forbidden at
             // Level 1. setDec normalization is only applied after
             // that validation.
@@ -237,6 +233,133 @@ fn number_kind(value: &str) -> NumberKind {
     }
 }
 
+struct RadixLiteral<'a> {
+    negative: bool,
+    mantissa: &'a str,
+    exponent: &'a str,
+    point_offset: i128,
+}
+
+impl<'a> RadixLiteral<'a> {
+    // The caller has already validated the token and found a nonzero endpoint.
+    #[allow(clippy::arithmetic_side_effects)]
+    fn from_nonzero(value: &'a str, hexadecimal: bool) -> Option<Self> {
+        let negative = value.starts_with('-');
+        let unsigned = value.strip_prefix(['+', '-']).unwrap_or(value);
+        let (mantissa, exponent) = if hexadecimal {
+            unsigned.get(2..)?.split_once(['p', 'P'])?
+        } else {
+            unsigned.split_once(['e', 'E']).unwrap_or((unsigned, ""))
+        };
+
+        let point = mantissa.find('.').unwrap_or(mantissa.len());
+        let first = mantissa
+            .bytes()
+            .position(|byte| byte != b'0' && byte != b'.')?;
+        let leading_zeros = first - usize::from(first > point);
+        let mantissa = mantissa.get(first..)?;
+        let mut point_offset = i128::try_from(point).ok()? - i128::try_from(leading_zeros).ok()?;
+        if hexadecimal {
+            let first_digit = mantissa.chars().next()?.to_digit(16)?;
+            let first_digit_bits = u32::BITS - first_digit.leading_zeros();
+            point_offset = 4 * (point_offset - 1) + i128::from(first_digit_bits);
+        }
+        Some(Self {
+            negative,
+            mantissa,
+            exponent,
+            point_offset,
+        })
+    }
+}
+
+#[allow(clippy::arithmetic_side_effects)]
+fn compare_shifted_exponents(left: &str, right: &str, mut carry: i128) -> Ordering {
+    fn signed_digits(exponent: &str) -> impl Iterator<Item = i128> + '_ {
+        let sign = if exponent.starts_with('-') { -1 } else { 1 };
+        let digits = exponent.strip_prefix(['+', '-']).unwrap_or(exponent);
+        digits
+            .bytes()
+            .rev()
+            .map(move |digit| i128::from(digit - b'0') * sign)
+    }
+
+    // Subtract from the least significant digit upward, starting with the
+    // difference between the mantissa offsets. This bounds the carry even
+    // when an exponent has more decimal digits than any machine integer.
+    let mut left = signed_digits(left);
+    let mut right = signed_digits(right);
+    let mut nonzero = false;
+    loop {
+        let (left, right) = (left.next(), right.next());
+        if left.is_none() && right.is_none() {
+            break;
+        }
+        carry += left.unwrap_or(0) - right.unwrap_or(0);
+        nonzero |= carry.rem_euclid(10) != 0;
+        carry = carry.div_euclid(10);
+    }
+    if carry == 0 && nonzero {
+        Ordering::Greater
+    } else {
+        carry.cmp(&0)
+    }
+}
+
+fn compare_padded_digits(
+    mut left: impl Iterator<Item = u32>,
+    mut right: impl Iterator<Item = u32>,
+) -> Ordering {
+    loop {
+        let (left, right) = (left.next(), right.next());
+        if left.is_none() && right.is_none() {
+            return Ordering::Equal;
+        }
+        let order = left.unwrap_or(0).cmp(&right.unwrap_or(0));
+        if order != Ordering::Equal {
+            return order;
+        }
+    }
+}
+
+#[allow(clippy::arithmetic_side_effects)]
+fn compare_same_radix_literals(left: &str, right: &str, hexadecimal: bool) -> Option<Ordering> {
+    fn hex_bits(mantissa: &str) -> impl Iterator<Item = u32> + '_ {
+        mantissa
+            .chars()
+            .filter_map(|digit| digit.to_digit(16))
+            .flat_map(|digit| (0..4).rev().map(move |shift| (digit >> shift) & 1))
+            .skip_while(|&bit| bit == 0)
+    }
+
+    let left = RadixLiteral::from_nonzero(left, hexadecimal)?;
+    let right = RadixLiteral::from_nonzero(right, hexadecimal)?;
+    debug_assert_eq!(left.negative, right.negative);
+    let order = compare_shifted_exponents(
+        left.exponent,
+        right.exponent,
+        left.point_offset - right.point_offset,
+    )
+    .then_with(|| {
+        if hexadecimal {
+            compare_padded_digits(hex_bits(left.mantissa), hex_bits(right.mantissa))
+        } else {
+            compare_padded_digits(
+                left.mantissa.chars().filter_map(|digit| digit.to_digit(10)),
+                right
+                    .mantissa
+                    .chars()
+                    .filter_map(|digit| digit.to_digit(10)),
+            )
+        }
+    });
+    Some(if left.negative {
+        order.reverse()
+    } else {
+        order
+    })
+}
+
 #[allow(
     clippy::arithmetic_side_effects,
     clippy::indexing_slicing,
@@ -248,12 +371,14 @@ fn parse_bracket_literal(inner: &str) -> Result<ParsedBare, ()> {
         return Ok(ParsedBare {
             interval: Interval::EMPTY,
             source_bounded: true,
+            possibly_undefined: false,
         });
     }
     if eq_ascii_case(inner, "entire") {
         return Ok(ParsedBare {
             interval: Interval::ENTIRE,
             source_bounded: false,
+            possibly_undefined: false,
         });
     }
 
@@ -269,6 +394,7 @@ fn parse_bracket_literal(inner: &str) -> Result<ParsedBare, ()> {
         return Ok(ParsedBare {
             interval: Interval::from_valid_bounds(lower, upper),
             source_bounded: true,
+            possibly_undefined: false,
         });
     }
 
@@ -303,11 +429,28 @@ fn parse_bracket_literal(inner: &str) -> Result<ParsedBare, ()> {
     if upper_kind == Some(NumberKind::Infinity) && upper_up == f64::NEG_INFINITY {
         return Err(());
     }
-    // The directed enclosures normally decide the exact ordering. When two
-    // nonrepresentable values occupy the same adjacent-float gap, accepting
-    // the order is the permitted accurate-relaxed choice.
-    if lower_down > upper_up || (lower_up > upper_down && lower_down == lower_up) {
-        return Err(());
+    let mut possibly_undefined = false;
+    if lower_up > upper_down {
+        if lower_down >= upper_up {
+            return Err(());
+        }
+        // Both exact endpoints are inside the same gap between binary64 values.
+        if lower_kind == upper_kind
+            && matches!(
+                lower_kind,
+                Some(NumberKind::Decimal | NumberKind::Hexadecimal)
+            )
+        {
+            let hexadecimal = lower_kind == Some(NumberKind::Hexadecimal);
+            if compare_same_radix_literals(lower_text, upper_text, hexadecimal).ok_or(())?
+                == Ordering::Greater
+            {
+                return Err(());
+            }
+        } else {
+            // Rational and mixed-radix pairs may use the hull of this gap.
+            possibly_undefined = lower_text != upper_text;
+        }
     }
 
     let source_bounded = !lower_text.is_empty()
@@ -317,6 +460,7 @@ fn parse_bracket_literal(inner: &str) -> Result<ParsedBare, ()> {
     Ok(ParsedBare {
         interval: Interval::from_valid_bounds(lower_down, upper_up),
         source_bounded,
+        possibly_undefined,
     })
 }
 
@@ -558,6 +702,7 @@ fn fallback_uncertain_literal(
     Ok(ParsedBare {
         interval,
         source_bounded: suffix != "?",
+        possibly_undefined: false,
     })
 }
 
@@ -633,6 +778,7 @@ fn parse_uncertain_literal(s: &str) -> Result<ParsedBare, ()> {
         return Ok(ParsedBare {
             interval,
             source_bounded: suffix != "?",
+            possibly_undefined: false,
         });
     }
     if suffix == "?" {
@@ -651,6 +797,7 @@ fn parse_uncertain_literal(s: &str) -> Result<ParsedBare, ()> {
         return Ok(ParsedBare {
             interval,
             source_bounded: false,
+            possibly_undefined: false,
         });
     }
 
@@ -666,6 +813,7 @@ fn parse_uncertain_literal(s: &str) -> Result<ParsedBare, ()> {
         return Ok(ParsedBare {
             interval: Interval::ENTIRE,
             source_bounded: true,
+            possibly_undefined: false,
         });
     }
     let center_twice = center * 2;
@@ -684,6 +832,7 @@ fn parse_uncertain_literal(s: &str) -> Result<ParsedBare, ()> {
         return Ok(ParsedBare {
             interval: Interval::ENTIRE,
             source_bounded: true,
+            possibly_undefined: false,
         });
     };
     let lower = parse_scaled_half_integer(lower_twice, decimal_exponent, Direction::Down)
@@ -693,6 +842,7 @@ fn parse_uncertain_literal(s: &str) -> Result<ParsedBare, ()> {
     Ok(ParsedBare {
         interval: Interval::from_valid_bounds(lower, upper),
         source_bounded: true,
+        possibly_undefined: false,
     })
 }
 

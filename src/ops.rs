@@ -202,6 +202,19 @@ pub fn exp<T: IntervalDatum>(x: T) -> T {
     unary(x, exp_bare)
 }
 
+/// Encloses `e^x - 1` without cancellation near zero.
+pub fn expm1<T: IntervalDatum>(x: T) -> T {
+    let input = x.__interval();
+    if input.is_empty_raw() {
+        return x.__unary_result(Interval::EMPTY, Decoration::Trv);
+    }
+    let interval = Interval::from_valid_bounds(
+        rounding::expm1(input.inf_raw(), Direction::Down),
+        rounding::expm1(input.sup_raw(), Direction::Up),
+    );
+    x.__unary_result(interval, continuous_unary_decoration(input, interval))
+}
+
 /// Encloses `2^x` over the input interval.
 pub fn exp2<T: IntervalDatum>(x: T) -> T {
     unary(x, exp2_bare)
@@ -215,6 +228,32 @@ pub fn exp10<T: IntervalDatum>(x: T) -> T {
 /// Encloses the natural logarithm over the positive part of `x`.
 pub fn log<T: IntervalDatum>(x: T) -> T {
     unary(x, log_bare)
+}
+
+/// Encloses `ln(1 + x)` over the part of `x` strictly above `-1`.
+///
+/// The result is Empty when the input has no points in the domain. An input
+/// that touches or crosses `-1` and extends into the domain has lower bound `-∞`
+/// and at most [`Decoration::Trv`].
+pub fn log1p<T: IntervalDatum>(x: T) -> T {
+    let input = x.__interval();
+    let inf = input.inf_raw();
+    let sup = input.sup_raw();
+    if sup <= -1.0 {
+        return x.__unary_result(Interval::EMPTY, Decoration::Trv);
+    }
+    let lower = if inf <= -1.0 {
+        f64::NEG_INFINITY
+    } else {
+        rounding::log1p(inf, Direction::Down)
+    };
+    let interval = Interval::from_valid_bounds(lower, rounding::log1p(sup, Direction::Up));
+    let local = if inf <= -1.0 {
+        Decoration::Trv
+    } else {
+        continuous_unary_decoration(input, interval)
+    };
+    x.__unary_result(interval, local)
 }
 
 /// Encloses the base-two logarithm over the positive part of `x`.

@@ -675,6 +675,57 @@ pub fn exp(x: f64, direction: Direction) -> f64 {
     outward_positive_approximation(libm::exp(x), direction)
 }
 
+const TINY_INCREMENT: f64 = f64::from_bits(0x3c90_0000_0000_0000); // 2^-54
+
+pub fn expm1(x: f64, direction: Direction) -> f64 {
+    if x.is_nan() {
+        return f64::NAN;
+    }
+    if x == f64::NEG_INFINITY {
+        return -1.0;
+    }
+    if x == 0.0 {
+        return direction.exact_zero();
+    }
+    let magnitude = x.abs();
+    if magnitude <= TINY_INCREMENT {
+        // 0 < exp(x) - 1 - x < x² in this range. The correction is
+        // smaller than the spacing to the next binary64 value above x.
+        return match direction {
+            Direction::Down => x,
+            Direction::Up => x.next_up(),
+        };
+    }
+    if magnitude <= 0.5 {
+        if x > 0.0 {
+            return expm1_series_positive(x, direction);
+        }
+        // If p = expm1(-x), then expm1(x) = -p/(1+p). The magnitude
+        // p/(1+p) increases with p, so select one endpoint before dividing.
+        let magnitude_direction = direction.opposite();
+        let p = expm1_series_positive(magnitude, magnitude_direction);
+        let denominator = add(1.0, p, direction);
+        return -div(p, denominator, magnitude_direction);
+    }
+    sub(exp(x, direction), 1.0, direction).max(-1.0)
+}
+
+fn expm1_series_positive(x: f64, direction: Direction) -> f64 {
+    // Factor x + x²/2 · (1 + x/3 · (1 + ...)) and evaluate inward
+    // from degree 16. At that degree the omitted normalized terms have
+    // ratio at most 1/34 for x <= 1/2, so the factor is in [1, 34/33].
+    let mut factor = match direction {
+        Direction::Down => 1.0,
+        Direction::Up => 1.0625,
+    };
+    for degree in (3..=16).rev() {
+        let ratio = div(x, f64::from(degree), direction);
+        factor = fma(ratio, factor, 1.0, direction);
+    }
+    let half_square = mul(mul(x, 0.5, direction), x, direction);
+    fma(half_square, factor, x, direction)
+}
+
 #[allow(
     clippy::as_conversions,
     clippy::arithmetic_side_effects,
@@ -762,6 +813,31 @@ pub fn log(x: f64, direction: Direction) -> f64 {
     }
     // The pinned libm log kernel documents error strictly below one ulp.
     outward_finite_approximation(libm::log(x), direction)
+}
+
+pub fn log1p(x: f64, direction: Direction) -> f64 {
+    if x.is_nan() || x < -1.0 {
+        return f64::NAN;
+    }
+    if x == -1.0 {
+        return f64::NEG_INFINITY;
+    }
+    if x == f64::INFINITY {
+        return f64::INFINITY;
+    }
+    if x == 0.0 {
+        return direction.exact_zero();
+    }
+    if x.abs() <= TINY_INCREMENT {
+        // 0 < x - log(1+x) < x² in this range. The correction is
+        // smaller than the spacing to the next binary64 value below x.
+        return match direction {
+            Direction::Down => x.next_down(),
+            Direction::Up => x,
+        };
+    }
+    // The pinned libm log1p kernel documents error below one ulp.
+    outward_finite_approximation(libm::log1p(x), direction)
 }
 
 #[allow(clippy::arithmetic_side_effects)]

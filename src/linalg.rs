@@ -1330,7 +1330,6 @@ where
     ///
     /// Returns the first [`SolveError`] encountered while verifying an inverse
     /// column.
-    #[allow(clippy::indexing_slicing)]
     fn try_inverse<S>(
         &self,
         mat: &IntervalMatrix<T, D, D, S>,
@@ -1339,17 +1338,7 @@ where
         S: Storage<T, D, D>,
     {
         let (dim, _) = mat.shape_generic();
-        let mut inverse = OIntervalMatrix::zeros_generic(dim, dim);
-        for column in 0..mat.ncols() {
-            let rhs = OIntervalVector::from_fn_generic(dim, Const::<1>, |row, _| {
-                if row == column { T::ONE } else { T::ZERO }
-            });
-            let solution = self.try_solve(mat, &rhs)?;
-            for row in 0..mat.nrows() {
-                inverse[(row, column)] = solution[row];
-            }
-        }
-        Ok(inverse)
+        solve_inverse_columns(dim, mat.ncols(), |rhs| self.try_solve(mat, rhs))
     }
 
     /// Computes an interval enclosure of the inverse.
@@ -1364,9 +1353,33 @@ where
     }
 }
 
+#[allow(clippy::indexing_slicing)]
+fn solve_inverse_columns<T, D>(
+    dim: D,
+    columns: usize,
+    mut solve: impl FnMut(&OIntervalVector<T, D>) -> Result<OIntervalVector<T, D>, SolveError>,
+) -> Result<OIntervalMatrix<T, D, D>, SolveError>
+where
+    T: EnclosureOps + Scalar,
+    D: Dim,
+    DefaultAllocator: Allocator<D, D> + Allocator<D>,
+{
+    let mut inverse = OIntervalMatrix::zeros_generic(dim, dim);
+    for column in 0..columns {
+        let rhs = OIntervalVector::from_fn_generic(dim, Const::<1>, |row, _| {
+            if row == column { T::ONE } else { T::ZERO }
+        });
+        let solution = solve(&rhs)?;
+        for row in 0..dim.value() {
+            inverse[(row, column)] = solution[row];
+        }
+    }
+    Ok(inverse)
+}
+
 /// Epsilon-inflation method.
 mod epsilon_inflation;
-pub use epsilon_inflation::EpsilonInflationSolver;
+pub use epsilon_inflation::{EpsilonInflationSolver, PreparedEpsilonInflation};
 
 /// Gaussian elimination method.
 mod gaussian_elimination;

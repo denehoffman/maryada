@@ -525,6 +525,88 @@ fn supports_dynamic_dimensions() {
 }
 
 #[test]
+#[allow(clippy::unwrap_used)]
+fn prepared_epsilon_inflation_reuses_setup_for_thick_right_hand_sides() {
+    let lhs = SIntervalMatrix::<Interval, 2, 2>::from_row_slice(&[
+        Interval::new(1.875, 2.125),
+        Interval::ZERO,
+        Interval::ZERO,
+        Interval::new(3.75, 4.25),
+    ]);
+    let solver = EpsilonInflationSolver::new();
+    let prepared = solver.prepare(&lhs).unwrap();
+    for rhs in [
+        [Interval::new(3.0, 5.0), Interval::new(-9.0, -7.0)],
+        [Interval::new(-1.0, 2.0), Interval::new(7.0, 9.0)],
+    ] {
+        let rhs = SIntervalVector::from_column_slice(&rhs);
+        let enclosure = prepared.try_solve(&rhs).unwrap();
+        assert_eq!(solver.try_solve(&lhs, &rhs), Ok(enclosure));
+        assert!(maryada::subset(rhs[0] / lhs[(0, 0)], enclosure[0]));
+        assert!(maryada::subset(rhs[1] / lhs[(1, 1)], enclosure[1]));
+    }
+
+    let inverse = lhs.try_inverse_with(&solver).unwrap();
+    for column in 0..2 {
+        let rhs = SIntervalVector::from_fn(|row, _| {
+            if row == column {
+                Interval::ONE
+            } else {
+                Interval::ZERO
+            }
+        });
+        let direct = solver.try_solve(&lhs, &rhs).unwrap();
+        for row in 0..2 {
+            assert_eq!(inverse[(row, column)], direct[row]);
+        }
+        assert!(maryada::subset(
+            lhs[(column, column)].recip(),
+            inverse[(column, column)]
+        ));
+    }
+}
+
+#[cfg(feature = "alloc")]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn prepared_epsilon_inflation_reports_rhs_errors_and_stays_reusable() {
+    use maryada::{DIntervalMatrix, DIntervalVector};
+
+    let lhs = DIntervalMatrix::<DecoratedInterval>::identity(2);
+    let solver = EpsilonInflationSolver::new();
+    let prepared = solver.prepare(&lhs).unwrap();
+    let wrong_size = DIntervalVector::from_column_slice(&[DecoratedInterval::ONE]);
+    assert_eq!(
+        prepared.try_solve(&wrong_size),
+        Err(SolveError::InvalidSystem)
+    );
+    for invalid in [DecoratedInterval::NAI, DecoratedInterval::EMPTY] {
+        let rhs = DIntervalVector::from_column_slice(&[DecoratedInterval::ONE, invalid]);
+        assert_eq!(prepared.try_solve(&rhs), Err(SolveError::InvalidInput));
+    }
+
+    let rhs =
+        DIntervalVector::from_column_slice(&[DecoratedInterval::ONE, DecoratedInterval::ZERO]);
+    assert_eq!(prepared.try_solve(&rhs), Ok(rhs.clone()));
+    let limited = solver.with_max_iterations(0).prepare(&lhs).unwrap();
+    assert_eq!(
+        limited.try_solve(&rhs),
+        Err(SolveError::CertificationFailed { iterations: 0 })
+    );
+
+    let singular = DIntervalMatrix::<DecoratedInterval>::zeros(2, 2);
+    assert!(matches!(
+        solver.prepare(&singular),
+        Err(SolveError::SingularMidpoint)
+    ));
+    let rectangular = DIntervalMatrix::<DecoratedInterval>::zeros(2, 3);
+    assert!(matches!(
+        solver.prepare(&rectangular),
+        Err(SolveError::InvalidSystem)
+    ));
+}
+
+#[test]
 fn builder_methods_configure_the_solver() {
     let solver = EpsilonInflationSolver::new()
         .with_relative_inflation(0.05)

@@ -164,6 +164,9 @@ fn benchmark_matrices(criterion: &mut Criterion) {
             |matrix| matrix * matrix,
         );
 
+        let prepared = solver
+            .prepare(&matrix)
+            .expect("benchmark matrix should prepare");
         let right_hand_sides: Vec<_> = (0..8)
             .map(|index| {
                 let witness = DVector::from_fn(size, |row, _| {
@@ -175,6 +178,7 @@ fn benchmark_matrices(criterion: &mut Criterion) {
                 let enclosure = solver
                     .try_solve(&matrix, &rhs)
                     .expect("benchmark system should certify");
+                assert_eq!(prepared.try_solve(&rhs).as_ref(), Ok(&enclosure));
                 assert_eq!(enclosure.len(), witness.len());
                 for (entry, &point) in enclosure.iter().zip(witness.iter()) {
                     assert!(entry.contains(point), "solve missed the known solution");
@@ -187,6 +191,32 @@ fn benchmark_matrices(criterion: &mut Criterion) {
             &format!("matrix/solve/epsilon-inflation/{size}x{size}"),
             &right_hand_sides,
             |rhs| solver.try_solve(&matrix, rhs),
+        );
+        benchmark(
+            criterion,
+            &format!("matrix/solve/epsilon-inflation-prepared/{size}x{size}"),
+            &right_hand_sides,
+            |rhs| prepared.try_solve(rhs),
+        );
+        let inverse = solver
+            .try_inverse(&matrix)
+            .expect("benchmark inverse should certify");
+        let identity = &matrix * &inverse;
+        for row in 0..size {
+            for column in 0..size {
+                let target = f64::from(row == column);
+                assert!(
+                    identity
+                        .get(row, column)
+                        .is_some_and(|entry| entry.contains(target))
+                );
+            }
+        }
+        benchmark(
+            criterion,
+            &format!("matrix/inverse/epsilon-inflation/{size}x{size}"),
+            std::slice::from_ref(&matrix),
+            |matrix| solver.try_inverse(matrix),
         );
     }
 }

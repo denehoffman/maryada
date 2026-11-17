@@ -64,8 +64,8 @@ pub use linalg::{DIntervalMatrix, DIntervalRowVector, DIntervalVector};
 pub use linalg::{
     EpsilonInflationSolver, GaussSeidelSolver, GaussianEliminationSolver, HansenBliekRohnSolver,
     InitialEnclosure, IntervalMatrix, JacobiSolver, KrawczykSolver, OIntervalMatrix,
-    OIntervalRowVector, OIntervalVector, Preconditioned, Preconditioner, SIntervalMatrix,
-    SIntervalRowVector, SIntervalVector, SolveError, Solver, StoppingTolerance,
+    OIntervalRowVector, OIntervalVector, Preconditioned, Preconditioner, PreparedEpsilonInflation,
+    SIntervalMatrix, SIntervalRowVector, SIntervalVector, SolveError, Solver, StoppingTolerance,
 };
 #[cfg(all(feature = "linalg", feature = "num-complex"))]
 pub use linalg::{

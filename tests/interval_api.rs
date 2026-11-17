@@ -9,6 +9,37 @@ use maryada::{
 };
 
 #[test]
+fn mathematical_constants_enclose_their_values_at_adjacent_binary64_endpoints() {
+    for (bare, decorated, reference) in [
+        (
+            Interval::PI,
+            DecoratedInterval::PI,
+            "[3.141592653589793238462643383279502884]",
+        ),
+        (
+            Interval::TAU,
+            DecoratedInterval::TAU,
+            "[6.283185307179586476925286766559005768]",
+        ),
+        (
+            Interval::E,
+            DecoratedInterval::E,
+            "[2.718281828459045235360287471352662498]",
+        ),
+        (
+            Interval::LN_2,
+            DecoratedInterval::LN_2,
+            "[0.693147180559945309417232121458176568]",
+        ),
+    ] {
+        assert_eq!(bare, reference.parse::<Interval>().unwrap());
+        assert_eq!(bare.inf().next_up().to_bits(), bare.sup().to_bits());
+        assert_eq!(Interval::from(decorated), bare);
+        assert_eq!(decoration_part(decorated), Decoration::Com);
+    }
+}
+
+#[test]
 fn checked_endpoint_constructors_report_invalid_inputs_and_preserve_signals() {
     use IntervalConstructionError::{InvalidInfinity, NaN, ReversedBounds};
 

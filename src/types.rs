@@ -66,6 +66,33 @@ impl Interval {
     /// The singleton interval containing one.
     pub const ONE: Self = Self { inf: 1.0, sup: 1.0 };
 
+    // The endpoint bits are the directed binary64 conversions, verified with
+    // lower and upper MPFR bounds at 256-bit precision.
+
+    /// The tight binary64 enclosure of π.
+    pub const PI: Self = Self {
+        inf: f64::from_bits(0x4009_21fb_5444_2d18),
+        sup: f64::from_bits(0x4009_21fb_5444_2d19),
+    };
+
+    /// The tight binary64 enclosure of τ, equal to 2π.
+    pub const TAU: Self = Self {
+        inf: f64::from_bits(0x4019_21fb_5444_2d18),
+        sup: f64::from_bits(0x4019_21fb_5444_2d19),
+    };
+
+    /// The tight binary64 enclosure of Euler's number e.
+    pub const E: Self = Self {
+        inf: f64::from_bits(0x4005_bf0a_8b14_5769),
+        sup: f64::from_bits(0x4005_bf0a_8b14_576a),
+    };
+
+    /// The tight binary64 enclosure of the natural logarithm of 2.
+    pub const LN_2: Self = Self {
+        inf: f64::from_bits(0x3fe6_2e42_fefa_39ef),
+        sup: f64::from_bits(0x3fe6_2e42_fefa_39f0),
+    };
+
     /// Constructs an interval from checked binary64 endpoints.
     ///
     /// Infinite outer endpoints are allowed. Zero endpoints are canonicalized.
@@ -305,6 +332,18 @@ impl DecoratedInterval {
         interval: Interval::ONE,
         decoration: Decoration::Com,
     };
+
+    /// The tight enclosure of π with [`Decoration::Com`].
+    pub const PI: Self = Self::new_dec_raw(Interval::PI);
+
+    /// The tight enclosure of τ with [`Decoration::Com`].
+    pub const TAU: Self = Self::new_dec_raw(Interval::TAU);
+
+    /// The tight enclosure of Euler's number e with [`Decoration::Com`].
+    pub const E: Self = Self::new_dec_raw(Interval::E);
+
+    /// The tight enclosure of the natural logarithm of 2 with [`Decoration::Com`].
+    pub const LN_2: Self = Self::new_dec_raw(Interval::LN_2);
 
     /// Constructs a decorated interval from checked binary64 endpoints.
     ///

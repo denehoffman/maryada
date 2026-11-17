@@ -1,7 +1,37 @@
 use crate::{
+    rounding::{self, Direction},
     signals::{Signal, SignalSink},
     text,
 };
+
+/// An invalid input to a checked scalar interval constructor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IntervalConstructionError {
+    /// An endpoint, midpoint, or radius is NaN.
+    NaN,
+    /// The lower endpoint is greater than the upper endpoint.
+    ReversedBounds,
+    /// The lower endpoint is positive infinity or the upper endpoint is negative infinity.
+    InvalidInfinity,
+    /// The radius is strictly negative.
+    NegativeRadius,
+    /// The midpoint is infinite.
+    InfiniteMidpoint,
+}
+
+impl core::fmt::Display for IntervalConstructionError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str(match self {
+            Self::NaN => "interval constructor input is NaN",
+            Self::ReversedBounds => "lower endpoint exceeds upper endpoint",
+            Self::InvalidInfinity => "lower endpoint is +infinity or upper endpoint is -infinity",
+            Self::NegativeRadius => "radius is negative",
+            Self::InfiniteMidpoint => "midpoint is infinite",
+        })
+    }
+}
+
+impl core::error::Error for IntervalConstructionError {}
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -36,12 +66,73 @@ impl Interval {
     /// The singleton interval containing one.
     pub const ONE: Self = Self { inf: 1.0, sup: 1.0 };
 
+    /// Constructs an interval from checked binary64 endpoints.
+    ///
+    /// Infinite outer endpoints are allowed. Zero endpoints are canonicalized.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IntervalConstructionError::NaN`] for NaN inputs,
+    /// [`IntervalConstructionError::ReversedBounds`] for reversed endpoints,
+    /// or [`IntervalConstructionError::InvalidInfinity`] for a lower endpoint
+    /// of positive infinity or an upper endpoint of negative infinity.
+    /// Checks are performed in that order.
+    ///
+    /// ```
+    /// use maryada::{Interval, IntervalConstructionError};
+    ///
+    /// let endpoints = Interval::try_new(0.0, 1.0)?;
+    /// let midpoint_radius = Interval::try_from_mid_rad(0.5, 0.5)?;
+    /// assert_eq!(endpoints, midpoint_radius);
+    /// assert_eq!(Interval::try_new(2.0, 1.0), Err(IntervalConstructionError::ReversedBounds));
+    /// # Ok::<(), IntervalConstructionError>(())
+    /// ```
+    pub fn try_new(inf: f64, sup: f64) -> Result<Self, IntervalConstructionError> {
+        if inf.is_nan() || sup.is_nan() {
+            return Err(IntervalConstructionError::NaN);
+        }
+        if inf > sup {
+            return Err(IntervalConstructionError::ReversedBounds);
+        }
+        if inf == f64::INFINITY || sup == f64::NEG_INFINITY {
+            return Err(IntervalConstructionError::InvalidInfinity);
+        }
+        Ok(Self::from_valid_bounds(inf, sup))
+    }
+
+    /// Constructs the tight binary64 enclosure of `midpoint ± radius`.
+    ///
+    /// The midpoint must be finite and the radius nonnegative. A positive
+    /// infinite radius produces [`Self::ENTIRE`]. Bounds are rounded outward,
+    /// including when the exact endpoints overflow binary64.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IntervalConstructionError::NaN`] for NaN inputs,
+    /// [`IntervalConstructionError::InfiniteMidpoint`] for an infinite midpoint,
+    /// or [`IntervalConstructionError::NegativeRadius`] for a negative radius.
+    /// Checks are performed in that order. Negative zero is accepted as a radius.
+    pub fn try_from_mid_rad(midpoint: f64, radius: f64) -> Result<Self, IntervalConstructionError> {
+        if midpoint.is_nan() || radius.is_nan() {
+            return Err(IntervalConstructionError::NaN);
+        }
+        if midpoint.is_infinite() {
+            return Err(IntervalConstructionError::InfiniteMidpoint);
+        }
+        if radius < 0.0 {
+            return Err(IntervalConstructionError::NegativeRadius);
+        }
+        let inf = rounding::sub(midpoint, radius, Direction::Down);
+        let sup = rounding::add(midpoint, radius, Direction::Up);
+        Ok(Self::from_valid_bounds(inf, sup))
+    }
+
     /// Constructs a bare interval from binary64 endpoints.
     ///
     /// Invalid bounds raise [`Signal::UndefinedOperation`] and return
     /// [`Interval::EMPTY`].
     pub fn nums_to_interval<S: SignalSink>(l: f64, u: f64, signals: &mut S) -> Self {
-        Self::from_nums(l, u).unwrap_or_else(|| {
+        Self::try_new(l, u).unwrap_or_else(|_| {
             signals.raise(Signal::UndefinedOperation);
             Self::EMPTY
         })
@@ -62,14 +153,6 @@ impl Interval {
     /// ```
     pub fn text_to_interval<S: SignalSink>(s: &str, signals: &mut S) -> Self {
         text::text_to_interval(s, signals)
-    }
-
-    pub(crate) fn from_nums(l: f64, u: f64) -> Option<Self> {
-        if l.is_nan() || u.is_nan() || l > u || l == f64::INFINITY || u == f64::NEG_INFINITY {
-            return None;
-        }
-
-        Some(Self::from_valid_bounds(l, u))
     }
 
     pub(crate) const fn from_valid_bounds(inf: f64, sup: f64) -> Self {
@@ -223,12 +306,38 @@ impl DecoratedInterval {
         decoration: Decoration::Com,
     };
 
+    /// Constructs a decorated interval from checked binary64 endpoints.
+    ///
+    /// The decoration is [`Decoration::Com`] for finite bounds and
+    /// [`Decoration::Dac`] for unbounded intervals.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Interval::try_new`].
+    pub fn try_new(inf: f64, sup: f64) -> Result<Self, IntervalConstructionError> {
+        let interval = Interval::try_new(inf, sup)?;
+        Ok(Self::new_dec_raw(interval))
+    }
+
+    /// Constructs a decorated enclosure of `midpoint ± radius`.
+    ///
+    /// Uses outward rounding and assigns [`Decoration::Com`] to finite bounds
+    /// and [`Decoration::Dac`] to unbounded intervals.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Interval::try_from_mid_rad`].
+    pub fn try_from_mid_rad(midpoint: f64, radius: f64) -> Result<Self, IntervalConstructionError> {
+        let interval = Interval::try_from_mid_rad(midpoint, radius)?;
+        Ok(Self::new_dec_raw(interval))
+    }
+
     /// Constructs a decorated interval from binary64 endpoints.
     ///
     /// Invalid bounds raise [`Signal::UndefinedOperation`] and return `NaI`.
     pub fn nums_to_interval<S: SignalSink>(l: f64, u: f64, signals: &mut S) -> Self {
-        Interval::from_nums(l, u).map_or_else(
-            || {
+        Interval::try_new(l, u).map_or_else(
+            |_| {
                 signals.raise(Signal::UndefinedOperation);
                 Self::NAI
             },

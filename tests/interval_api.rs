@@ -3,9 +3,124 @@
 use core::cmp::Ordering;
 
 use maryada::{
-    DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalOps, Signal, SignalFlags,
-    convex_hull, decoration_part, disjoint, interior, intersection, set_dec, subset,
+    DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalConstructionError, IntervalOps,
+    Signal, SignalFlags, convex_hull, decoration_part, disjoint, interior, intersection, set_dec,
+    subset,
 };
+
+#[test]
+fn checked_endpoint_constructors_report_invalid_inputs_and_preserve_signals() {
+    use IntervalConstructionError::{InvalidInfinity, NaN, ReversedBounds};
+
+    for (inf, sup, expected) in [
+        (f64::NAN, 1.0, NaN),
+        (0.0, f64::NAN, NaN),
+        (2.0, 1.0, ReversedBounds),
+        (f64::INFINITY, f64::NEG_INFINITY, ReversedBounds),
+        (f64::INFINITY, f64::INFINITY, InvalidInfinity),
+        (f64::NEG_INFINITY, f64::NEG_INFINITY, InvalidInfinity),
+    ] {
+        assert_eq!(Interval::try_new(inf, sup), Err(expected));
+        assert_eq!(DecoratedInterval::try_new(inf, sup), Err(expected));
+
+        let mut signals = SignalFlags::NONE;
+        assert_eq!(
+            Interval::nums_to_interval(inf, sup, &mut signals),
+            Interval::EMPTY
+        );
+        assert!(signals.contains(Signal::UndefinedOperation));
+        signals = SignalFlags::NONE;
+        assert!(DecoratedInterval::nums_to_interval(inf, sup, &mut signals).is_nai());
+        assert!(signals.contains(Signal::UndefinedOperation));
+    }
+
+    for (inf, sup) in [
+        (-1.0, 2.0),
+        (0.0, -0.0),
+        (f64::NEG_INFINITY, 1.0),
+        (-1.0, f64::INFINITY),
+        (f64::NEG_INFINITY, f64::INFINITY),
+    ] {
+        let bare = Interval::try_new(inf, sup).unwrap();
+        assert_eq!(bare, Interval::new(inf, sup));
+        assert_eq!(
+            DecoratedInterval::try_new(inf, sup),
+            Ok(DecoratedInterval::from(bare))
+        );
+    }
+    let zero = Interval::try_new(0.0, -0.0).unwrap();
+    assert_eq!(zero.inf().to_bits(), (-0.0_f64).to_bits());
+    assert_eq!(zero.sup().to_bits(), 0.0_f64.to_bits());
+}
+
+#[test]
+fn checked_midpoint_radius_constructors_round_outward_at_binary64_boundaries() {
+    let tiny = f64::from_bits(1);
+    let quarter_ulp = f64::from_bits(0x3c90_0000_0000_0000);
+    for (midpoint, radius, expected) in [
+        (0.0, -0.0, Interval::ZERO),
+        (1.0, 0.0, Interval::ONE),
+        (1.0, 1.0, Interval::new(0.0, 2.0)),
+        (
+            1.0,
+            quarter_ulp,
+            Interval::new(1.0_f64.next_down(), 1.0_f64.next_up()),
+        ),
+        (
+            -1.0,
+            quarter_ulp,
+            Interval::new((-1.0_f64).next_down(), (-1.0_f64).next_up()),
+        ),
+        (0.0, tiny, Interval::new(-tiny, tiny)),
+        (
+            f64::from_bits(4),
+            f64::from_bits(3),
+            Interval::new(tiny, f64::from_bits(7)),
+        ),
+        (
+            f64::MAX,
+            tiny,
+            Interval::new(f64::MAX.next_down(), f64::INFINITY),
+        ),
+        (
+            -f64::MAX,
+            tiny,
+            Interval::new(f64::NEG_INFINITY, (-f64::MAX).next_up()),
+        ),
+        (f64::MAX, f64::MAX, Interval::new(0.0, f64::INFINITY)),
+        (-f64::MAX, f64::MAX, Interval::new(f64::NEG_INFINITY, 0.0)),
+        (0.0, f64::INFINITY, Interval::ENTIRE),
+        (f64::MAX, f64::INFINITY, Interval::ENTIRE),
+    ] {
+        assert_eq!(Interval::try_from_mid_rad(midpoint, radius), Ok(expected));
+        assert_eq!(
+            DecoratedInterval::try_from_mid_rad(midpoint, radius),
+            Ok(DecoratedInterval::from(expected))
+        );
+    }
+}
+
+#[test]
+fn checked_midpoint_radius_constructors_report_invalid_inputs() {
+    use IntervalConstructionError::{InfiniteMidpoint, NaN, NegativeRadius};
+
+    for (midpoint, radius, expected) in [
+        (f64::NAN, 1.0, NaN),
+        (0.0, f64::NAN, NaN),
+        (f64::INFINITY, f64::NAN, NaN),
+        (f64::INFINITY, 0.0, InfiniteMidpoint),
+        (f64::NEG_INFINITY, f64::INFINITY, InfiniteMidpoint),
+        (0.0, -1.0, NegativeRadius),
+        (0.0, -f64::from_bits(1), NegativeRadius),
+        (0.0, f64::NEG_INFINITY, NegativeRadius),
+    ] {
+        assert_eq!(Interval::try_from_mid_rad(midpoint, radius), Err(expected));
+        assert_eq!(
+            DecoratedInterval::try_from_mid_rad(midpoint, radius),
+            Err(expected)
+        );
+    }
+}
 
 #[test]
 fn constructors_and_set_operations_follow_the_set_based_model() {

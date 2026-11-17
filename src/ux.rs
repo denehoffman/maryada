@@ -11,8 +11,8 @@ impl Interval {
     /// Empty raises [`Signal::UndefinedOperation`] and returns [`DecoratedInterval::NAI`].
     /// Use [`crate::new_dec`] to decorate the interval datum and preserve Empty.
     pub fn decorate<S: SignalSink>(self, signals: &mut S) -> DecoratedInterval {
-        Self::from_nums(self.inf_raw(), self.sup_raw()).map_or_else(
-            || {
+        Self::try_new(self.inf_raw(), self.sup_raw()).map_or_else(
+            |_| {
                 signals.raise(Signal::UndefinedOperation);
                 DecoratedInterval::NAI
             },

@@ -75,7 +75,10 @@ pub use linalg::{
 pub use ops::*;
 pub use signals::{Signal, SignalFlags, SignalSink};
 pub use text::{ParseIntervalError, TextError, interval_to_text};
-pub use types::{DecoratedInterval, Decoration, Interval, IntervalDatum, InvalidDecoration};
+pub use types::{
+    DecoratedInterval, Decoration, Interval, IntervalConstructionError, IntervalDatum,
+    InvalidDecoration,
+};
 pub use ux::IntervalOps;
 
 pub mod prelude {

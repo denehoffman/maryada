@@ -13,7 +13,10 @@
 
 extern crate alloc;
 
-use alloc::{collections::BinaryHeap, vec::Vec};
+use alloc::{
+    collections::{BinaryHeap, binary_heap::PeekMut},
+    vec::Vec,
+};
 use core::{cmp::Ordering, fmt};
 
 use crate::{
@@ -326,7 +329,7 @@ pub struct RunReport<D> {
     pub certified: Vec<D>,
     /// Terminal unresolved domains plus domains still in the queue.
     pub unresolved: Vec<Unresolved<D>>,
-    /// Number of successfully evaluated domains.
+    /// Number of successful evaluator calls, including calls followed by a pruning error.
     pub evaluated: usize,
     /// Number of discarded domains.
     pub discarded: usize,
@@ -348,6 +351,7 @@ where
     pruner: P,
     brancher: B,
     queue: Q,
+    retry: Option<QueueEntry<D>>,
     certified: Vec<D>,
     unresolved: Vec<Unresolved<D>>,
     evaluated: usize,
@@ -391,6 +395,7 @@ where
             pruner,
             brancher,
             queue,
+            retry: None,
             certified: Vec::new(),
             unresolved: Vec::new(),
             evaluated: 0,
@@ -402,24 +407,36 @@ where
 
     /// Processes exactly one queued domain.
     ///
+    /// The domain is cloned before pruning so a failed contraction can be retried.
+    ///
     /// # Errors
     ///
-    /// Returns an evaluator or pruner error without silently classifying the
-    /// failed domain.
-    pub fn step(&mut self) -> Result<StepOutcome, SearchError<E::Error, P::Error>> {
-        let Some(entry) = self.queue.pop() else {
+    /// Returns an evaluator or pruner error and keeps the original domain and
+    /// priority for the next step.
+    pub fn step(&mut self) -> Result<StepOutcome, SearchError<E::Error, P::Error>>
+    where
+        D: Clone,
+    {
+        let Some(mut entry) = self.retry.take().or_else(|| self.queue.pop()) else {
             return Ok(StepOutcome::Idle);
         };
-        let mut domain = entry.domain;
-        let value = self
-            .evaluator
-            .evaluate(&domain)
-            .map_err(SearchError::Evaluation)?;
+        let value = match self.evaluator.evaluate(&entry.domain) {
+            Ok(value) => value,
+            Err(error) => {
+                self.retry = Some(entry);
+                return Err(SearchError::Evaluation(error));
+            }
+        };
         self.evaluated = self.evaluated.saturating_add(1);
-        let decision = self
-            .pruner
-            .prune(&mut domain, &value)
-            .map_err(SearchError::Pruning)?;
+        let original = entry.clone();
+        let decision = match self.pruner.prune(&mut entry.domain, &value) {
+            Ok(decision) => decision,
+            Err(error) => {
+                self.retry = Some(original);
+                return Err(SearchError::Pruning(error));
+            }
+        };
+        let domain = entry.domain;
         match decision {
             PruneDecision::Discard => {
                 self.discarded = self.discarded.saturating_add(1);
@@ -460,7 +477,7 @@ where
     {
         let mut steps = 0usize;
         while steps < max_steps {
-            if self.queue.is_empty() {
+            if self.pending_count() == 0 {
                 break;
             }
             let outcome = self.step()?;
@@ -469,7 +486,7 @@ where
             }
             steps = steps.saturating_add(1);
         }
-        let status = if self.queue.is_empty() {
+        let status = if self.pending_count() == 0 {
             RunStatus::Exhausted
         } else {
             RunStatus::StepLimit
@@ -484,6 +501,12 @@ where
         D: Clone,
     {
         let mut unresolved = self.unresolved.clone();
+        if let Some(entry) = &self.retry {
+            unresolved.push(Unresolved {
+                domain: entry.domain.clone(),
+                priority: entry.priority,
+            });
+        }
         unresolved.extend(self.queue.snapshot().into_iter().map(|entry| Unresolved {
             domain: entry.domain,
             priority: entry.priority,
@@ -502,7 +525,9 @@ where
     /// Returns the number of domains still scheduled for evaluation.
     #[must_use]
     pub fn pending_count(&self) -> usize {
-        self.queue.len()
+        self.queue
+            .len()
+            .saturating_add(usize::from(self.retry.is_some()))
     }
 
     /// Returns the number of terminal unresolved domains.
@@ -545,7 +570,7 @@ where
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("BranchAndBound")
-            .field("pending", &self.queue.len())
+            .field("pending", &self.pending_count())
             .field("certified", &self.certified.len())
             .field("unresolved", &self.unresolved.len())
             .field("evaluated", &self.evaluated)
@@ -708,7 +733,7 @@ pub struct GlobalMinimizationResult<D> {
     pub unresolved: Vec<Unresolved<D>>,
     /// Whether the search converged, exhausted its queue, or reached its step limit.
     pub status: RunStatus,
-    /// Number of objective calls, including midpoint calls.
+    /// Number of objective calls, including midpoint calls and failed attempts.
     pub evaluations: usize,
     /// Number of pruned domains.
     pub discarded: usize,
@@ -873,13 +898,29 @@ where
     ///
     /// # Errors
     ///
-    /// Returns the objective error from either the box or midpoint call.
+    /// Returns the objective error from either call. The domain stays queued
+    /// and the incumbent and bounds are updated only after both calls succeed.
     pub fn step(&mut self) -> Result<GlobalStep, O::Error> {
-        let Some(entry) = self.queue.pop() else {
+        let Some(entry) = self.queue.entries.peek_mut() else {
             return Ok(GlobalStep::Idle);
         };
-        let domain = entry.domain;
-        let value = self.evaluate(&domain)?;
+        let mut evaluate = |domain: &D| {
+            self.evaluations = self.evaluations.saturating_add(1);
+            self.objective.evaluate(domain)
+        };
+        let value = evaluate(&entry.domain)?;
+        let midpoint = if !value.is_nai()
+            && !value.is_empty()
+            && !entry.domain.is_singleton()
+            && let Some(point) = entry.domain.midpoint()
+        {
+            let point_value = evaluate(&point)?;
+            Some((point, point_value))
+        } else {
+            None
+        };
+
+        let domain = PeekMut::pop(entry).domain;
         if value.is_nai() {
             self.unresolved.push(Unresolved {
                 domain,
@@ -894,14 +935,12 @@ where
         self.update_bounds(value);
         self.update_upper_bound(&domain, value, &domain, value);
 
-        if !domain.is_singleton()
-            && let Some(midpoint) = domain.midpoint()
+        if let Some((point, point_value)) = midpoint
+            && !point_value.is_empty()
+            && !point_value.is_nai()
         {
-            let midpoint_value = self.evaluate(&midpoint)?;
-            if !midpoint_value.is_empty() && !midpoint_value.is_nai() {
-                self.update_bounds(midpoint_value);
-                self.update_upper_bound(&domain, value, &midpoint, midpoint_value);
-            }
+            self.update_bounds(point_value);
+            self.update_upper_bound(&domain, value, &point, point_value);
         }
 
         if value.inf() > self.upper {
@@ -936,11 +975,6 @@ where
             });
             Ok(GlobalStep::Unsplittable)
         }
-    }
-
-    fn evaluate(&mut self, domain: &D) -> Result<Interval, O::Error> {
-        self.evaluations = self.evaluations.saturating_add(1);
-        self.objective.evaluate(domain)
     }
 
     fn update_bounds(&mut self, value: Interval) {
@@ -988,7 +1022,7 @@ where
         let Some(tolerance) = self.options.gap_tolerance else {
             return false;
         };
-        if !self.upper.is_finite() || self.evaluations == 0 {
+        if !self.upper.is_finite() {
             return false;
         }
         let lower = self.frontier_lower_bound();
@@ -1062,7 +1096,7 @@ where
     /// Returns a result snapshot without changing search state.
     #[must_use]
     pub fn result(&self, status: RunStatus) -> GlobalMinimizationResult<D> {
-        let lower = if self.evaluations == 0 {
+        let lower = if self.lower == f64::INFINITY {
             f64::INFINITY
         } else {
             let frontier_lower = self.frontier_lower_bound();

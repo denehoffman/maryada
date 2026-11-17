@@ -6,7 +6,8 @@
 use maryada::{
     BestFirstQueue, Bisect, BranchAndBound, EnclosureOps, GlobalMinimizationResult,
     GlobalMinimizer, GlobalMinimizerError, GlobalMinimizerOptions, GlobalMinimizerOptionsError,
-    Interval, IntervalOps, PruneDecision, Pruner, RunStatus, StepOutcome, Unresolved, WorkQueue,
+    Interval, IntervalOps, PruneDecision, Pruner, RunStatus, SearchError, StepOutcome, Unresolved,
+    WorkQueue,
 };
 
 #[test]
@@ -104,6 +105,96 @@ fn branch_and_bound_steps_and_resumes() {
 }
 
 #[test]
+fn branch_and_bound_retries_the_original_domain_after_callback_errors() {
+    struct RetryPruner(bool);
+
+    impl Pruner<Interval, Interval> for RetryPruner {
+        type Error = &'static str;
+
+        fn prune(
+            &mut self,
+            domain: &mut Interval,
+            _: &Interval,
+        ) -> Result<PruneDecision, Self::Error> {
+            if domain.wid() > 1.0 {
+                return Ok(PruneDecision::Branch { priority: -2.0 });
+            }
+            if core::mem::take(&mut self.0) {
+                *domain = Interval::ZERO;
+                return Err("transient pruning error");
+            }
+            Ok(PruneDecision::Certify)
+        }
+    }
+
+    let mut fail_evaluation = true;
+    let mut search = BranchAndBound::new(
+        Interval::new(-1.0, 1.0),
+        |domain: &Interval| {
+            if domain.wid() <= 1.0 && core::mem::take(&mut fail_evaluation) {
+                return Err("transient evaluation error");
+            }
+            Ok(*domain)
+        },
+        RetryPruner(true),
+    );
+    assert_eq!(search.step().unwrap(), StepOutcome::Branched);
+    let before = search.report(RunStatus::StepLimit);
+
+    assert_eq!(
+        search.run(1),
+        Err(SearchError::Evaluation("transient evaluation error"))
+    );
+    assert_eq!(search.report(RunStatus::StepLimit), before);
+    assert_eq!(
+        search.step(),
+        Err(SearchError::Pruning("transient pruning error"))
+    );
+    assert_eq!(search.pending_count(), 2);
+    assert_eq!(search.pending_domains(), before.unresolved);
+
+    let retried = search.run(1).unwrap();
+    assert_eq!(retried.status, RunStatus::StepLimit);
+    assert_eq!(retried.evaluated, 3);
+    assert_eq!(retried.certified, vec![Interval::new(-1.0, 0.0)]);
+    assert_eq!(
+        retried.unresolved,
+        vec![Unresolved {
+            domain: Interval::new(0.0, 1.0),
+            priority: -2.0
+        }]
+    );
+}
+
+#[test]
+fn branch_and_bound_resumes_when_only_the_failed_domain_remains() {
+    let mut fail_once = true;
+    let root = Interval::new(0.0, 1.0);
+    let mut search = BranchAndBound::new(
+        root,
+        |domain: &Interval| {
+            if core::mem::take(&mut fail_once) {
+                return Err("transient evaluation error");
+            }
+            Ok(*domain)
+        },
+        WidthPruner,
+    );
+
+    assert_eq!(
+        search.run(1),
+        Err(SearchError::Evaluation("transient evaluation error"))
+    );
+    assert_eq!(search.run(0).unwrap().status, RunStatus::StepLimit);
+
+    let retried = search.run(1).unwrap();
+    assert_eq!(retried.status, RunStatus::Exhausted);
+    assert_eq!(retried.evaluated, 1);
+    assert_eq!(retried.certified, vec![root]);
+    assert!(retried.unresolved.is_empty());
+}
+
+#[test]
 fn retained_and_contracted_domains_are_reported() {
     struct Retain;
 
@@ -159,6 +250,36 @@ fn global_minimizer_encloses_a_quadratic_minimum() {
     assert!(result.minimum.contains(0.0));
     assert!(result.minimum.sup() >= 0.0);
     assert!(!result.candidates.is_empty());
+}
+
+#[test]
+fn global_minimizer_retries_after_box_or_midpoint_errors() {
+    for fail_on in [1_usize, 2] {
+        let mut calls = 0_usize;
+        let mut minimizer = GlobalMinimizer::new(Interval::new(-1.0, 1.0), |domain: &Interval| {
+            calls = calls.saturating_add(1);
+            if calls == fail_on {
+                return Err("transient objective error");
+            }
+            Ok(domain.sqr())
+        });
+        let mut expected = minimizer.result(RunStatus::StepLimit);
+
+        assert_eq!(
+            minimizer.solve(),
+            Err(GlobalMinimizerError::Evaluation(
+                "transient objective error"
+            ))
+        );
+        assert_eq!(minimizer.pending_count(), 1);
+        expected.evaluations = fail_on;
+        assert_eq!(minimizer.result(RunStatus::StepLimit), expected);
+
+        let retried = minimizer.solve().unwrap();
+        assert_eq!(retried.status, RunStatus::Converged);
+        assert_eq!(retried.minimum, Interval::ZERO);
+        assert_eq!(retried.evaluations, fail_on.saturating_add(2));
+    }
 }
 
 #[test]

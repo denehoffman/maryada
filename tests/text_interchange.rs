@@ -474,47 +474,49 @@ fn interchange_encoding_and_validation_match_the_standard_representation() {
 }
 
 #[test]
-fn uncertain_literals_cover_long_input_and_checked_arithmetic_boundaries() {
-    let long_center =
-        Interval::text_to_interval("1234567890123456789012345678901234567890?1", &mut ());
-    assert!(long_center.is_bounded());
-    assert!(long_center.contains(1.234_567_890_123_456_8e39));
-
-    let doubled_center_fallback =
-        Interval::text_to_interval("170141183460469231731687303715884105727?1", &mut ());
-    assert!(doubled_center_fallback.is_bounded());
-
-    for literal in [
-        "170141183460469231731687303715884105727??",
-        "170141183460469231731687303715884105727??d",
-        "170141183460469231731687303715884105727??U",
+fn uncertain_literals_handle_large_coefficients_and_validate_syntax() {
+    for (literal, endpoints) in [
+        (
+            "1234567890123456789012345678901234567890?1",
+            "[1234567890123456789012345678901234567889,1234567890123456789012345678901234567891]",
+        ),
+        (
+            "170141183460469231731687303715884105727?1",
+            "[170141183460469231731687303715884105726,170141183460469231731687303715884105728]",
+        ),
+        (
+            "1?170141183460469231731687303715884105727",
+            "[-170141183460469231731687303715884105726,170141183460469231731687303715884105728]",
+        ),
+        (
+            "85070591730234615865843651857942052863?85070591730234615865843651857942052863",
+            "[0,170141183460469231731687303715884105726]",
+        ),
     ] {
-        let value = Interval::text_to_interval(literal, &mut ());
-        assert!(!value.is_empty(), "fallback rejected {literal:?}");
-    }
-
-    for literal in [
-        "1?170141183460469231731687303715884105727",
-        "85070591730234615865843651857942052863?85070591730234615865843651857942052863",
-    ] {
-        assert!(
-            Interval::text_to_interval(literal, &mut ()).is_entire(),
-            "boundary did not conservatively widen {literal:?}",
+        let mut signals = SignalFlags::NONE;
+        let expected = Interval::text_to_interval(endpoints, &mut signals);
+        assert_eq!(
+            Interval::text_to_interval(literal, &mut signals),
+            expected,
+            "{literal}"
         );
+        assert!(signals.is_empty(), "{literal}");
     }
 
-    let huge_positive =
-        Interval::text_to_interval("1?1e999999999999999999999999999999999999999", &mut ());
-    assert!(!huge_positive.is_empty());
-    assert_eq!(huge_positive.sup(), f64::INFINITY);
-    let huge_negative =
-        Interval::text_to_interval("1?1e-999999999999999999999999999999999999999", &mut ());
-    assert!(!huge_negative.is_empty());
-    assert!(huge_negative.contains(0.0));
+    assert_eq!(
+        Interval::text_to_interval("1?1e999999999999999999999999999999999999999", &mut ()),
+        Interval::new(0.0, f64::INFINITY)
+    );
+    assert_eq!(
+        Interval::text_to_interval("1?1e-999999999999999999999999999999999999999", &mut ()),
+        Interval::new(0.0, f64::from_bits(1))
+    );
 
     let mut signals = SignalFlags::NONE;
     for literal in [
-        "1?9999999999999999999999999999999999999999",
+        "0x1p0?1",
+        "1/2?1",
+        "inf?1",
         "1234567890123456789012345678901234567890.0.0?1",
         "1?1e+",
         "1?1e-",
@@ -536,6 +538,75 @@ fn uncertain_literals_cover_long_input_and_checked_arithmetic_boundaries() {
         assert!(signals.contains(Signal::UndefinedOperation));
         signals.clear();
     }
+}
+
+#[test]
+fn long_uncertain_literals_round_the_exact_decimal_endpoints() {
+    let power = format!("1{}", "0".repeat(900));
+    let power_plus_one = format!("1{}1", "0".repeat(899));
+    let first_subnormal = f64::from_bits(1);
+    for (literal, expected) in [
+        (format!("{power}?0e-900"), Interval::ONE),
+        (format!("0?{power}e-900"), Interval::new(-1.0, 1.0)),
+        (format!("{power}??e-900"), Interval::ENTIRE),
+        (
+            format!("{power_plus_one}?{power}d"),
+            Interval::new(1.0, f64::INFINITY),
+        ),
+        (
+            format!("-{power_plus_one}?{power}u"),
+            Interval::new(f64::NEG_INFINITY, -1.0),
+        ),
+        (
+            format!("{power_plus_one}?0e-900"),
+            Interval::new(1.0, 1.0_f64.next_up()),
+        ),
+        (
+            format!("-{power_plus_one}?0e-900"),
+            Interval::new((-1.0_f64).next_down(), -1.0),
+        ),
+        (
+            format!("1.{}?", "0".repeat(900)),
+            Interval::new(1.0_f64.next_down(), 1.0_f64.next_up()),
+        ),
+        (
+            format!("{power}??De-900"),
+            Interval::new(f64::NEG_INFINITY, 1.0),
+        ),
+        (
+            format!("{power}??Ue-900"),
+            Interval::new(1.0, f64::INFINITY),
+        ),
+        (
+            format!("{power}?0e-1500"),
+            Interval::new(0.0, first_subnormal),
+        ),
+    ] {
+        let mut signals = SignalFlags::NONE;
+        assert_eq!(
+            Interval::text_to_interval(&literal, &mut signals),
+            expected,
+            "{literal}"
+        );
+        assert!(signals.is_empty(), "{literal}");
+        assert_eq!(
+            DecoratedInterval::text_to_interval(&literal, &mut signals),
+            DecoratedInterval::from(expected),
+            "{literal}"
+        );
+        assert!(signals.is_empty(), "{literal}");
+    }
+
+    let mut signals = SignalFlags::NONE;
+    let decorated = DecoratedInterval::text_to_interval(
+        &format!("{power_plus_one}?{power}d_com"),
+        &mut signals,
+    );
+    assert_eq!(
+        decorated,
+        DecoratedInterval::from(Interval::new(1.0, f64::INFINITY))
+    );
+    assert!(signals.is_empty());
 }
 
 #[test]

@@ -464,58 +464,123 @@ fn parse_bracket_literal(inner: &str) -> Result<ParsedBare, ()> {
     })
 }
 
-#[allow(clippy::arithmetic_side_effects)]
-fn parse_u128_digits(value: &str) -> Option<u128> {
-    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
+#[derive(Clone, Copy)]
+struct DecimalDigits<'a> {
+    written: &'a str,
+    append_zero: bool,
+}
+
+impl<'a> DecimalDigits<'a> {
+    const ZERO: Self = Self {
+        written: "",
+        append_zero: false,
+    };
+
+    #[allow(clippy::arithmetic_side_effects)]
+    fn digits(self) -> impl DoubleEndedIterator<Item = u8> + Clone + 'a {
+        self.written
+            .bytes()
+            .filter(|&byte| byte != b'.')
+            .map(|byte| byte - b'0')
+            .chain(self.append_zero.then_some(0))
     }
-    value.bytes().try_fold(0u128, |result, digit| {
-        result
-            .checked_mul(10)?
-            .checked_add(u128::from(digit - b'0'))
+
+    fn cmp_magnitude(self, other: Self) -> Ordering {
+        let left = self.digits().skip_while(|&digit| digit == 0);
+        let right = other.digits().skip_while(|&digit| digit == 0);
+        left.clone()
+            .count()
+            .cmp(&right.clone().count())
+            .then_with(|| left.cmp(right))
+    }
+}
+
+// Generate the exact magnitude from the least significant digit upward.
+// For subtraction, the caller puts the greater magnitude first.
+#[allow(clippy::arithmetic_side_effects)]
+fn sum_decimal_digits<'a>(
+    left: DecimalDigits<'a>,
+    right: DecimalDigits<'a>,
+    subtract: bool,
+) -> impl Iterator<Item = u8> + Clone + 'a {
+    let mut left = left.digits().rev();
+    let mut right = right.digits().rev();
+    let factor = if subtract { -1 } else { 1 };
+    let mut carry = 0_i16;
+    core::iter::from_fn(move || {
+        let (left, right) = (left.next(), right.next());
+        if left.is_none() && right.is_none() {
+            debug_assert!(carry == 0 || carry == 1);
+            return (core::mem::take(&mut carry) == 1).then_some(1);
+        }
+        let column = carry + i16::from(left.unwrap_or(0)) + factor * i16::from(right.unwrap_or(0));
+        carry = column.div_euclid(10);
+        u8::try_from(column.rem_euclid(10)).ok()
     })
 }
 
-#[allow(clippy::arithmetic_side_effects)]
-fn parse_uncertain_mantissa(value: &str) -> Option<(i128, usize)> {
-    let (negative, unsigned) = value.strip_prefix('-').map_or_else(
-        || {
-            value
-                .strip_prefix('+')
-                .map_or((false, value), |value| (false, value))
-        },
-        |value| (true, value),
-    );
-    let mut point_seen = false;
-    let mut fractional_digits = 0usize;
-    let mut coefficient = 0u128;
-    let mut digit_count = 0usize;
-    for byte in unsigned.bytes() {
-        if byte == b'.' {
-            if point_seen {
-                return None;
-            }
-            point_seen = true;
-        } else if byte.is_ascii_digit() {
-            coefficient = coefficient
-                .checked_mul(10)?
-                .checked_add(u128::from(byte - b'0'))?;
-            digit_count += 1;
-            if point_seen {
-                fractional_digits += 1;
-            }
+#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
+fn round_uncertain_endpoint(
+    center: DecimalDigits<'_>,
+    negative: bool,
+    radius: DecimalDigits<'_>,
+    exponent: i128,
+    direction: Direction,
+) -> Option<f64> {
+    // Every finite binary64 value has fewer than 800 significant decimal
+    // digits (an integer significand of at most 53 bits times at most 5^1074,
+    // or an integer below 2^1024). An omitted nonzero tail can therefore be
+    // replaced by one digit just beyond the prefix without changing either
+    // directed bound.
+    const PREFIX_DIGITS: usize = 800;
+
+    let subtract = negative != (direction == Direction::Down);
+    let (left, right, negative) = if subtract && center.cmp_magnitude(radius) == Ordering::Less {
+        (radius, center, !negative)
+    } else {
+        (center, radius, negative)
+    };
+    let digits = sum_decimal_digits(left, right, subtract);
+    // Locate the highest nonzero digit after all carries and borrows.
+    let Some(highest) = digits
+        .clone()
+        .enumerate()
+        .filter_map(|(place, digit)| (digit != 0).then_some(place))
+        .last()
+    else {
+        return Some(0.0);
+    };
+
+    let mut literal = [0_u8; PREFIX_DIGITS + 24];
+    let start = usize::from(negative);
+    if negative {
+        literal[0] = b'-';
+    }
+    let length = highest + 1;
+    let omitted = length.saturating_sub(PREFIX_DIGITS);
+    let mut sticky = false;
+    for (place, digit) in digits.take(length).enumerate() {
+        if place < omitted {
+            sticky |= digit != 0;
         } else {
-            return None;
+            literal[start + highest - place] = b'0' + digit;
         }
     }
-    if digit_count == 0 || coefficient > u128::MAX / 2 {
-        return None;
+    let mut cursor = start + length.min(PREFIX_DIGITS);
+    if sticky {
+        literal[cursor] = b'1';
+        cursor += 1;
     }
-    let coefficient = i128::try_from(coefficient).ok()?;
-    Some((
-        if negative { -coefficient } else { coefficient },
-        fractional_digits,
-    ))
+    // At these extremes any nonzero leading digit already fixes the
+    // directed bounds to the underflow or overflow pair.
+    let scientific_exponent = exponent
+        .saturating_add(i128::try_from(highest).ok()?)
+        .clamp(-325, 309);
+    let exponent = scientific_exponent - i128::try_from(cursor - start - 1).ok()?;
+    literal[cursor] = b'e';
+    cursor += 1;
+    cursor += write_i64_decimal(i64::try_from(exponent).ok()?, &mut literal[cursor..])?;
+    rounding::number_literal(core::str::from_utf8(&literal[..cursor]).ok()?, direction)
 }
 
 #[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
@@ -548,166 +613,8 @@ fn write_i64_decimal(value: i64, output: &mut [u8]) -> Option<usize> {
     Some(cursor)
 }
 
-#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
-fn parse_scaled_half_integer(
-    value_twice: i128,
-    exponent: i64,
-    direction: Direction,
-) -> Option<f64> {
-    let mut literal = [0u8; 96];
-    let mut cursor = 0;
-    if value_twice < 0 {
-        literal[cursor] = b'-';
-        cursor += 1;
-    }
-    let magnitude = value_twice.unsigned_abs();
-    let integer = magnitude / 2;
-    cursor += write_u128_decimal(integer, &mut literal[cursor..])?;
-    if !magnitude.is_multiple_of(2) {
-        literal[cursor..cursor + 2].copy_from_slice(b".5");
-        cursor += 2;
-    }
-    if exponent != 0 {
-        literal[cursor] = b'e';
-        cursor += 1;
-        cursor += write_i64_decimal(exponent, &mut literal[cursor..])?;
-    }
-    let literal = core::str::from_utf8(&literal[..cursor]).ok()?;
-    rounding::number_literal(literal, direction)
-}
-
-#[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
-fn write_u128_decimal(mut value: u128, output: &mut [u8]) -> Option<usize> {
-    let mut reversed = [0u8; 39];
-    let mut count = 0;
-    loop {
-        reversed[count] = b'0' + u8::try_from(value % 10).ok()?;
-        count += 1;
-        value /= 10;
-        if value == 0 {
-            break;
-        }
-    }
-    if output.len() < count {
-        return None;
-    }
-    for (output_digit, input_index) in output.iter_mut().zip((0..count).rev()) {
-        *output_digit = reversed[input_index];
-    }
-    Some(count)
-}
-
-// The exponent is deliberately rounded to binary64 before directed scaling.
-#[allow(
-    clippy::arithmetic_side_effects,
-    clippy::as_conversions,
-    clippy::cast_precision_loss
-)]
-fn scaled_decimal_interval(value: &str, exponent: i64) -> Option<Interval> {
-    let value_inf = parse_number_lower(value)?;
-    let value_sup = parse_number_upper(value)?;
-    if value_inf == 0.0 && value_sup == 0.0 {
-        return Some(Interval::ZERO);
-    }
-    let exponent = exponent as f64;
-    let scale_inf = rounding::exp10(exponent, Direction::Down);
-    let scale_sup = rounding::exp10(exponent, Direction::Up);
-    let lower_candidates = [
-        rounding::mul(value_inf, scale_inf, Direction::Down),
-        rounding::mul(value_inf, scale_sup, Direction::Down),
-        rounding::mul(value_sup, scale_inf, Direction::Down),
-        rounding::mul(value_sup, scale_sup, Direction::Down),
-    ];
-    let upper_candidates = [
-        rounding::mul(value_inf, scale_inf, Direction::Up),
-        rounding::mul(value_inf, scale_sup, Direction::Up),
-        rounding::mul(value_sup, scale_inf, Direction::Up),
-        rounding::mul(value_sup, scale_sup, Direction::Up),
-    ];
-    if lower_candidates.iter().any(|value| value.is_nan())
-        || upper_candidates.iter().any(|value| value.is_nan())
-    {
-        return Some(Interval::ENTIRE);
-    }
-    let lower = lower_candidates.into_iter().fold(f64::INFINITY, f64::min);
-    let upper = upper_candidates
-        .into_iter()
-        .fold(f64::NEG_INFINITY, f64::max);
-    Some(Interval::from_valid_bounds(lower, upper))
-}
-
-// Input lengths are bounded by the representable string slice and fit in
-// the exponent width used by the parser.
-#[allow(
-    clippy::arithmetic_side_effects,
-    clippy::expect_used,
-    clippy::unreachable
-)]
-fn fallback_uncertain_interval(
-    mantissa: &str,
-    radius: &str,
-    direction: Option<u8>,
-    exponent: i64,
-    fractional_digits: usize,
-) -> Result<Interval, ()> {
-    let center = scaled_decimal_interval(mantissa, exponent).ok_or(())?;
-    if radius == "?" {
-        return Ok(match direction {
-            Some(b'd') => Interval::from_valid_bounds(f64::NEG_INFINITY, center.sup_raw()),
-            Some(b'u') => Interval::from_valid_bounds(center.inf_raw(), f64::INFINITY),
-            None => Interval::ENTIRE,
-            _ => unreachable!(),
-        });
-    }
-    let radius = if radius.is_empty() { "0.5" } else { radius };
-    let radius_exponent = exponent.saturating_sub(
-        i64::try_from(fractional_digits).expect("fractional digit count fits in i64"),
-    );
-    let radius = scaled_decimal_interval(radius, radius_exponent).ok_or(())?;
-    if center.is_entire_raw() || radius.is_entire_raw() {
-        return Ok(Interval::ENTIRE);
-    }
-    let lower = if direction == Some(b'u') {
-        center.inf_raw()
-    } else {
-        rounding::sub(center.inf_raw(), radius.sup_raw(), Direction::Down)
-    };
-    let upper = if direction == Some(b'd') {
-        center.sup_raw()
-    } else {
-        rounding::add(center.sup_raw(), radius.sup_raw(), Direction::Up)
-    };
-    if lower.is_nan() || upper.is_nan() {
-        Ok(Interval::ENTIRE)
-    } else {
-        Ok(Interval::from_valid_bounds(lower, upper))
-    }
-}
-
-fn fallback_uncertain_literal(
-    mantissa: &str,
-    suffix: &str,
-    direction: Option<u8>,
-    exponent: i64,
-    fractional_digits: usize,
-) -> Result<ParsedBare, ()> {
-    // Validate the decimal mantissa and the radius before using the
-    // conservative, allocation-free fallback for very long literals.
-    parse_number_lower(mantissa).ok_or(())?;
-    if suffix != "?" && !suffix.is_empty() && !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(());
-    }
-    let interval =
-        fallback_uncertain_interval(mantissa, suffix, direction, exponent, fractional_digits)?;
-    Ok(ParsedBare {
-        interval,
-        source_bounded: suffix != "?",
-        possibly_undefined: false,
-    })
-}
-
 #[allow(clippy::arithmetic_side_effects, clippy::string_slice)]
-fn parse_uncertain_suffix(suffix: &str) -> Result<(&str, i64, Option<u8>), ()> {
+fn parse_uncertain_suffix(suffix: &str) -> Result<(&str, i128, Option<u8>), ()> {
     let mut suffix_without_exponent = suffix;
     let exponent_index = suffix
         .bytes()
@@ -715,7 +622,7 @@ fn parse_uncertain_suffix(suffix: &str) -> Result<(&str, i64, Option<u8>), ()> {
     let exponent = if let Some(index) = exponent_index {
         let exponent = suffix.get(index + 1..).ok_or(())?;
         suffix_without_exponent = suffix.get(..index).ok_or(())?;
-        parse_i64(exponent).ok_or(())?
+        parse_uncertain_exponent(exponent).ok_or(())?
     } else {
         0
     };
@@ -737,139 +644,84 @@ fn parse_uncertain_suffix(suffix: &str) -> Result<(&str, i64, Option<u8>), ()> {
     Ok((suffix_without_exponent, exponent, direction))
 }
 
-#[allow(
-    clippy::arithmetic_side_effects,
-    clippy::expect_used,
-    clippy::string_slice,
-    clippy::unreachable
-)]
+#[allow(clippy::arithmetic_side_effects)]
 fn parse_uncertain_literal(s: &str) -> Result<ParsedBare, ()> {
-    if s.bytes().any(|byte| byte.is_ascii_whitespace()) {
-        return Err(());
-    }
-    let question = s.find('?').ok_or(())?;
-    let mantissa = &s[..question];
-    if mantissa
-        .bytes()
-        .any(|byte| byte.eq_ignore_ascii_case(&b'e'))
+    let (mantissa, suffix) = s.split_once('?').ok_or(())?;
+    let negative = mantissa.starts_with('-');
+    let mantissa = mantissa.strip_prefix(['+', '-']).unwrap_or(mantissa);
+    let (integer, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    if integer.is_empty() && fraction.is_empty()
+        || !integer
+            .bytes()
+            .chain(fraction.bytes())
+            .all(|byte| byte.is_ascii_digit())
     {
         return Err(());
     }
-    let (suffix, exponent, direction) = parse_uncertain_suffix(s.get(question + 1..).ok_or(())?)?;
+    let (suffix, exponent, direction) = parse_uncertain_suffix(suffix)?;
 
-    let fractional_digits = mantissa
-        .split_once('.')
-        .map_or(0, |(_, fraction)| fraction.len());
-    let Some((center, fractional_digits)) = parse_uncertain_mantissa(mantissa) else {
-        return fallback_uncertain_literal(
-            mantissa,
-            suffix,
-            direction,
-            exponent,
-            fractional_digits,
-        );
+    let unbounded = suffix == "?";
+    let half_unit = suffix.is_empty();
+    let radius = DecimalDigits {
+        written: match suffix {
+            "" => "5",
+            "?" => "",
+            digits if digits.bytes().all(|byte| byte.is_ascii_digit()) => digits,
+            _ => return Err(()),
+        },
+        append_zero: false,
     };
-    let decimal_exponent = exponent.saturating_sub(
-        i64::try_from(fractional_digits).expect("fractional digit count fits in i64"),
-    );
-    if center.checked_mul(2).is_none() {
-        let interval =
-            fallback_uncertain_interval(mantissa, suffix, direction, exponent, fractional_digits)?;
-        return Ok(ParsedBare {
-            interval,
-            source_bounded: suffix != "?",
-            possibly_undefined: false,
-        });
-    }
-    if suffix == "?" {
-        let center_twice = center * 2;
-        let center_lower =
-            parse_scaled_half_integer(center_twice, decimal_exponent, Direction::Down)
-                .unwrap_or(f64::NEG_INFINITY);
-        let center_upper = parse_scaled_half_integer(center_twice, decimal_exponent, Direction::Up)
-            .unwrap_or(f64::INFINITY);
-        let interval = match direction {
-            Some(b'd') => Interval::from_valid_bounds(f64::NEG_INFINITY, center_upper),
-            Some(b'u') => Interval::from_valid_bounds(center_lower, f64::INFINITY),
-            None => Interval::ENTIRE,
-            _ => unreachable!(),
+    let center = DecimalDigits {
+        written: mantissa,
+        append_zero: half_unit,
+    };
+    // For the default half-unit radius, add one decimal place so that both
+    // the center and the radius are exact integers in the same units.
+    let places = i128::try_from(fraction.len()).map_err(|_| ())? + i128::from(half_unit);
+    let exponent = exponent.saturating_sub(places);
+
+    let lower = if unbounded && direction != Some(b'u') {
+        f64::NEG_INFINITY
+    } else {
+        let radius = if direction == Some(b'u') {
+            DecimalDigits::ZERO
+        } else {
+            radius
         };
-        return Ok(ParsedBare {
-            interval,
-            source_bounded: false,
-            possibly_undefined: false,
-        });
-    }
+        round_uncertain_endpoint(center, negative, radius, exponent, Direction::Down).ok_or(())?
+    };
+    let upper = if unbounded && direction != Some(b'd') {
+        f64::INFINITY
+    } else {
+        let radius = if direction == Some(b'd') {
+            DecimalDigits::ZERO
+        } else {
+            radius
+        };
+        round_uncertain_endpoint(center, negative, radius, exponent, Direction::Up).ok_or(())?
+    };
 
-    let radius_twice = if suffix.is_empty() {
-        1u128
-    } else {
-        parse_u128_digits(suffix)
-            .ok_or(())?
-            .checked_mul(2)
-            .ok_or(())?
-    };
-    if radius_twice > u128::MAX / 2 {
-        return Ok(ParsedBare {
-            interval: Interval::ENTIRE,
-            source_bounded: true,
-            possibly_undefined: false,
-        });
-    }
-    let center_twice = center * 2;
-    let radius_twice = i128::try_from(radius_twice).map_err(|_| ())?;
-    let lower_twice = if direction == Some(b'u') {
-        Some(center_twice)
-    } else {
-        center_twice.checked_sub(radius_twice)
-    };
-    let upper_twice = if direction == Some(b'd') {
-        Some(center_twice)
-    } else {
-        center_twice.checked_add(radius_twice)
-    };
-    let (Some(lower_twice), Some(upper_twice)) = (lower_twice, upper_twice) else {
-        return Ok(ParsedBare {
-            interval: Interval::ENTIRE,
-            source_bounded: true,
-            possibly_undefined: false,
-        });
-    };
-    let lower = parse_scaled_half_integer(lower_twice, decimal_exponent, Direction::Down)
-        .unwrap_or(f64::NEG_INFINITY);
-    let upper = parse_scaled_half_integer(upper_twice, decimal_exponent, Direction::Up)
-        .unwrap_or(f64::INFINITY);
     Ok(ParsedBare {
         interval: Interval::from_valid_bounds(lower, upper),
-        source_bounded: true,
+        source_bounded: !unbounded,
         possibly_undefined: false,
     })
 }
 
 #[allow(clippy::arithmetic_side_effects)]
-fn parse_i64(value: &str) -> Option<i64> {
-    let (negative, digits) = value.strip_prefix('-').map_or_else(
-        || {
-            value
-                .strip_prefix('+')
-                .map_or((false, value), |value| (false, value))
-        },
-        |value| (true, value),
-    );
+fn parse_uncertain_exponent(value: &str) -> Option<i128> {
+    let negative = value.starts_with('-');
+    let digits = value.strip_prefix(['+', '-']).unwrap_or(value);
     if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
-    let mut result = 0i64;
+    let mut magnitude = 0_i128;
     for digit in digits.bytes() {
-        result = result
+        magnitude = magnitude
             .saturating_mul(10)
-            .saturating_add(i64::from(digit - b'0'));
+            .saturating_add(i128::from(digit - b'0'));
     }
-    Some(if negative {
-        result.saturating_neg()
-    } else {
-        result
-    })
+    Some(if negative { -magnitude } else { magnitude })
 }
 
 fn parse_number_lower(s: &str) -> Option<f64> {

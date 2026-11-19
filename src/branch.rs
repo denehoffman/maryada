@@ -40,7 +40,10 @@ pub trait Bisect: Sized {
     /// Splits this domain into two children which cover the parent.
     fn bisect(&self) -> Option<(Self, Self)>;
 
-    /// Returns whether this domain has zero branch width.
+    /// Returns whether this domain represents exactly one point.
+    ///
+    /// The default uses zero branch width. Override it when zero width can
+    /// also describe a domain with no points or more than one point.
     fn is_singleton(&self) -> bool {
         self.branch_width() == 0.0
     }
@@ -709,17 +712,16 @@ pub struct GlobalMinimizationResult<D> {
     /// the former bounds the global optimum, while the latter encloses the
     /// objective over the parameter box that supplied the current upper bound.
     pub minimum: Interval,
-    /// The point domain at which the best upper bound was obtained.
+    /// The argument whose objective evaluation gave the best upper bound.
     ///
-    /// This is normally a singleton midpoint.  It is paired with
-    /// [`Self::best_domain`], which is the parameter box whose image was
-    /// evaluated.
+    /// This can be a singleton midpoint or the full [`Self::best_domain`].
+    /// Use [`GlobalMinimizer::best_sample`] to retrieve an evaluated singleton
+    /// and its own objective enclosure.
     pub best_point: Option<D>,
     /// The parameter domain associated with the best known upper bound.
     ///
-    /// When a midpoint produced the upper bound, this is the containing
-    /// domain whose image was evaluated; it is the useful interval enclosure
-    /// of the parameter value for the result.
+    /// When a midpoint produced the upper bound, this field is the box that
+    /// contained that midpoint. It identifies where the bound was established.
     pub best_domain: Option<D>,
     /// The objective enclosure evaluated over [`Self::best_domain`].
     pub best_value: Option<Interval>,
@@ -777,6 +779,7 @@ where
     best_point: Option<D>,
     best_domain: Option<D>,
     best_value: Option<Interval>,
+    best_sample: Option<(D, Interval)>,
     evaluations: usize,
     discarded: usize,
     branched: usize,
@@ -839,6 +842,7 @@ where
             best_point: None,
             best_domain: None,
             best_value: None,
+            best_sample: None,
             evaluations: 0,
             discarded: 0,
             branched: 0,
@@ -916,7 +920,7 @@ where
     /// # Errors
     ///
     /// Returns the objective error from either call. The domain stays queued
-    /// and the incumbent and bounds are updated only after both calls succeed.
+    /// and the incumbent, bounds, and sample are updated only after all calls succeed.
     pub fn step(&mut self) -> Result<GlobalStep, O::Error> {
         let Some(entry) = self.queue.entries.peek_mut() else {
             return Ok(GlobalStep::Idle);
@@ -926,9 +930,10 @@ where
             self.objective.evaluate(domain)
         };
         let value = evaluate(&entry.domain)?;
-        let midpoint = if !value.is_nai()
-            && !value.is_empty()
-            && !entry.domain.is_singleton()
+        let valid_value = !value.is_nai() && !value.is_empty();
+        let singleton = valid_value && entry.domain.is_singleton();
+        let midpoint = if valid_value
+            && !singleton
             && let Some(point) = entry.domain.midpoint()
         {
             let point_value = evaluate(&point)?;
@@ -952,6 +957,9 @@ where
         }
         self.update_bounds(value);
         self.update_upper_bound(&domain, value, &domain, value);
+        if singleton {
+            self.update_sample(value, || domain.clone());
+        }
 
         if let Some((point, point_value)) = midpoint
             && !point_value.is_empty()
@@ -959,6 +967,7 @@ where
         {
             self.update_bounds(point_value);
             self.update_upper_bound(&domain, value, &point, point_value);
+            self.update_sample(point_value, || point);
         }
 
         let priority = value.inf();
@@ -1011,6 +1020,16 @@ where
             self.best_point = Some(point.clone());
             self.best_domain = Some(domain.clone());
             self.best_value = Some(domain_value);
+        }
+    }
+
+    fn update_sample(&mut self, value: Interval, point: impl FnOnce() -> D) {
+        if self
+            .best_sample
+            .as_ref()
+            .is_none_or(|(_, best)| value.sup() < best.sup())
+        {
+            self.best_sample = Some((point(), value));
         }
     }
 
@@ -1126,6 +1145,21 @@ where
         })
     }
 
+    /// Returns the best sampled point and its objective enclosure.
+    ///
+    /// A sample comes from evaluating a singleton domain or a midpoint with a
+    /// nonempty objective enclosure. The sample with the smallest upper endpoint
+    /// wins, with ties keeping the earliest sample. Its enclosure bounds the
+    /// objective at that point. The global minimum enclosure can use a tighter
+    /// upper bound from a whole box. The returned point borrows from the
+    /// minimizer, so this can be used after [`Self::advance_progress`].
+    #[must_use]
+    pub fn best_sample(&self) -> Option<(&D, Interval)> {
+        self.best_sample
+            .as_ref()
+            .map(|(point, value)| (point, *value))
+    }
+
     fn minimum(&self) -> Interval {
         if self.lower == f64::INFINITY {
             return Interval::EMPTY;
@@ -1231,6 +1265,10 @@ impl<I: IntervalOps> Bisect for ComplexBox<I> {
         }
     }
 
+    fn is_singleton(&self) -> bool {
+        EnclosureOps::is_singleton(self.re) && EnclosureOps::is_singleton(self.im)
+    }
+
     fn bisect(&self) -> Option<(Self, Self)> {
         if self.is_nai() || self.is_empty() || self.is_singleton() {
             return None;
@@ -1280,6 +1318,10 @@ where
                     best
                 }
             })
+    }
+
+    fn is_singleton(&self) -> bool {
+        !self.is_empty() && self.iter().all(Bisect::is_singleton)
     }
 
     fn bisect(&self) -> Option<(Self, Self)> {

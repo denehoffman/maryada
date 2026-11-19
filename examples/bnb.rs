@@ -35,8 +35,14 @@ fn main() {
         res.minimum
     );
     if let (Some(domain), Some(value)) = (res.best_domain.as_ref(), res.best_value) {
-        println!("converged interval:\n\tx ∈ {domain} (truth: ≈ -1.0679)");
+        println!("box used for the upper bound:\n\tx ∈ {domain}");
         println!("f(x) on that interval:\n\tf(x) ∈ {value}");
+    }
+    if let Some((point, value)) = minimizer.best_sample() {
+        println!(
+            "best sampled point:\n\tx = {}\n\tf(x) ∈ {value}",
+            point.mid()
+        );
     }
 
     println!(
@@ -54,7 +60,7 @@ fn main() {
     );
     if let (Some(domain), Some(value)) = (res.best_domain.as_ref(), res.best_value) {
         println!(
-            "converged interval:\n\tx ∈ ({:.2}, {:.2}, {:.2}) (truth: ≈(420.9687, 420.9687, 420.9687))",
+            "box used for the upper bound:\n\tx ∈ ({:.2}, {:.2}, {:.2})",
             domain[0], domain[1], domain[2]
         );
         println!("f(x) on that interval:\n\tf(x) ∈ {value}");

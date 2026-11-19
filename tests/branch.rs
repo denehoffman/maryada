@@ -272,6 +272,7 @@ fn global_minimizer_retries_after_box_or_midpoint_errors() {
             ))
         );
         assert_eq!(minimizer.pending_count(), 1);
+        assert!(minimizer.best_sample().is_none());
         expected.evaluations = fail_on;
         assert_eq!(minimizer.result(RunStatus::StepLimit), expected);
 
@@ -279,7 +280,79 @@ fn global_minimizer_retries_after_box_or_midpoint_errors() {
         assert_eq!(retried.status, RunStatus::Converged);
         assert_eq!(retried.minimum, Interval::ZERO);
         assert_eq!(retried.evaluations, fail_on.saturating_add(2));
+        assert_eq!(
+            minimizer.best_sample(),
+            Some((&Interval::ZERO, Interval::ZERO))
+        );
     }
+}
+
+#[test]
+fn global_minimizer_tracks_a_sample_independently_of_the_best_box() {
+    let root = Interval::new(-2.0, 2.0);
+    let mut minimizer = GlobalMinimizer::new(root, |domain: &Interval| {
+        // These are enclosures of the same constant function. The root box
+        // gives a stronger upper bound than its first sampled midpoint.
+        let value = if *domain == Interval::ZERO {
+            Interval::new(1.0, 2.0)
+        } else if domain.is_singleton() {
+            Interval::ONE
+        } else {
+            Interval::new(0.0, 1.0)
+        };
+        Ok::<_, core::convert::Infallible>(value)
+    })
+    .without_gap_tolerance()
+    .without_value_tolerance()
+    .without_domain_tolerance();
+
+    assert!(minimizer.best_sample().is_none());
+    let progress = minimizer.advance_progress(1).unwrap();
+    assert_eq!(progress.evaluations, 2);
+    let result = minimizer.result(progress.status);
+    assert_eq!(result.best_point, Some(root));
+    assert_eq!(result.best_domain, Some(root));
+    assert_eq!(result.minimum.sup(), 1.0);
+    assert_eq!(
+        minimizer.best_sample(),
+        Some((&Interval::ZERO, Interval::new(1.0, 2.0)))
+    );
+
+    let progress = minimizer.advance_progress(2).unwrap();
+    assert_eq!(progress.evaluations, 6);
+    assert_eq!(
+        minimizer.best_sample(),
+        Some((&Interval::from(-1.0), Interval::ONE))
+    );
+    assert_eq!(minimizer.result(progress.status).best_domain, Some(root));
+}
+
+#[test]
+fn global_minimizer_accepts_singleton_domains_and_skips_empty_samples() {
+    let mut singleton = GlobalMinimizer::new(vec![Interval::ONE], |_: &Vec<Interval>| {
+        Ok::<_, core::convert::Infallible>(Interval::new(1.0, 2.0))
+    });
+    assert_eq!(singleton.advance_progress(1).unwrap().evaluations, 1);
+    let (point, value) = singleton.best_sample().unwrap();
+    assert_eq!(point.as_slice(), &[Interval::ONE]);
+    assert_eq!(value, Interval::new(1.0, 2.0));
+
+    let mut empty =
+        GlobalMinimizer::new(vec![Interval::ONE, Interval::EMPTY], |_: &Vec<Interval>| {
+            Ok::<_, core::convert::Infallible>(Interval::ONE)
+        });
+    empty.advance_progress(1).unwrap();
+    assert!(empty.best_sample().is_none());
+
+    let mut undefined = GlobalMinimizer::new(Interval::new(-1.0, 1.0), |domain: &Interval| {
+        if domain.is_singleton() {
+            Ok::<_, core::convert::Infallible>(Interval::EMPTY)
+        } else {
+            Ok(Interval::new(0.0, 1.0))
+        }
+    });
+    undefined.advance_progress(1).unwrap();
+    assert!(undefined.best_sample().is_none());
 }
 
 #[test]

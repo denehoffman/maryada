@@ -1379,6 +1379,8 @@ pub fn cosh(x: f64, direction: Direction) -> f64 {
     f64::max(mul(sum, 0.5, direction), 1.0)
 }
 
+const TINY_HYPERBOLIC_ARGUMENT: f64 = f64::from_bits(0x3e40_0000_0000_0000); // 2^-27
+
 pub fn tanh(x: f64, direction: Direction) -> f64 {
     if x.is_nan() {
         return f64::NAN;
@@ -1398,14 +1400,37 @@ pub fn tanh(x: f64, direction: Direction) -> f64 {
         direction
     };
     let magnitude = x.abs();
-    let result = div(
-        sinh(magnitude, magnitude_direction),
-        cosh(magnitude, magnitude_direction.opposite()),
-        magnitude_direction,
-    );
-    let result = match magnitude_direction {
-        Direction::Down => f64::max(result, 0.0),
-        Direction::Up => f64::min(result, 1.0),
+    let reverse = magnitude_direction.opposite();
+    let result = if magnitude <= TINY_HYPERBOLIC_ARGUMENT {
+        // x - tanh(x) = ∫ tanh²(t) dt < x³ for positive x. Here x³
+        // is smaller than the spacing to the next value below x.
+        match magnitude_direction {
+            Direction::Down => magnitude.next_down(),
+            Direction::Up => magnitude,
+        }
+    } else if magnitude >= 20.0 {
+        // 1 - tanh(x) < 2 exp(-2x) <= 2 exp(-40) < 2^-53,
+        // the spacing immediately below 1.
+        match magnitude_direction {
+            Direction::Down => 1.0_f64.next_down(),
+            Direction::Up => 1.0,
+        }
+    } else if magnitude <= 0.25 {
+        // p/(2+p) increases with p = expm1(2x). Using expm1 keeps
+        // the numerator accurate when x is small.
+        let twice = add(magnitude, magnitude, magnitude_direction);
+        let p = expm1(twice, magnitude_direction);
+        div(p, add(2.0, p, reverse), magnitude_direction)
+    } else {
+        // (1-q)/(1+q) decreases with q = exp(-2x). The negative
+        // exponent avoids overflow, and q stays away from 1 here.
+        let twice = add(magnitude, magnitude, magnitude_direction);
+        let q = exp(-twice, reverse);
+        div(
+            sub(1.0, q, magnitude_direction),
+            add(1.0, q, reverse),
+            magnitude_direction,
+        )
     };
     if x.is_sign_negative() {
         -result
@@ -1430,11 +1455,22 @@ pub fn asinh(x: f64, direction: Direction) -> f64 {
         direction
     };
     let magnitude = x.abs();
-    let result = if magnitude <= 1.0 {
+    let result = if magnitude <= TINY_HYPERBOLIC_ARGUMENT {
+        // The derivative deficit 1 - 1/sqrt(1+t²) is less than t²,
+        // so x - asinh(x) < x³, below the spacing immediately below x.
+        match magnitude_direction {
+            Direction::Down => magnitude.next_down(),
+            Direction::Up => magnitude,
+        }
+    } else if magnitude <= 1.0 {
+        // Rationalize sqrt(1+x²)-1 to keep the small correction. The
+        // quotient s/(1+sqrt(1+s)) increases with s = x².
         let square = sqr(magnitude, magnitude_direction);
-        let root = sqrt(add(1.0, square, magnitude_direction), magnitude_direction);
-        log(
-            add(magnitude, root, magnitude_direction),
+        let reverse = magnitude_direction.opposite();
+        let root = sqrt(add(1.0, square, reverse), reverse);
+        let correction = div(square, add(1.0, root, reverse), magnitude_direction);
+        log1p(
+            add(magnitude, correction, magnitude_direction),
             magnitude_direction,
         )
     } else {
@@ -1499,10 +1535,21 @@ pub fn atanh(x: f64, direction: Direction) -> f64 {
         direction
     };
     let magnitude = x.abs();
-    let numerator = add(1.0, magnitude, magnitude_direction);
-    let denominator = sub(1.0, magnitude, magnitude_direction.opposite());
-    let ratio = div(numerator, denominator, magnitude_direction);
-    let result = mul(log(ratio, magnitude_direction), 0.5, magnitude_direction);
+    let result = if magnitude <= TINY_HYPERBOLIC_ARGUMENT {
+        // The derivative excess t²/(1-t²) is at most 2t² here,
+        // so atanh(x) - x < x³, below the spacing immediately above x.
+        match magnitude_direction {
+            Direction::Down => magnitude,
+            Direction::Up => magnitude.next_up(),
+        }
+    } else {
+        // atanh(x) = log1p(2x/(1-x))/2, without rounding (1+x)/(1-x)
+        // to a value close to 1 before taking the logarithm.
+        let numerator = add(magnitude, magnitude, magnitude_direction);
+        let denominator = sub(1.0, magnitude, magnitude_direction.opposite());
+        let ratio = div(numerator, denominator, magnitude_direction);
+        mul(log1p(ratio, magnitude_direction), 0.5, magnitude_direction)
+    };
     if x.is_sign_negative() {
         -result
     } else {

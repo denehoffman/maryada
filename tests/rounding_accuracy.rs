@@ -1,9 +1,46 @@
 #![allow(missing_docs)]
 
 use maryada::{
-    DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalOps, decoration_part, exp, exp2,
-    expm1, log, log1p, set_dec, subset,
+    DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalOps, asinh, atanh,
+    decoration_part, exp, exp2, expm1, log, log1p, set_dec, subset, tanh,
 };
+
+#[test]
+fn hyperbolic_enclosures_keep_binary64_spacing_at_tiny_inputs() {
+    let limit = f64::from_bits(0x3e40_0000_0000_0000);
+    for value in [f64::from_bits(1), f64::MIN_POSITIVE, limit] {
+        let x = Interval::from(value);
+        let lower = Interval::new(value.next_down(), value);
+        let upper = Interval::new(value, value.next_up());
+        assert_eq!(tanh(x), lower);
+        assert_eq!(asinh(x), lower);
+        assert_eq!(atanh(x), upper);
+        assert_eq!(tanh(-x), -lower);
+        assert_eq!(asinh(-x), -lower);
+        assert_eq!(atanh(-x), -upper);
+    }
+    assert_eq!(tanh(Interval::ZERO), Interval::ZERO);
+    assert_eq!(asinh(Interval::ZERO), Interval::ZERO);
+    assert_eq!(atanh(Interval::ZERO), Interval::ZERO);
+}
+
+#[test]
+fn tanh_stays_tight_even_when_sinh_and_cosh_would_overflow() {
+    let saturated = Interval::new(1.0_f64.next_down(), 1.0);
+    for magnitude in [20.0, 1000.0, f64::MAX] {
+        let point = Interval::from(magnitude);
+        assert_eq!(tanh(point), saturated);
+        assert_eq!(tanh(-point), -saturated);
+    }
+    assert_eq!(tanh(Interval::new(20.0, f64::INFINITY)), saturated);
+    assert_eq!(tanh(Interval::ENTIRE), Interval::new(-1.0, 1.0));
+    let at_pole = atanh(DecoratedInterval::new(0.0, 1.0));
+    assert_eq!(
+        at_pole,
+        set_dec(Interval::new(0.0, f64::INFINITY), Decoration::Trv)
+    );
+    assert_eq!(atanh(Interval::ONE), Interval::EMPTY);
+}
 
 #[test]
 fn log1p_and_expm1_keep_tight_enclosures_for_tiny_increments() {

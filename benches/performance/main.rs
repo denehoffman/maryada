@@ -224,19 +224,24 @@ fn benchmark_matrices(criterion: &mut Criterion) {
 #[allow(clippy::expect_used)]
 fn benchmark_search(criterion: &mut Criterion) {
     let root = vec![Interval::new(-1.0, 1.0); 8];
-    for (mode, gap_tolerance) in [("gap-on", Some(0.25)), ("gap-off", None)] {
+    for (mode, absolute_gap_tolerance) in [
+        ("absolute-and-relative-gaps-enabled", Some(0.25)),
+        ("absolute-and-relative-gaps-disabled", None),
+    ] {
         // A constant enclosure keeps both children in play and exercises
-        // the gap check throughout the step budget.
+        // the absolute and relative gap checks throughout the step budget.
         let advance = |root: &Vec<Interval>| {
-            let mut search = GlobalMinimizer::new(root.clone(), |_: &Vec<Interval>| {
+            let search = GlobalMinimizer::new(root.clone(), |_: &Vec<Interval>| {
                 Ok::<_, Infallible>(Interval::new(0.0, 1.0))
             })
             .without_value_tolerance()
-            .without_domain_tolerance()
-            .without_gap_tolerance();
-            if let Some(tolerance) = gap_tolerance {
-                search = search.with_gap_tolerance(tolerance);
-            }
+            .without_domain_tolerance();
+            let mut search = match absolute_gap_tolerance {
+                Some(tolerance) => search.with_absolute_gap_tolerance(tolerance),
+                None => search
+                    .without_absolute_gap_tolerance()
+                    .without_relative_gap_tolerance(),
+            };
             search.advance(512).expect("valid search benchmark options")
         };
         let result = advance(&root);

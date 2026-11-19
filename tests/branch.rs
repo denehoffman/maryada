@@ -233,7 +233,8 @@ fn global_minimizer_encloses_a_quadratic_minimum() {
     let options = GlobalMinimizerOptions {
         value_tolerance: Some(0.05),
         domain_tolerance: Some(0.05),
-        gap_tolerance: None,
+        absolute_gap_tolerance: None,
+        relative_gap_tolerance: None,
         max_steps: None,
     };
     let mut minimizer = GlobalMinimizer::with_options(
@@ -302,7 +303,8 @@ fn global_minimizer_tracks_a_sample_independently_of_the_best_box() {
         };
         Ok::<_, core::convert::Infallible>(value)
     })
-    .without_gap_tolerance()
+    .without_absolute_gap_tolerance()
+    .without_relative_gap_tolerance()
     .without_value_tolerance()
     .without_domain_tolerance();
 
@@ -370,14 +372,15 @@ fn global_minimizer_default_is_unbounded_and_convergent() {
 }
 
 #[test]
-fn global_minimizer_rounds_the_gap_upward() {
+fn global_minimizer_rounds_the_absolute_gap_upward() {
     let value = Interval::new(-f64::from_bits(1), 1.0);
     let mut minimizer = GlobalMinimizer::new(Interval::new(-1.0, 1.0), |_: &Interval| {
         Ok::<Interval, core::convert::Infallible>(value)
     })
     .without_value_tolerance()
     .without_domain_tolerance()
-    .with_gap_tolerance(1.0);
+    .without_relative_gap_tolerance()
+    .with_absolute_gap_tolerance(1.0);
 
     let result = minimizer.advance(1).unwrap();
     assert_eq!(result.minimum, value);
@@ -385,10 +388,153 @@ fn global_minimizer_rounds_the_gap_upward() {
     assert_eq!(result.status, RunStatus::StepLimit);
 
     let result = minimizer
-        .with_gap_tolerance(1.0_f64.next_up())
+        .with_absolute_gap_tolerance(1.0_f64.next_up())
         .advance(0)
         .unwrap();
     assert_eq!(result.status, RunStatus::Converged);
+}
+
+#[test]
+fn global_minimizer_certifies_the_relative_gap_at_rounding_boundaries() {
+    for (value, below, enough) in [
+        // Rounding the width or threshold to nearest would accept `below`.
+        (
+            Interval::new(-f64::from_bits(1), 1.0),
+            1.0,
+            1.0_f64.next_up(),
+        ),
+        (
+            Interval::new(2.0, 3.0),
+            1.0 / 3.0,
+            (1.0_f64 / 3.0).next_up(),
+        ),
+        // The width overflows before scaling, but the relative gap is exactly 2.
+        (Interval::new(-f64::MAX, f64::MAX), 2.0_f64.next_down(), 2.0),
+    ] {
+        let mut minimizer = GlobalMinimizer::new(Interval::new(-1.0, 1.0), |_: &Interval| {
+            Ok::<_, core::convert::Infallible>(value)
+        })
+        .without_absolute_gap_tolerance()
+        .without_value_tolerance()
+        .without_domain_tolerance()
+        .with_relative_gap_tolerance(below);
+
+        let progress = minimizer.advance_progress(1).unwrap();
+        assert_eq!(progress.minimum, value);
+        assert_eq!(progress.status, RunStatus::StepLimit);
+
+        let progress_after = minimizer
+            .with_relative_gap_tolerance(enough)
+            .advance_progress(0)
+            .unwrap();
+        assert_eq!(progress_after.status, RunStatus::Converged);
+        assert_eq!(progress_after.evaluations, progress.evaluations);
+    }
+}
+
+#[test]
+fn global_minimizer_enables_both_gap_checks_by_default() {
+    for (value, absolute_only, relative_only) in [
+        (
+            Interval::new(0.0, 5.0e-7),
+            RunStatus::Converged,
+            RunStatus::StepLimit,
+        ),
+        (
+            Interval::new(9_999_999.0, 10_000_000.0),
+            RunStatus::StepLimit,
+            RunStatus::Converged,
+        ),
+    ] {
+        let mut minimizer = GlobalMinimizer::new(Interval::new(-1.0, 1.0), |_: &Interval| {
+            Ok::<_, core::convert::Infallible>(value)
+        })
+        .without_value_tolerance()
+        .without_domain_tolerance();
+        assert_eq!(minimizer.options().absolute_gap_tolerance, Some(1.0e-6));
+        assert_eq!(minimizer.options().relative_gap_tolerance, Some(1.0e-6));
+        assert_eq!(
+            minimizer.advance_progress(1).unwrap().status,
+            RunStatus::Converged
+        );
+
+        minimizer = minimizer.without_absolute_gap_tolerance();
+        assert_eq!(minimizer.advance_progress(0).unwrap().status, relative_only);
+
+        minimizer = minimizer
+            .with_absolute_gap_tolerance(1.0e-6)
+            .without_relative_gap_tolerance();
+        assert_eq!(minimizer.advance_progress(0).unwrap().status, absolute_only);
+
+        minimizer = minimizer.without_absolute_gap_tolerance();
+        assert_eq!(
+            minimizer.advance_progress(0).unwrap().status,
+            RunStatus::StepLimit
+        );
+    }
+}
+
+#[test]
+fn global_minimizer_can_stop_with_either_gap_tolerance() {
+    for (value, absolute) in [
+        (Interval::new(9.0, 10.0), None),
+        (Interval::new(-1000.0, -900.0), Some(1.0e-6)),
+        (Interval::new(2.0, 3.0), Some(1.0)),
+        (Interval::ZERO, None),
+    ] {
+        let mut minimizer = GlobalMinimizer::with_options(
+            Interval::new(-1.0, 1.0),
+            |_: &Interval| Ok::<_, core::convert::Infallible>(value),
+            GlobalMinimizerOptions {
+                value_tolerance: None,
+                domain_tolerance: None,
+                absolute_gap_tolerance: absolute,
+                relative_gap_tolerance: Some(0.125),
+                max_steps: None,
+            },
+        );
+        assert_eq!(minimizer.solve().unwrap().status, RunStatus::Converged);
+    }
+}
+
+#[test]
+fn global_minimizer_validates_and_can_disable_relative_gap_tolerance() {
+    let mut minimizer = GlobalMinimizer::new(Interval::new(-1.0, 1.0), |_: &Interval| {
+        Ok::<_, core::convert::Infallible>(Interval::ENTIRE)
+    })
+    .without_absolute_gap_tolerance()
+    .without_value_tolerance()
+    .without_domain_tolerance();
+
+    for value in [0.0, f64::INFINITY] {
+        minimizer = minimizer.with_relative_gap_tolerance(value);
+        assert_eq!(minimizer.options().relative_gap_tolerance, Some(value));
+        assert_eq!(
+            minimizer.advance_progress(1),
+            Err(GlobalMinimizerError::InvalidOptions(
+                GlobalMinimizerOptionsError::InvalidTolerance {
+                    name: "relative_gap_tolerance",
+                    value,
+                }
+            ))
+        );
+    }
+
+    minimizer = minimizer.with_relative_gap_tolerance(2.0);
+    assert_eq!(minimizer.advance_progress(0).unwrap().evaluations, 0);
+    assert_eq!(
+        minimizer.advance_progress(1).unwrap().status,
+        RunStatus::StepLimit
+    );
+
+    minimizer = minimizer.without_relative_gap_tolerance();
+    assert_eq!(minimizer.options().relative_gap_tolerance, None);
+    assert_eq!(
+        minimizer.solve(),
+        Err(GlobalMinimizerError::InvalidOptions(
+            GlobalMinimizerOptionsError::NoTerminationCriterion
+        ))
+    );
 }
 
 #[test]
@@ -423,7 +569,8 @@ fn global_minimizer_progress_keeps_lower_bounds_from_terminal_domains() {
         let options = GlobalMinimizerOptions {
             value_tolerance,
             domain_tolerance: None,
-            gap_tolerance: Some(0.125),
+            absolute_gap_tolerance: Some(0.125),
+            relative_gap_tolerance: None,
             max_steps: None,
         };
         let mut minimizer = GlobalMinimizer::with_branch_and_options(
@@ -461,7 +608,8 @@ fn global_minimizer_rejects_an_unbounded_configuration_without_tolerances() {
         GlobalMinimizerOptions {
             value_tolerance: None,
             domain_tolerance: None,
-            gap_tolerance: None,
+            absolute_gap_tolerance: None,
+            relative_gap_tolerance: None,
             max_steps: None,
         },
     );
@@ -486,6 +634,19 @@ fn global_minimizer_rejects_nonpositive_tolerances() {
         Err(GlobalMinimizerError::InvalidOptions(
             GlobalMinimizerOptionsError::InvalidTolerance {
                 name: "value_tolerance",
+                value: 0.0,
+            }
+        ))
+    );
+
+    minimizer = minimizer
+        .without_value_tolerance()
+        .with_absolute_gap_tolerance(0.0);
+    assert_eq!(
+        minimizer.solve(),
+        Err(GlobalMinimizerError::InvalidOptions(
+            GlobalMinimizerOptionsError::InvalidTolerance {
+                name: "absolute_gap_tolerance",
                 value: 0.0,
             }
         ))

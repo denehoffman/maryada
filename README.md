@@ -63,10 +63,10 @@ cargo bench --locked --bench performance --features branch,linalg
 
 Criterion measures five scalar input classes, 4×4 and 32×32 matrix products
 and verified inverses, repeated solves with and without reused setup, and an
-eight-dimensional search with gap checks enabled and disabled. The prepared
-solve timings exclude setup. Time is reported per batch of inputs. Throughput
-counts one operation per scalar call, matrix product, inverse, solve, or
-512-step search.
+eight-dimensional search with absolute and relative gap checks enabled and
+disabled. The prepared solve timings exclude setup. Time is reported per
+batch of inputs. Throughput counts one operation per scalar call, matrix
+product, inverse, solve, or 512-step search.
 The defaults are a 250 ms warmup, 30 samples, and a one-second measurement
 target per workload. Criterion's command-line flags can override them.
 Add `-- --test` to exercise the workloads once for a smoke check.

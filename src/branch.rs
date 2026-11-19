@@ -297,7 +297,7 @@ pub enum StepOutcome {
 pub enum RunStatus {
     /// The queue is empty; no further work is pending.
     Exhausted,
-    /// The configured global optimality gap was reached.
+    /// An enabled absolute or relative global optimality gap test passed.
     Converged,
     /// The step budget expired while work remained.
     StepLimit,
@@ -630,6 +630,32 @@ impl<E: fmt::Display> fmt::Display for GlobalMinimizerError<E> {
 }
 
 /// Configuration for [`GlobalMinimizer`].
+///
+/// The absolute and relative gap tolerances both default to `1e-6`. Either
+/// enabled test can stop the search. Both tests require a finite lower bound
+/// `L` and upper bound `U` on the global minimum.
+///
+/// # Examples
+///
+/// Set the absolute gap tolerance and disable the relative gap test using
+/// either the options or the builder methods.
+///
+/// ```
+/// use maryada::{GlobalMinimizer, GlobalMinimizerOptions, Interval, IntervalOps};
+///
+/// let domain = Interval::new(0.0, 1.0);
+/// let objective = |x: &Interval| Ok::<_, core::convert::Infallible>(*x);
+/// let options = GlobalMinimizerOptions {
+///     absolute_gap_tolerance: Some(1e-8),
+///     relative_gap_tolerance: None,
+///     ..GlobalMinimizerOptions::default()
+/// };
+/// let configured = GlobalMinimizer::with_options(domain, objective, options);
+/// let built = GlobalMinimizer::new(domain, objective)
+///     .with_absolute_gap_tolerance(1e-8)
+///     .without_relative_gap_tolerance();
+/// assert_eq!(configured.options(), built.options());
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlobalMinimizerOptions {
     /// Stop subdividing a domain when its objective enclosure is no wider
@@ -638,9 +664,13 @@ pub struct GlobalMinimizerOptions {
     /// Stop subdividing a domain when its branch width is no wider than this
     /// value.  `None` disables this parameter-resolution criterion.
     pub domain_tolerance: Option<f64>,
-    /// Stop when the rigorous global upper-minus-lower value gap is no wider
-    /// than this value.  `None` disables early stopping by the global gap.
-    pub gap_tolerance: Option<f64>,
+    /// Stop when `U - L <= tolerance` is certified. The absolute gap tolerance
+    /// must be finite and strictly positive. `None` disables the absolute gap test.
+    pub absolute_gap_tolerance: Option<f64>,
+    /// Stop when `U - L <= tolerance * max(|L|, |U|)` is certified. The relative
+    /// gap tolerance must be finite and strictly positive. An exact zero
+    /// enclosure satisfies the test. `None` disables the relative gap test.
+    pub relative_gap_tolerance: Option<f64>,
     /// Maximum number of domain steps used by [`GlobalMinimizer::solve`].
     /// `None` allows `solve` to continue until another stopping criterion is
     /// reached.
@@ -652,7 +682,8 @@ impl Default for GlobalMinimizerOptions {
         Self {
             value_tolerance: Some(1.0e-6),
             domain_tolerance: Some(1.0e-6),
-            gap_tolerance: Some(1.0e-6),
+            absolute_gap_tolerance: Some(1.0e-6),
+            relative_gap_tolerance: Some(1.0e-6),
             max_steps: None,
         }
     }
@@ -663,7 +694,8 @@ impl GlobalMinimizerOptions {
         for (name, tolerance) in [
             ("value_tolerance", self.value_tolerance),
             ("domain_tolerance", self.domain_tolerance),
-            ("gap_tolerance", self.gap_tolerance),
+            ("absolute_gap_tolerance", self.absolute_gap_tolerance),
+            ("relative_gap_tolerance", self.relative_gap_tolerance),
         ] {
             if let Some(value) = tolerance
                 && (!value.is_finite() || value <= 0.0)
@@ -674,7 +706,8 @@ impl GlobalMinimizerOptions {
         if self.max_steps.is_none()
             && self.value_tolerance.is_none()
             && self.domain_tolerance.is_none()
-            && self.gap_tolerance.is_none()
+            && self.absolute_gap_tolerance.is_none()
+            && self.relative_gap_tolerance.is_none()
         {
             return Err(GlobalMinimizerOptionsError::NoTerminationCriterion);
         }
@@ -761,6 +794,10 @@ pub struct GlobalMinimizationProgress {
 }
 
 /// An objective-driven interval global minimizer.
+///
+/// The default configuration enables both the absolute and relative gap tests.
+/// Use [`Self::without_absolute_gap_tolerance`] or
+/// [`Self::without_relative_gap_tolerance`] to disable either test.
 pub struct GlobalMinimizer<D, O, B = WidestBranch>
 where
     D: Bisect + Midpoint + Clone,
@@ -792,9 +829,9 @@ where
 {
     /// Creates a widest-first minimizer with the default stopping policy.
     ///
-    /// The default uses finite value, parameter-width, and global-gap
-    /// tolerances and has no step limit.  Call [`Self::solve`] to run until
-    /// convergence or queue exhaustion.
+    /// The default uses finite value, parameter-width, absolute gap, and
+    /// relative gap tolerances and has no step limit. Call [`Self::solve`]
+    /// to run until convergence or queue exhaustion.
     #[must_use]
     pub fn new(root: D, objective: O) -> Self {
         Self::with_options(root, objective, GlobalMinimizerOptions::default())
@@ -885,18 +922,31 @@ where
         self
     }
 
-    /// Sets the rigorous global optimality-gap tolerance and returns the
-    /// minimizer for builder-style configuration.
+    /// Sets [`GlobalMinimizerOptions::absolute_gap_tolerance`].
     #[must_use]
-    pub const fn with_gap_tolerance(mut self, tolerance: f64) -> Self {
-        self.options.gap_tolerance = Some(tolerance);
+    pub const fn with_absolute_gap_tolerance(mut self, tolerance: f64) -> Self {
+        self.options.absolute_gap_tolerance = Some(tolerance);
         self
     }
 
-    /// Disables early stopping by the global optimality gap.
+    /// Disables the absolute gap test.
     #[must_use]
-    pub const fn without_gap_tolerance(mut self) -> Self {
-        self.options.gap_tolerance = None;
+    pub const fn without_absolute_gap_tolerance(mut self) -> Self {
+        self.options.absolute_gap_tolerance = None;
+        self
+    }
+
+    /// Sets [`GlobalMinimizerOptions::relative_gap_tolerance`].
+    #[must_use]
+    pub const fn with_relative_gap_tolerance(mut self, tolerance: f64) -> Self {
+        self.options.relative_gap_tolerance = Some(tolerance);
+        self
+    }
+
+    /// Disables the relative gap test.
+    #[must_use]
+    pub const fn without_relative_gap_tolerance(mut self) -> Self {
+        self.options.relative_gap_tolerance = None;
         self
     }
 
@@ -1044,14 +1094,34 @@ where
     }
 
     fn gap_reached(&self) -> bool {
-        let Some(tolerance) = self.options.gap_tolerance else {
-            return false;
-        };
-        if !self.upper.is_finite() {
+        let absolute = self.options.absolute_gap_tolerance;
+        let relative = self.options.relative_gap_tolerance;
+        if (absolute.is_none() && relative.is_none()) || !self.upper.is_finite() {
             return false;
         }
         let lower = self.frontier_lower_bound();
-        lower.is_finite() && rounding::sub(self.upper, lower, Direction::Up) <= tolerance
+        if !lower.is_finite() {
+            return false;
+        }
+        let gap = rounding::sub(self.upper, lower, Direction::Up);
+        if absolute.is_some_and(|tolerance| gap <= tolerance) {
+            return true;
+        }
+        let Some(tolerance) = relative else {
+            return false;
+        };
+
+        let scale = self.upper.abs().max(lower.abs());
+        if gap.is_finite() {
+            // Compare an upper bound on the gap with a lower bound on the threshold.
+            gap <= rounding::mul(tolerance, scale, Direction::Down)
+        } else {
+            // The unscaled subtraction overflowed. Scale the two bounds first
+            // and round them outward before subtracting them.
+            let upper = rounding::div(self.upper, scale, Direction::Up);
+            let lower = rounding::div(lower, scale, Direction::Down);
+            rounding::sub(upper, lower, Direction::Up) <= tolerance
+        }
     }
 
     fn advance_with_limit(
@@ -1088,8 +1158,8 @@ where
     /// Solves using the stopping policy configured on this minimizer.
     ///
     /// With the default configuration, this runs without a step limit until
-    /// the global value gap is small enough or all domains have been
-    /// classified at the local tolerances.  Configure a finite limit with
+    /// the absolute or relative gap test passes or the queue is exhausted.
+    /// Configure a finite limit with
     /// [`Self::with_max_steps`] when an anytime result is preferred.
     ///
     /// # Errors

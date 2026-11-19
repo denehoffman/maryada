@@ -153,7 +153,7 @@ fn write_endpoint<W: fmt::Write>(
     }
 }
 
-fn write_decoration<W: fmt::Write>(output: &mut W, decoration: Decoration) -> fmt::Result {
+pub fn write_decoration<W: fmt::Write>(output: &mut W, decoration: Decoration) -> fmt::Result {
     output.write_str(match decoration {
         Decoration::Ill => "ill",
         Decoration::Trv => "trv",

@@ -676,30 +676,6 @@ impl<'a> DecimalDigits<'a> {
     }
 }
 
-// Generate the exact magnitude from the least significant digit upward.
-// For subtraction, the caller puts the greater magnitude first.
-#[allow(clippy::arithmetic_side_effects)]
-fn sum_decimal_digits<'a>(
-    left: DecimalDigits<'a>,
-    right: DecimalDigits<'a>,
-    subtract: bool,
-) -> impl Iterator<Item = u8> + Clone + 'a {
-    let mut left = left.digits().rev();
-    let mut right = right.digits().rev();
-    let factor = if subtract { -1 } else { 1 };
-    let mut carry = 0_i16;
-    core::iter::from_fn(move || {
-        let (left, right) = (left.next(), right.next());
-        if left.is_none() && right.is_none() {
-            debug_assert!(carry == 0 || carry == 1);
-            return (core::mem::take(&mut carry) == 1).then_some(1);
-        }
-        let column = carry + i16::from(left.unwrap_or(0)) + factor * i16::from(right.unwrap_or(0));
-        carry = column.div_euclid(10);
-        u8::try_from(column.rem_euclid(10)).ok()
-    })
-}
-
 #[allow(clippy::arithmetic_side_effects, clippy::indexing_slicing)]
 fn round_uncertain_endpoint(
     center: DecimalDigits<'_>,
@@ -721,7 +697,7 @@ fn round_uncertain_endpoint(
     } else {
         (center, radius, negative)
     };
-    let digits = sum_decimal_digits(left, right, subtract);
+    let digits = rounding::sum_decimal_digits(left.digits().rev(), right.digits().rev(), subtract);
     // Locate the highest nonzero digit after all carries and borrows.
     let Some(highest) = digits
         .clone()

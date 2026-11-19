@@ -5,11 +5,139 @@
     clippy::too_many_lines,
     clippy::unwrap_used
 )]
+use core::num::NonZeroU16;
+
 use maryada::{
-    DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalOps, ParseIntervalDiagnostic,
-    ParseIntervalError, ParseIntervalErrorKind, Signal, SignalFlags, TextError, decoration_part,
-    interval_to_text, set_dec, subset,
+    DecimalIntervalFormat, DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalOps,
+    ParseIntervalDiagnostic, ParseIntervalError, ParseIntervalErrorKind, Signal, SignalFlags,
+    TextError, decoration_part, interval_to_text, set_dec, subset, write_interval_decimal,
 };
+
+#[test]
+fn enclosing_decimal_output_rounds_exactly_at_the_requested_precision() {
+    use DecimalIntervalFormat::{CenterRadius, Fixed, Scientific};
+
+    let one_place = Fixed {
+        fractional_digits: 1,
+    };
+    let two_significant = Scientific {
+        significant_digits: NonZeroU16::new(2).unwrap(),
+    };
+    let center_radius = CenterRadius {
+        fractional_digits: 1,
+    };
+    for (value, format, expected) in [
+        (Interval::new(1.26, 1.34), one_place, "[1.2,1.4]"),
+        (Interval::new(-1.34, -1.26), one_place, "[-1.4,-1.2]"),
+        (Interval::from(0.1), one_place, "[0.1,0.2]"),
+        (Interval::from(-0.1), one_place, "[-0.2,-0.1]"),
+        (Interval::from(9.99), two_significant, "[9.9e0,1.0e1]"),
+        (Interval::from(-99.9), two_significant, "[-1.0e2,-9.9e1]"),
+        (Interval::ZERO, two_significant, "[-0.0e0,0.0e0]"),
+        (Interval::new(1.26, 1.34), center_radius, "1.3?1"),
+        (Interval::from(-1.25), center_radius, "-1.25?5"),
+        (Interval::from(1.25), center_radius, "1.25?5"),
+        (Interval::ONE, center_radius, "1.0?0"),
+        (
+            Interval::new(-1.25, 0.75),
+            CenterRadius {
+                fractional_digits: 2,
+            },
+            "-0.25?100",
+        ),
+    ] {
+        let mut output = String::new();
+        write_interval_decimal(value, format, &mut output).unwrap();
+        assert_eq!(output, expected);
+        assert!(subset(value, output.parse::<Interval>().unwrap()));
+    }
+}
+
+#[test]
+fn enclosing_decimal_formats_handle_binary64_extremes() {
+    for value in [
+        Interval::from(f64::from_bits(1)),
+        Interval::from(-f64::from_bits(1)),
+        Interval::new(f64::from_bits(1), f64::MAX),
+        Interval::new(-f64::MAX, f64::from_bits(1)),
+        Interval::new(-f64::MAX, f64::MAX),
+        Interval::new(f64::MAX.next_down(), f64::MAX),
+        Interval::from(-f64::MAX),
+        Interval::new(-0.3, 2.7),
+    ] {
+        for fractional_digits in [0, 1, 17, 1074, 1075] {
+            let fixed = DecimalIntervalFormat::Fixed { fractional_digits };
+            let center = DecimalIntervalFormat::CenterRadius { fractional_digits };
+            let mut fixed_text = String::new();
+            let mut center_text = String::new();
+            write_interval_decimal(value, fixed, &mut fixed_text).unwrap();
+            write_interval_decimal(value, center, &mut center_text).unwrap();
+
+            let fixed_value = fixed_text.parse::<Interval>().unwrap();
+            let center_value = center_text.parse::<Interval>().unwrap();
+            assert!(subset(value, fixed_value));
+            assert_eq!(
+                center_value, fixed_value,
+                "{value} at {fractional_digits} places"
+            );
+            if fractional_digits >= 1074 {
+                assert_eq!(fixed_value, value);
+            }
+        }
+
+        for significant_digits in [1, 17, 800] {
+            let format = DecimalIntervalFormat::Scientific {
+                significant_digits: NonZeroU16::new(significant_digits).unwrap(),
+            };
+            let mut output = String::new();
+            write_interval_decimal(value, format, &mut output).unwrap();
+            let parsed = output.parse::<Interval>().unwrap();
+            assert!(subset(value, parsed));
+            if significant_digits == 800 {
+                assert_eq!(parsed, value);
+            }
+        }
+    }
+}
+
+#[test]
+fn enclosing_decimal_output_keeps_special_literals_and_decorations() {
+    let format = DecimalIntervalFormat::CenterRadius {
+        fractional_digits: 1,
+    };
+    for (value, expected) in [
+        (DecoratedInterval::EMPTY, "[empty]_trv"),
+        (DecoratedInterval::ENTIRE, "[entire]_dac"),
+        (DecoratedInterval::NAI, "[nai]"),
+        (
+            set_dec(Interval::new(f64::NEG_INFINITY, 2.25), Decoration::Def),
+            "[-inf,2.3]_def",
+        ),
+        (
+            set_dec(Interval::new(0.25, f64::INFINITY), Decoration::Dac),
+            "[0.2,inf]_dac",
+        ),
+        (set_dec(Interval::from(1.25), Decoration::Def), "1.25?5_def"),
+    ] {
+        let mut output = String::new();
+        write_interval_decimal(value, format, &mut output).unwrap();
+        assert_eq!(output, expected);
+        let parsed = output.parse::<DecoratedInterval>().unwrap();
+        assert_eq!(parsed.decoration(), value.decoration());
+        assert!(subset(Interval::from(value), Interval::from(parsed)));
+    }
+
+    let value = DecoratedInterval::from(f64::MAX);
+    let format = DecimalIntervalFormat::Scientific {
+        significant_digits: NonZeroU16::MIN,
+    };
+    let mut output = String::new();
+    write_interval_decimal(value, format, &mut output).unwrap();
+    assert_eq!(output, "[1e308,2e308]_com");
+    let parsed = output.parse::<DecoratedInterval>().unwrap();
+    assert_eq!(parsed.decoration(), Decoration::Dac);
+    assert!(subset(Interval::from(value), Interval::from(parsed)));
+}
 
 #[test]
 fn checked_parsing_reports_causes_and_original_utf8_byte_offsets() {

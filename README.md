@@ -14,6 +14,12 @@ let y = x.sqr();
 assert_eq!(y.bounds(), (1.0, 4.0));
 ```
 
+`Display`, `LowerExp`, and `UpperExp` use ordinary float formatting. A precision
+such as `{:.1}` rounds endpoints to nearest and can narrow the displayed
+interval. Use `write_interval_decimal` with `DecimalIntervalFormat` for
+enclosing decimal endpoints or center-and-radius notation. Use `interval_to_text`
+for exact hexadecimal interchange.
+
 ## Features
 
 - `complex` enables the `ComplexBox` rectangular complex interval API.

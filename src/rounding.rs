@@ -1626,12 +1626,12 @@ struct IntegerLiteral<'a> {
     digits: &'a [u8],
 }
 
-struct ExactDecimal {
+pub struct ExactDecimal {
     /// Decimal digits in little-endian order.
-    digits: [u8; 800],
-    len: usize,
+    pub digits: [u8; 800],
+    pub len: usize,
     /// The value is `digits * 10^shift`.
-    shift: i32,
+    pub shift: i32,
 }
 
 fn strip_number_sign(bytes: &[u8]) -> Option<(bool, &[u8])> {
@@ -1742,15 +1742,18 @@ fn analyze_decimal_literal(literal: &str) -> Option<DecimalLiteral<'_>> {
     clippy::indexing_slicing,
     clippy::unreachable
 )]
-fn exact_decimal_from_float(value: f64) -> ExactDecimal {
-    debug_assert!(value.is_finite() && value != 0.0);
-    let FloatClass::Finite(dyadic) = FloatClass::new(value.abs()) else {
-        unreachable!();
-    };
+pub fn exact_decimal_from_float(value: f64) -> ExactDecimal {
+    debug_assert!(value.is_finite());
     let mut result = ExactDecimal {
         digits: [0; 800],
         len: 0,
         shift: 0,
+    };
+    if value == 0.0 {
+        return result;
+    }
+    let FloatClass::Finite(dyadic) = FloatClass::new(value.abs()) else {
+        unreachable!();
     };
     let mut significand = dyadic.significand;
     while significand != 0 {
@@ -1780,6 +1783,28 @@ fn exact_decimal_from_float(value: f64) -> ExactDecimal {
         }
     }
     result
+}
+
+// Write the digits of a sum or difference from least to most significant.
+// For subtraction, the left input has the greater magnitude.
+#[allow(clippy::arithmetic_side_effects)]
+pub fn sum_decimal_digits(
+    mut left: impl Iterator<Item = u8> + Clone,
+    mut right: impl Iterator<Item = u8> + Clone,
+    subtract: bool,
+) -> impl Iterator<Item = u8> + Clone {
+    let factor = if subtract { -1 } else { 1 };
+    let mut carry = 0_i16;
+    core::iter::from_fn(move || {
+        let (left, right) = (left.next(), right.next());
+        if left.is_none() && right.is_none() {
+            debug_assert!(carry == 0 || carry == 1);
+            return (core::mem::take(&mut carry) == 1).then_some(1);
+        }
+        let column = carry + i16::from(left.unwrap_or(0)) + factor * i16::from(right.unwrap_or(0));
+        carry = column.div_euclid(10);
+        u8::try_from(column.rem_euclid(10)).ok()
+    })
 }
 
 // Decimal lengths and positions are bounded by the representable input

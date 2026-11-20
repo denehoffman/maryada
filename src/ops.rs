@@ -1,6 +1,6 @@
 use crate::{
     DecoratedInterval, Decoration, Interval, IntervalDatum, IntervalSet,
-    rounding::{self, Direction},
+    rounding::{self, Direction, TrigPoint},
     signals::{Signal, SignalSink},
 };
 
@@ -276,8 +276,8 @@ pub fn sin<T: IntervalDatum>(x: T) -> T {
         trig_bare(
             x,
             rounding::sin_bounds,
-            rounding::contains_sin_minimum,
-            rounding::contains_sin_maximum,
+            TrigPoint::SinMinimum,
+            TrigPoint::SinMaximum,
         )
     })
 }
@@ -288,8 +288,8 @@ pub fn cos<T: IntervalDatum>(x: T) -> T {
         trig_bare(
             x,
             rounding::cos_bounds,
-            rounding::contains_cos_minimum,
-            rounding::contains_cos_maximum,
+            TrigPoint::CosMinimum,
+            TrigPoint::CosMaximum,
         )
     })
 }
@@ -1103,8 +1103,8 @@ fn log10_bare(x: Interval) -> BareResult {
 fn trig_bare(
     x: Interval,
     endpoint_bounds: impl Fn(f64) -> (f64, f64),
-    contains_minimum: impl Fn(f64, f64) -> bool,
-    contains_maximum: impl Fn(f64, f64) -> bool,
+    minimum: TrigPoint,
+    maximum: TrigPoint,
 ) -> BareResult {
     if x.is_empty_raw() {
         return empty_result();
@@ -1114,8 +1114,8 @@ fn trig_bare(
     let (lower, upper) = if inf == sup {
         endpoint_bounds(inf)
     } else {
-        let has_minimum = contains_minimum(inf, sup);
-        let has_maximum = contains_maximum(inf, sup);
+        let has_minimum = rounding::contains_trig_point(inf, sup, minimum);
+        let has_maximum = rounding::contains_trig_point(inf, sup, maximum);
         if has_minimum && has_maximum {
             (-1.0, 1.0)
         } else {
@@ -1149,7 +1149,7 @@ fn tan_bare(x: Interval) -> BareResult {
     let sup = x.sup_raw();
     // Nonzero integer multiples of pi/2 are irrational, so a finite
     // binary64 singleton cannot contain a pole.
-    if inf != sup && rounding::contains_tan_pole(inf, sup) {
+    if inf != sup && rounding::contains_trig_point(inf, sup, TrigPoint::TanPole) {
         return BareResult {
             interval: Interval::ENTIRE,
             local: Decoration::Trv,

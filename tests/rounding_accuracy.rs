@@ -110,6 +110,48 @@ fn trig_encloses_huge_singletons_and_wide_intervals() {
 }
 
 #[test]
+fn trig_distinguishes_critical_points_from_nearby_intervals() {
+    for below_pole in [
+        core::f64::consts::FRAC_PI_2,
+        f64::from_bits(0x4319_21fb_5444_2d1e), // binary64 lower bound for (2^50 + 1) * pi/2
+    ] {
+        let above_pole = below_pole.next_up();
+        let below = Interval::new(below_pole.next_down(), below_pole);
+        let above = Interval::new(above_pole, above_pole.next_up());
+
+        let positive = below.tan();
+        let negative = above.tan();
+        assert!(positive.inf() > 0.0 && positive.sup().is_finite());
+        assert!(negative.inf().is_finite() && negative.sup() < 0.0);
+        assert_eq!((-below).tan(), -positive);
+        assert_eq!((-above).tan(), -negative);
+        assert_eq!(
+            DecoratedInterval::from(below).tan().decoration(),
+            Decoration::Com
+        );
+        assert_eq!(
+            Interval::new(below_pole, above_pole).tan(),
+            Interval::ENTIRE
+        );
+    }
+
+    // Binary64 lower bound for (2^50 + 2) * pi/2.
+    let below_cos_minimum = f64::from_bits(0x4319_21fb_5444_2d24);
+    assert!(
+        Interval::new(below_cos_minimum.next_down(), below_cos_minimum)
+            .cos()
+            .inf()
+            > -1.0
+    );
+    assert_eq!(
+        Interval::new(below_cos_minimum, below_cos_minimum.next_up())
+            .cos()
+            .inf(),
+        -1.0
+    );
+}
+
+#[test]
 fn hypot_keeps_exact_norms_across_binary64_exponents() {
     for exponent in [-1074, -1024, -665, 0, 664, 1021] {
         let x = Interval::from(libm::scalbn(3.0, exponent));

@@ -2462,18 +2462,43 @@ fn parse_hex_literal(bytes: &[u8], direction: Direction) -> Option<f64> {
 
 // Certified argument-reduction predicates used by interval kernels.
 
-fn contains_periodic_point(
-    inf: f64,
-    sup: f64,
-    phase_lower: f64,
-    phase_upper: f64,
-    period_lower: f64,
-    period_upper: f64,
-) -> bool {
+#[derive(Clone, Copy)]
+pub enum TrigPoint {
+    SinMinimum,
+    SinMaximum,
+    CosMinimum,
+    CosMaximum,
+    TanPole,
+}
+
+#[allow(
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_precision_loss
+)]
+pub fn contains_trig_point(inf: f64, sup: f64, point: TrigPoint) -> bool {
     if !inf.is_finite() || !sup.is_finite() {
         return true;
     }
 
+    let (phase, phase_quadrant) = match point {
+        TrigPoint::SinMinimum => (-FRAC_PI_2, -1),
+        TrigPoint::SinMaximum | TrigPoint::TanPole => (FRAC_PI_2, 1),
+        TrigPoint::CosMinimum => (PI, 2),
+        TrigPoint::CosMaximum => (0.0, 0),
+    };
+    let (period, period_quadrants) = if matches!(point, TrigPoint::TanPole) {
+        (PI, 2)
+    } else {
+        (TAU, 4)
+    };
+    let (phase_lower, phase_upper) = if phase == 0.0 {
+        (-0.0, 0.0)
+    } else {
+        (phase.next_down(), phase.next_up())
+    };
+    let period_lower = period.next_down();
+    let period_upper = period.next_up();
     let numerator_lower = sub(inf, phase_upper, Direction::Down);
     let numerator_upper = sub(sup, phase_lower, Direction::Up);
     let quotient_lower = f64::min(
@@ -2484,55 +2509,32 @@ fn contains_periodic_point(
         div(numerator_upper, period_lower, Direction::Up),
         div(numerator_upper, period_upper, Direction::Up),
     );
-    libm::ceil(quotient_lower) <= libm::floor(quotient_upper)
-}
+    if libm::ceil(quotient_lower) > libm::floor(quotient_upper) {
+        return false;
+    }
 
-pub fn contains_sin_maximum(inf: f64, sup: f64) -> bool {
-    contains_periodic_point(
-        inf,
-        sup,
-        FRAC_PI_2.next_down(),
-        FRAC_PI_2.next_up(),
-        TAU.next_down(),
-        TAU.next_up(),
-    )
-}
-
-pub fn contains_sin_minimum(inf: f64, sup: f64) -> bool {
-    contains_periodic_point(
-        inf,
-        sup,
-        -FRAC_PI_2.next_up(),
-        -FRAC_PI_2.next_down(),
-        TAU.next_down(),
-        TAU.next_up(),
-    )
-}
-
-pub fn contains_cos_maximum(inf: f64, sup: f64) -> bool {
-    contains_periodic_point(inf, sup, -0.0, 0.0, TAU.next_down(), TAU.next_up())
-}
-
-pub fn contains_cos_minimum(inf: f64, sup: f64) -> bool {
-    contains_periodic_point(
-        inf,
-        sup,
-        PI.next_down(),
-        PI.next_up(),
-        TAU.next_down(),
-        TAU.next_up(),
-    )
-}
-
-pub fn contains_tan_pole(inf: f64, sup: f64) -> bool {
-    contains_periodic_point(
-        inf,
-        sup,
-        FRAC_PI_2.next_down(),
-        FRAC_PI_2.next_up(),
-        PI.next_down(),
-        PI.next_up(),
-    )
+    let width = sub(sup, inf, Direction::Up);
+    if width >= period_lower {
+        return true;
+    }
+    let Some(angle) = reduce_trig(inf) else {
+        return true;
+    };
+    let (remainder_lower, remainder_upper) = angle.remainder;
+    let mut quarter_turns = (phase_quadrant - angle.quadrant).rem_euclid(period_quadrants);
+    if quarter_turns == 0 && remainder_lower > 0.0 {
+        quarter_turns = period_quadrants;
+    }
+    // The first possible point is at the selected quadrant plus at most
+    // four quarter turns. Subtract the upper remainder for a lower bound
+    // on the distance. FRAC_PI_2 is below the exact quarter turn.
+    let distance = fma(
+        quarter_turns as f64,
+        FRAC_PI_2,
+        -remainder_upper,
+        Direction::Down,
+    );
+    distance <= width
 }
 
 #[cfg(test)]

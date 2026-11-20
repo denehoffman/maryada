@@ -6,6 +6,62 @@ use maryada::{
 };
 
 #[test]
+fn hypot_keeps_exact_norms_across_binary64_exponents() {
+    for exponent in [-1074, -1024, -665, 0, 664, 1021] {
+        let x = Interval::from(libm::scalbn(3.0, exponent));
+        let y = Interval::from(libm::scalbn(4.0, exponent));
+        let norm = Interval::from(libm::scalbn(5.0, exponent));
+        assert_eq!(x.hypot(y), norm);
+        assert_eq!((-y).hypot(x), norm);
+    }
+
+    for magnitude in [1e-200, 1e200, f64::MAX] {
+        let x = Interval::from(magnitude);
+        assert_eq!(x.hypot(Interval::ZERO), x);
+        assert_eq!(Interval::ZERO.hypot(-x), x);
+    }
+}
+
+#[test]
+fn hypot_rounds_subnormals_and_tiny_contributions_outward() {
+    let tiny = f64::from_bits(1);
+    let x = Interval::from(tiny);
+    let largest = Interval::from(f64::MAX);
+    assert_eq!(x.hypot(x), Interval::new(tiny, tiny.next_up()));
+    assert_eq!(
+        Interval::ONE.hypot(x),
+        Interval::new(1.0, 1.0_f64.next_up())
+    );
+    assert_eq!(largest.hypot(x), Interval::new(f64::MAX, f64::INFINITY));
+    assert_eq!(
+        largest.hypot(largest),
+        Interval::new(f64::MAX, f64::INFINITY)
+    );
+}
+
+#[test]
+fn hypot_uses_magnitude_extrema_and_preserves_interval_decorations() {
+    assert_eq!(
+        Interval::new(-3.0, 1.0).hypot(Interval::from(4.0)),
+        Interval::new(4.0, 5.0)
+    );
+    assert_eq!(
+        Interval::new(f64::NEG_INFINITY, -3.0).hypot(Interval::new(4.0, f64::INFINITY)),
+        Interval::new(5.0, f64::INFINITY)
+    );
+    let x = DecoratedInterval::from(1e200);
+    assert_eq!(x.hypot(DecoratedInterval::ZERO), x);
+    assert_eq!(x.hypot(DecoratedInterval::EMPTY), DecoratedInterval::EMPTY);
+    assert!(
+        DecoratedInterval::NAI
+            .hypot(DecoratedInterval::EMPTY)
+            .is_nai()
+    );
+    let y = DecoratedInterval::from(f64::MAX);
+    assert_eq!(decoration_part(y.hypot(y)), Decoration::Dac);
+}
+
+#[test]
 fn hyperbolic_enclosures_keep_binary64_spacing_at_tiny_inputs() {
     let limit = f64::from_bits(0x3e40_0000_0000_0000);
     for value in [f64::from_bits(1), f64::MIN_POSITIVE, limit] {

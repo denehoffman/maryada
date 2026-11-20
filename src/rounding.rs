@@ -537,15 +537,21 @@ fn sqrt_finite(value: Dyadic, direction: Direction) -> f64 {
         significand <<= 1;
         exponent -= 1;
     }
-    let radicand = significand << 72;
+    sqrt_dyadic(significand << 72, exponent - 72, false, direction)
+}
+
+#[allow(clippy::arithmetic_side_effects)]
+fn sqrt_dyadic(radicand: u128, exponent: i32, sticky: bool, direction: Direction) -> f64 {
+    debug_assert_eq!(exponent & 1, 0);
     let root = radicand.isqrt();
-    let remainder = radicand - root * root;
+    // A tail smaller than one cannot change the integer square root. It
+    // still makes the root inexact when the retained radicand is a square.
     WideDyadic {
         negative: false,
         significand: root,
-        exponent: exponent / 2 - (72 / 2),
+        exponent: exponent / 2,
     }
-    .pack(remainder != 0, direction)
+    .pack(sticky || root * root != radicand, direction)
 }
 
 pub fn sqrt(x: f64, direction: Direction) -> f64 {
@@ -556,6 +562,44 @@ pub fn sqrt(x: f64, direction: Direction) -> f64 {
         FloatClass::Infinity { negative: false } => f64::INFINITY,
         FloatClass::Zero { negative } => signed_zero(negative),
         FloatClass::Finite(value) => sqrt_finite(value, direction),
+    }
+}
+
+#[allow(clippy::arithmetic_side_effects, clippy::expect_used)]
+pub fn hypot(x: f64, y: f64, direction: Direction) -> f64 {
+    match (
+        WideFloatClass::exact_product(x, x),
+        WideFloatClass::exact_product(y, y),
+    ) {
+        (WideFloatClass::NaN, _) | (_, WideFloatClass::NaN) => f64::NAN,
+        (WideFloatClass::Infinity { .. }, _) | (_, WideFloatClass::Infinity { .. }) => {
+            f64::INFINITY
+        }
+        (WideFloatClass::Zero { .. }, _) => y.abs(),
+        (_, WideFloatClass::Zero { .. }) => x.abs(),
+        (WideFloatClass::Finite(x), WideFloatClass::Finite(y)) => {
+            if x.exponent == y.exponent {
+                // The inputs already share a grid. Normal inputs have
+                // 53-bit significands and subnormals use the minimum
+                // binary64 quantum, so the root needs no finer grid.
+                return sqrt_dyadic(x.significand + y.significand, x.exponent, false, direction);
+            }
+            // Scale the exact products with an even power of two so the
+            // square root can be rescaled exactly. Each projection uses at
+            // most 127 bits and the sum fits in 128. The dominant square has
+            // at most 106 bits, so at most one projection discards a tail.
+            let top = x.top_exponent().max(y.top_exponent());
+            let quantum = (top - 125) & !1;
+            let (x, x_sticky) = WideDyadic::project(x, quantum);
+            let (y, y_sticky) = WideDyadic::project(y, quantum);
+            debug_assert!(!(x_sticky && y_sticky));
+            sqrt_dyadic(
+                x + y,
+                i32::try_from(quantum).expect("hypot exponent fits in i32"),
+                x_sticky || y_sticky,
+                direction,
+            )
+        }
     }
 }
 

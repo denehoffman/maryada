@@ -134,6 +134,7 @@ fn benchmark_scalar(criterion: &mut Criterion) {
         measure!("mul", |x: &ScalarInput| x.left * x.right);
         measure!("div", |x: &ScalarInput| x.left / x.right);
         measure!("fma", |x: &ScalarInput| x.left.mul_add(x.right, x.addend));
+        measure!("hypot", |x: &ScalarInput| x.left.hypot(x.right));
         measure!("exp", |x: &ScalarInput| x.left.exp());
         measure!("log", |x: &ScalarInput| x.left.log());
         measure!("sin", |x: &ScalarInput| x.left.sin());

@@ -2,7 +2,9 @@ use core::{cmp::Ordering, fmt, ops, str::FromStr};
 
 use crate::{
     DecoratedInterval, Decoration, Interval, IntervalDatum, ParseIntervalError, Signal,
-    SignalFlags, SignalSink, enclosure::EnclosureOps,
+    SignalFlags, SignalSink,
+    enclosure::EnclosureOps,
+    rounding::{self, Direction},
 };
 
 impl Interval {
@@ -526,10 +528,17 @@ pub trait IntervalOps:
         crate::max(self, other)
     }
 
-    /// Encloses `sqrt(self² + other²)`.
+    /// Returns the tight enclosure of `sqrt(self² + other²)`.
     #[must_use]
     fn hypot(self, other: Self) -> Self {
-        crate::sqrt(crate::add(crate::sqr(self), crate::sqr(other)))
+        if self.__is_nai() || other.__is_nai() || self.is_empty() || other.is_empty() {
+            return self.__binary_result(other, Interval::EMPTY, Decoration::Trv);
+        }
+        let interval = Interval::from_valid_bounds(
+            rounding::hypot(self.mig(), other.mig(), Direction::Down),
+            rounding::hypot(self.mag(), other.mag(), Direction::Up),
+        );
+        self.__binary_result(other, interval, Decoration::Com)
     }
 
     /// Computes cancellative subtraction `self ⊖ other`.

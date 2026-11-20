@@ -1026,7 +1026,7 @@ pub fn sin_bounds(x: f64) -> Bounds {
     if x == 0.0 {
         return (-0.0, 0.0);
     }
-    reduced_trig_bounds(x).map_or((-1.0, 1.0), |(sine, _)| sine)
+    reduce_trig(x).map_or((-1.0, 1.0), |angle| angle.bounds(TrigFunction::Sin))
 }
 
 pub fn cos_bounds(x: f64) -> Bounds {
@@ -1036,7 +1036,7 @@ pub fn cos_bounds(x: f64) -> Bounds {
     if x == 0.0 {
         return (1.0, 1.0);
     }
-    reduced_trig_bounds(x).map_or((-1.0, 1.0), |(_, cosine)| cosine)
+    reduce_trig(x).map_or((-1.0, 1.0), |angle| angle.bounds(TrigFunction::Cos))
 }
 
 pub fn tan(x: f64, direction: Direction) -> f64 {
@@ -1046,18 +1046,20 @@ pub fn tan(x: f64, direction: Direction) -> f64 {
     if x == 0.0 {
         return direction.exact_zero();
     }
-    let Some(((sin_lower, sin_upper), (cos_lower, cos_upper))) = reduced_trig_bounds(x) else {
+    let Some(angle) = reduce_trig(x) else {
         return match direction {
             Direction::Down => f64::NEG_INFINITY,
             Direction::Up => f64::INFINITY,
         };
     };
+    let (cos_lower, cos_upper) = angle.bounds(TrigFunction::Cos);
     if cos_lower <= 0.0 && cos_upper >= 0.0 {
         return match direction {
             Direction::Down => f64::NEG_INFINITY,
             Direction::Up => f64::INFINITY,
         };
     }
+    let (sin_lower, sin_upper) = angle.bounds(TrigFunction::Sin);
     let candidates = [
         div(sin_lower, cos_lower, direction),
         div(sin_lower, cos_upper, direction),
@@ -1072,10 +1074,52 @@ pub fn tan(x: f64, direction: Direction) -> f64 {
 
 type Bounds = (f64, f64);
 
+#[derive(Clone, Copy)]
+enum TrigFunction {
+    Sin,
+    Cos,
+}
+
+#[derive(Clone, Copy)]
+struct ReducedAngle {
+    remainder: Bounds,
+    quadrant: i64,
+}
+
+impl ReducedAngle {
+    fn bounds(self, function: TrigFunction) -> Bounds {
+        // Cosine uses the next quadrant without changing the remainder.
+        let quadrant = match function {
+            TrigFunction::Sin => self.quadrant,
+            TrigFunction::Cos => self.quadrant.wrapping_add(1).rem_euclid(4),
+        };
+        let (a, b) = self.remainder;
+        let (lower, upper) = if quadrant & 1 == 0 {
+            (sin_series(a, Direction::Down), sin_series(b, Direction::Up))
+        } else {
+            let lower = f64::min(
+                cos_series(a, Direction::Down),
+                cos_series(b, Direction::Down),
+            );
+            let upper = if a <= 0.0 && b >= 0.0 {
+                1.0
+            } else {
+                f64::max(cos_series(a, Direction::Up), cos_series(b, Direction::Up))
+            };
+            (lower, upper)
+        };
+        if quadrant < 2 {
+            (lower, upper)
+        } else {
+            (-upper, -lower)
+        }
+    }
+}
+
 // The quotient is rounded to an exactly representable integer before this
 // conversion, and the bound limits it to the range of `i64`.
 #[allow(clippy::as_conversions, clippy::cast_possible_truncation)]
-fn reduced_trig_bounds(x: f64) -> Option<(Bounds, Bounds)> {
+fn reduce_trig(x: f64) -> Option<ReducedAngle> {
     debug_assert!(x.is_finite());
     // Any exactly represented integer multiple is valid for the reduction.
     // The subsequent remainder check rejects a quotient whose binary64
@@ -1101,29 +1145,9 @@ fn reduced_trig_bounds(x: f64) -> Option<(Bounds, Bounds)> {
         return None;
     }
 
-    let sine = (
-        sin_series(remainder_lower, Direction::Down),
-        sin_series(remainder_upper, Direction::Up),
-    );
-    let cosine_lower = f64::min(
-        cos_series(remainder_lower, Direction::Down),
-        cos_series(remainder_upper, Direction::Down),
-    );
-    let cosine_upper = if remainder_lower <= 0.0 && remainder_upper >= 0.0 {
-        1.0
-    } else {
-        f64::max(
-            cos_series(remainder_lower, Direction::Up),
-            cos_series(remainder_upper, Direction::Up),
-        )
-    };
-    let cosine = (cosine_lower, cosine_upper);
-    let negate = |(lower, upper): Bounds| (-upper, -lower);
-    Some(match multiple_integer.rem_euclid(4) {
-        0 => (sine, cosine),
-        1 => (cosine, negate(sine)),
-        2 => (negate(sine), negate(cosine)),
-        _ => (negate(cosine), sine),
+    Some(ReducedAngle {
+        remainder: (remainder_lower, remainder_upper),
+        quadrant: multiple_integer.rem_euclid(4),
     })
 }
 

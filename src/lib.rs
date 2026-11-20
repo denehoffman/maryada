@@ -67,10 +67,10 @@ pub use linalg::{DIntervalMatrix, DIntervalRowVector, DIntervalVector};
 #[cfg(feature = "linalg")]
 pub use linalg::{
     EpsilonInflationSolver, GaussSeidelSolver, GaussianEliminationSolver, HansenBliekRohnSolver,
-    InitialEnclosure, IntervalMatrix, JacobiSolver, KrawczykSolver, MatrixShapeError,
-    OIntervalMatrix, OIntervalRowVector, OIntervalVector, Preconditioned, Preconditioner,
-    PreparedEpsilonInflation, SIntervalMatrix, SIntervalRowVector, SIntervalVector, SolveError,
-    Solver, StoppingTolerance,
+    InitialEnclosure, IntervalMatrix, JacobiSolver, KrawczykError, KrawczykOutcome, KrawczykSolver,
+    MatrixShapeError, OIntervalMatrix, OIntervalRowVector, OIntervalVector, Preconditioned,
+    Preconditioner, PreparedEpsilonInflation, SIntervalMatrix, SIntervalRowVector, SIntervalVector,
+    SolveError, Solver, StoppingTolerance, krawczyk_contract,
 };
 #[cfg(all(feature = "linalg", feature = "num-complex"))]
 pub use linalg::{

@@ -1395,6 +1395,9 @@ pub use iterative::{
     GaussSeidelSolver, InitialEnclosure, JacobiSolver, KrawczykSolver, StoppingTolerance,
 };
 
+mod nonlinear;
+pub use nonlinear::{KrawczykError, KrawczykOutcome, krawczyk_contract};
+
 mod preconditioned;
 pub use preconditioned::{Preconditioned, Preconditioner};
 

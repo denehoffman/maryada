@@ -1,5 +1,55 @@
 # Changelog
 
+## [0.3.0](https://github.com/denehoffman/maryada/compare/v0.2.1...v0.3.0) (2026-11-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* **branch:** Rename gap_tolerance and its builders to use absolute_gap_tolerance. GlobalMinimizerOptions now includes relative_gap_tolerance, which defaults to 1e-6 and can be disabled independently.
+* **branch:** BranchAndBound::step requires a Clone domain so it can restore the domain after a failed contraction.
+
+### Features
+
+* **branch:** Enable absolute and relative gap stopping ([73dd048](https://github.com/denehoffman/maryada/commit/73dd04807422954752ad7584b18899427598f7ed))
+* **branch:** Expose the best evaluated singleton sample ([56e35ba](https://github.com/denehoffman/maryada/commit/56e35badafd198d1422304cb865faeb8cf95403d))
+* **branch:** Isolate scalar roots with interval Newton steps ([98e9926](https://github.com/denehoffman/maryada/commit/98e99262af73029b7a211596132e6d307400d033))
+* **interval:** Add checked scalar constructors ([cad32ec](https://github.com/denehoffman/maryada/commit/cad32ec5811eadf93ed7f6b846aeec021d5510f3))
+* **interval:** Add directed log1p and expm1 ([f3708cd](https://github.com/denehoffman/maryada/commit/f3708cd6d8345a50c29f6596d16655b9bcb466e2))
+* **interval:** Add scalar automatic differentiation ([5a4a39b](https://github.com/denehoffman/maryada/commit/5a4a39bc8b5bcef3697751c03019e9879cdafa76))
+* **interval:** Add tight mathematical constant enclosures ([ae3328b](https://github.com/denehoffman/maryada/commit/ae3328bee0ffac3ff6e5232b0bd65fc63bae1bda))
+* **interval:** Preserve split division and reciprocal results ([f4e50ce](https://github.com/denehoffman/maryada/commit/f4e50ce767164eeed7a9360c5afdf2558a4d00b3))
+* **linalg:** Add certified Krawczyk contraction for nonlinear systems ([4f2dbb7](https://github.com/denehoffman/maryada/commit/4f2dbb749be15aa1794061ae4d28ac208d761281))
+* **linalg:** Check runtime matrix operation dimensions ([6fe8d8e](https://github.com/denehoffman/maryada/commit/6fe8d8eec9ab905a8bdf43e92dbb95d5d7a99f4e))
+* **serde:** Serialize intervals via interchange formats ([27c42f3](https://github.com/denehoffman/maryada/commit/27c42f31c7410045d457fbcc30942e1dc42aac61))
+* **text:** Add checked parsing with typed diagnostics ([3dcafbf](https://github.com/denehoffman/maryada/commit/3dcafbf787d703e41e17d77a60864dfb8b59ad06))
+* **text:** Add outward-rounded decimal interval formatting ([7265c7e](https://github.com/denehoffman/maryada/commit/7265c7e8b44bc0558be3e70f91955a4782f1b3f1))
+
+
+### Bug fixes
+
+* **branch:** Bisect the widest splittable coordinate ([337b0a1](https://github.com/denehoffman/maryada/commit/337b0a12a68a17d1beed816fa38440b1307d714d))
+* **branch:** Preserve pending domains after callback errors ([ea7bc3a](https://github.com/denehoffman/maryada/commit/ea7bc3a788e2fe341112215e1535740609853e2b))
+* **branch:** Round the optimality gap upward ([ad3cd25](https://github.com/denehoffman/maryada/commit/ad3cd258d5c93dfb6932d90a993b463c2f53cc17))
+* **complex:** Include zero in square root ([cab704e](https://github.com/denehoffman/maryada/commit/cab704ec3651e682c2ee3d2d4c709393adb9adab))
+* **complex:** Scale division and reciprocal across binary64 ranges ([8b940cf](https://github.com/denehoffman/maryada/commit/8b940cf0f2cf5db9fee63a22e5f7e817efabbb00))
+* **docs:** Make the README example compile ([afb4317](https://github.com/denehoffman/maryada/commit/afb4317b527c755c02fdf2c3c3e918d506326585))
+* **interval:** Compare cancellation widths exactly ([e5df0db](https://github.com/denehoffman/maryada/commit/e5df0db51d7344fde254bd198025c8dba24f9308))
+* **interval:** Compute tight hypot bounds across binary64 scales ([b6fe695](https://github.com/denehoffman/maryada/commit/b6fe695bfe62577bbd88f3a297bc900fa2b606e1))
+* **interval:** Preserve empty intervals during promotion ([2bb26d3](https://github.com/denehoffman/maryada/commit/2bb26d3e167827b6a529753f932f6fb62d389cd2))
+* **interval:** Tighten cancellation-prone hyperbolic enclosures ([5a900fa](https://github.com/denehoffman/maryada/commit/5a900fa9f4fe1c778a7bbf78af3d9b5768f6b4cd))
+* **rounding:** Enclose sums near binary64 overflow ([4c04da8](https://github.com/denehoffman/maryada/commit/4c04da8586fe22cb164e868cfe2fcec3c6f86b56))
+* **text:** Preserve tight hulls for uncertain literals ([554a4ef](https://github.com/denehoffman/maryada/commit/554a4ef77f649814cdef0fee160b8add89b68c4a))
+* **text:** Validate interval endpoint ordering ([1b31ce3](https://github.com/denehoffman/maryada/commit/1b31ce39606e2f5554055f5ef43b84f894fdc0c0))
+
+
+### Performance improvements
+
+* **bench:** Add Criterion performance benchmarks ([8f09a97](https://github.com/denehoffman/maryada/commit/8f09a972f94bee100d8cb7195a01be18f3e2b735))
+* **branch:** Avoid frontier snapshots during gap checks ([44bb9cc](https://github.com/denehoffman/maryada/commit/44bb9ccac9fddc3af341f84b11dd9c8a946315aa))
+* **interval:** Evaluate only extremal arithmetic endpoints ([d2b9db0](https://github.com/denehoffman/maryada/commit/d2b9db09aefadbef0841efb05904c0b2f7802a6c))
+* **linalg:** Reuse epsilon-inflation setup across solves ([50384b8](https://github.com/denehoffman/maryada/commit/50384b8967b265e5029479163fa24bbe16fd4edc))
+* **rounding:** Certify hardware quotients with exact residuals ([21d7bfd](https://github.com/denehoffman/maryada/commit/21d7bfdde79eae5bb4aac7cb49ed4191cad59d2b))
+
 ## [0.2.1](https://github.com/denehoffman/maryada/compare/v0.2.0...v0.2.1) (2026-08-17)
 
 

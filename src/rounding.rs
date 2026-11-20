@@ -496,6 +496,54 @@ fn div_finite(numerator: Dyadic, denominator: Dyadic, scale: i32, direction: Dir
     .pack(remainder != 0, direction)
 }
 
+#[allow(clippy::arithmetic_side_effects)]
+fn div_normal(
+    x: f64,
+    y: f64,
+    numerator: Dyadic,
+    denominator: Dyadic,
+    direction: Direction,
+) -> Option<f64> {
+    const HIDDEN_BIT: u64 = 1 << 52;
+    if numerator.significand < HIDDEN_BIT || denominator.significand < HIDDEN_BIT {
+        return None;
+    }
+    let quotient = x / y;
+    let FloatClass::Finite(candidate) = FloatClass::new(quotient) else {
+        return None;
+    };
+    if candidate.significand < HIDDEN_BIT {
+        return None;
+    }
+
+    // Align |x| with the exact product |q * y|. Normal inputs have 53-bit
+    // significands, so the usual nearby quotient needs a shift of 52 or 53.
+    let shift = numerator.exponent - denominator.exponent - candidate.exponent;
+    if !(52..=53).contains(&shift) {
+        return None;
+    }
+    let dividend = u128::from(numerator.significand) << shift;
+    let product = u128::from(candidate.significand) * u128::from(denominator.significand);
+
+    // Half the quotient's quantum is no larger than either neighbor spacing,
+    // even at a binade boundary. This exact residual check certifies that the
+    // quotient and its neighbor in the residual's direction bracket x / y.
+    if 2 * dividend.abs_diff(product) >= u128::from(denominator.significand) {
+        return None;
+    }
+    let order = dividend.cmp(&product);
+    let order = if candidate.negative {
+        order.reverse()
+    } else {
+        order
+    };
+    Some(match (direction, order) {
+        (Direction::Down, Ordering::Less) => quotient.next_down(),
+        (Direction::Up, Ordering::Greater) => quotient.next_up(),
+        _ => quotient,
+    })
+}
+
 pub fn div(x: f64, y: f64, direction: Direction) -> f64 {
     match (FloatClass::new(x), FloatClass::new(y)) {
         (FloatClass::NaN, _)
@@ -516,7 +564,9 @@ pub fn div(x: f64, y: f64, direction: Direction) -> f64 {
         | (FloatClass::Finite(Dyadic { negative: a, .. }), FloatClass::Infinity { negative: b }) => {
             signed_zero(a ^ b)
         }
-        (FloatClass::Finite(a), FloatClass::Finite(b)) => div_finite(a, b, 0, direction),
+        (FloatClass::Finite(a), FloatClass::Finite(b)) => {
+            div_normal(x, y, a, b, direction).unwrap_or_else(|| div_finite(a, b, 0, direction))
+        }
     }
 }
 
@@ -2334,4 +2384,85 @@ pub fn contains_tan_pole(inf: f64, sup: f64) -> bool {
         PI.next_down(),
         PI.next_up(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Direction, FloatClass, div, div_finite, div_normal};
+
+    #[test]
+    fn normal_division_certifies_exact_and_inexact_candidates() {
+        for (x, y) in [(1.0, 2.0), (1.0, 3.0), (-1.0, 3.0), (3.0, -7.0)] {
+            let (FloatClass::Finite(a), FloatClass::Finite(b)) =
+                (FloatClass::new(x), FloatClass::new(y))
+            else {
+                continue;
+            };
+            for direction in [Direction::Down, Direction::Up] {
+                assert_eq!(
+                    div_normal(x, y, a, b, direction).map(f64::to_bits),
+                    Some(div_finite(a, b, 0, direction).to_bits())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn directed_division_matches_integer_quotients_bit_for_bit() {
+        const EXPONENT_BITS: u64 = 0x7ff0_0000_0000_0000;
+        let check = |x, y| {
+            let (FloatClass::Finite(a), FloatClass::Finite(b)) =
+                (FloatClass::new(x), FloatClass::new(y))
+            else {
+                return;
+            };
+            for direction in [Direction::Down, Direction::Up] {
+                assert_eq!(
+                    div(x, y, direction).to_bits(),
+                    div_finite(a, b, 0, direction).to_bits(),
+                    "{x} / {y} toward {direction:?}"
+                );
+            }
+        };
+
+        let boundaries = [
+            f64::from_bits(1),
+            f64::MIN_POSITIVE.next_down(),
+            f64::MIN_POSITIVE,
+            f64::MIN_POSITIVE.next_up(),
+            0.5,
+            1.0_f64.next_down(),
+            1.0,
+            1.0_f64.next_up(),
+            2.0,
+            f64::MAX.next_down(),
+            f64::MAX,
+        ];
+        for x in boundaries {
+            for y in boundaries {
+                for x in [x, -x] {
+                    for y in [y, -y] {
+                        check(x, y);
+                    }
+                }
+            }
+        }
+
+        let mut state = 0x78db_27b6_ec3f_a9d1_u64;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            state
+        };
+        for _ in 0..32_768 {
+            let x = next();
+            let y = next();
+            check(f64::from_bits(x), f64::from_bits(y));
+            // Correlated exponents exercise both shifts without falling
+            // back because the quotient overflowed or became subnormal.
+            let same_binade = (x & EXPONENT_BITS) | (y & !EXPONENT_BITS);
+            check(f64::from_bits(x), f64::from_bits(same_binade));
+        }
+    }
 }

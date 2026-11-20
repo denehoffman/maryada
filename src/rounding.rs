@@ -1019,42 +1019,24 @@ fn log_over_constant(
 
 // Trigonometric functions.
 
-pub fn sin(x: f64, direction: Direction) -> f64 {
+pub fn sin_bounds(x: f64) -> Bounds {
     if !x.is_finite() {
-        return f64::NAN;
+        return (f64::NAN, f64::NAN);
     }
     if x == 0.0 {
-        return direction.exact_zero();
+        return (-0.0, 0.0);
     }
-    let Some(((lower, upper), _)) = reduced_trig_bounds(x) else {
-        return match direction {
-            Direction::Down => -1.0,
-            Direction::Up => 1.0,
-        };
-    };
-    match direction {
-        Direction::Down => lower,
-        Direction::Up => upper,
-    }
+    reduced_trig_bounds(x).map_or((-1.0, 1.0), |(sine, _)| sine)
 }
 
-pub fn cos(x: f64, direction: Direction) -> f64 {
+pub fn cos_bounds(x: f64) -> Bounds {
     if !x.is_finite() {
-        return f64::NAN;
+        return (f64::NAN, f64::NAN);
     }
     if x == 0.0 {
-        return 1.0;
+        return (1.0, 1.0);
     }
-    let Some((_, (lower, upper))) = reduced_trig_bounds(x) else {
-        return match direction {
-            Direction::Down => -1.0,
-            Direction::Up => 1.0,
-        };
-    };
-    match direction {
-        Direction::Down => lower,
-        Direction::Up => upper,
-    }
+    reduced_trig_bounds(x).map_or((-1.0, 1.0), |(_, cosine)| cosine)
 }
 
 pub fn tan(x: f64, direction: Direction) -> f64 {

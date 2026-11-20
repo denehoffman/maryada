@@ -272,12 +272,26 @@ pub fn log10<T: IntervalDatum>(x: T) -> T {
 
 /// Encloses the sine of every value in `x`.
 pub fn sin<T: IntervalDatum>(x: T) -> T {
-    unary(x, sin_bare)
+    unary(x, |x| {
+        trig_bare(
+            x,
+            rounding::sin_bounds,
+            rounding::contains_sin_minimum,
+            rounding::contains_sin_maximum,
+        )
+    })
 }
 
 /// Encloses the cosine of every value in `x`.
 pub fn cos<T: IntervalDatum>(x: T) -> T {
-    unary(x, cos_bare)
+    unary(x, |x| {
+        trig_bare(
+            x,
+            rounding::cos_bounds,
+            rounding::contains_cos_minimum,
+            rounding::contains_cos_maximum,
+        )
+    })
 }
 
 /// Encloses the defined tangent values over `x`.
@@ -1086,58 +1100,40 @@ fn log10_bare(x: Interval) -> BareResult {
     BareResult { interval, local }
 }
 
-fn sin_bare(x: Interval) -> BareResult {
+fn trig_bare(
+    x: Interval,
+    endpoint_bounds: impl Fn(f64) -> (f64, f64),
+    contains_minimum: impl Fn(f64, f64) -> bool,
+    contains_maximum: impl Fn(f64, f64) -> bool,
+) -> BareResult {
     if x.is_empty_raw() {
         return empty_result();
     }
     let inf = x.inf_raw();
     let sup = x.sup_raw();
-    let lower = if rounding::contains_sin_minimum(inf, sup) {
-        -1.0
+    let has_minimum = contains_minimum(inf, sup);
+    let has_maximum = contains_maximum(inf, sup);
+    let interval = if has_minimum && has_maximum {
+        Interval::from_valid_bounds(-1.0, 1.0)
     } else {
-        f64::min(
-            rounding::sin(inf, Direction::Down),
-            rounding::sin(sup, Direction::Down),
-        )
+        let (inf_lower, inf_upper) = endpoint_bounds(inf);
+        let (sup_lower, sup_upper) = if inf == sup {
+            (inf_lower, inf_upper)
+        } else {
+            endpoint_bounds(sup)
+        };
+        let lower = if has_minimum {
+            -1.0
+        } else {
+            f64::min(inf_lower, sup_lower)
+        };
+        let upper = if has_maximum {
+            1.0
+        } else {
+            f64::max(inf_upper, sup_upper)
+        };
+        Interval::from_valid_bounds(lower, upper)
     };
-    let upper = if rounding::contains_sin_maximum(inf, sup) {
-        1.0
-    } else {
-        f64::max(
-            rounding::sin(inf, Direction::Up),
-            rounding::sin(sup, Direction::Up),
-        )
-    };
-    let interval = Interval::from_valid_bounds(lower, upper);
-    BareResult {
-        interval,
-        local: continuous_unary_decoration(x, interval),
-    }
-}
-
-fn cos_bare(x: Interval) -> BareResult {
-    if x.is_empty_raw() {
-        return empty_result();
-    }
-    let inf = x.inf_raw();
-    let sup = x.sup_raw();
-    let lower = if rounding::contains_cos_minimum(inf, sup) {
-        -1.0
-    } else {
-        f64::min(
-            rounding::cos(inf, Direction::Down),
-            rounding::cos(sup, Direction::Down),
-        )
-    };
-    let upper = if rounding::contains_cos_maximum(inf, sup) {
-        1.0
-    } else {
-        f64::max(
-            rounding::cos(inf, Direction::Up),
-            rounding::cos(sup, Direction::Up),
-        )
-    };
-    let interval = Interval::from_valid_bounds(lower, upper);
     BareResult {
         interval,
         local: continuous_unary_decoration(x, interval),

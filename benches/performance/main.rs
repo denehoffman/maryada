@@ -138,6 +138,7 @@ fn benchmark_scalar(criterion: &mut Criterion) {
         measure!("exp", |x: &ScalarInput| x.left.exp());
         measure!("log", |x: &ScalarInput| x.left.log());
         measure!("sin", |x: &ScalarInput| x.left.sin());
+        measure!("cos", |x: &ScalarInput| x.left.cos());
         measure!("tan", |x: &ScalarInput| x.left.tan());
     }
 }

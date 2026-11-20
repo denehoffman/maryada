@@ -481,7 +481,7 @@ pub fn mul(x: f64, y: f64, direction: Direction) -> f64 {
 }
 
 #[allow(clippy::arithmetic_side_effects)]
-fn div_finite(numerator: Dyadic, denominator: Dyadic, direction: Direction) -> f64 {
+fn div_finite(numerator: Dyadic, denominator: Dyadic, scale: i32, direction: Direction) -> f64 {
     let numerator = numerator.normalize();
     let denominator = denominator.normalize();
     let scaled = u128::from(numerator.significand) << 74;
@@ -491,7 +491,7 @@ fn div_finite(numerator: Dyadic, denominator: Dyadic, direction: Direction) -> f
     WideDyadic {
         negative: numerator.negative ^ denominator.negative,
         significand: quotient,
-        exponent: numerator.exponent - denominator.exponent - 74,
+        exponent: numerator.exponent - denominator.exponent - 74 + scale,
     }
     .pack(remainder != 0, direction)
 }
@@ -516,8 +516,29 @@ pub fn div(x: f64, y: f64, direction: Direction) -> f64 {
         | (FloatClass::Finite(Dyadic { negative: a, .. }), FloatClass::Infinity { negative: b }) => {
             signed_zero(a ^ b)
         }
-        (FloatClass::Finite(a), FloatClass::Finite(b)) => div_finite(a, b, direction),
+        (FloatClass::Finite(a), FloatClass::Finite(b)) => div_finite(a, b, 0, direction),
     }
+}
+
+#[cfg(feature = "complex")]
+pub fn div_scaled(x: f64, y: f64, scale: i32, direction: Direction) -> f64 {
+    if let (FloatClass::Finite(x), FloatClass::Finite(y)) = (FloatClass::new(x), FloatClass::new(y))
+    {
+        div_finite(x, y, scale, direction)
+    } else {
+        div(x, y, direction)
+    }
+}
+
+#[cfg(feature = "complex")]
+#[allow(clippy::arithmetic_side_effects)]
+pub fn scale_pow2(value: f64, scale: i32, direction: Direction) -> f64 {
+    let FloatClass::Finite(value) = FloatClass::new(value) else {
+        return value;
+    };
+    let mut wide = WideDyadic::from(value);
+    wide.exponent += scale;
+    wide.pack(false, direction)
 }
 
 pub fn recip(x: f64, direction: Direction) -> f64 {

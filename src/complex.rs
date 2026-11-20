@@ -5,7 +5,11 @@ use core::{
 #[cfg(feature = "num-complex")]
 use num_complex::Complex64;
 
-use crate::{DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalOps, SignalSink};
+use crate::{
+    DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalOps, SignalSink,
+    ops::div_interval,
+    rounding::{self, Direction, FloatClass},
+};
 
 #[derive(Copy, Clone, Debug)]
 /// A rectangular complex interval with independent real and imaginary components.
@@ -60,11 +64,18 @@ impl<I: IntervalOps> EnclosureOps for ComplexBox<I> {
     }
 
     fn recip(self) -> Self {
-        let denominator = Add::add(self.re.sqr(), self.im.sqr());
-        Self::new(
-            Div::div(self.re, denominator),
-            Div::div(Neg::neg(self.im), denominator),
-        )
+        if self.re.equal(I::ZERO) || self.im.equal(I::ZERO) {
+            return Div::div(Self::ONE, self);
+        }
+        let denominator = self.norm_sqr();
+        if denominator.inf() >= f64::MIN_POSITIVE && denominator.sup().is_finite() {
+            Self::new(
+                Div::div(self.re, denominator),
+                Div::div(Neg::neg(self.im), denominator),
+            )
+        } else {
+            Div::div(Self::ONE, self)
+        }
     }
 
     fn sqr(self) -> Self {
@@ -528,17 +539,100 @@ fn mul_complex_boxes<I: IntervalOps>(lhs: ComplexBox<I>, rhs: ComplexBox<I>) -> 
 }
 
 fn div_complex_boxes<I: IntervalOps>(lhs: ComplexBox<I>, rhs: ComplexBox<I>) -> ComplexBox<I> {
-    let denominator = Add::add(rhs.re.sqr(), rhs.im.sqr());
+    let lhs_dec = lhs
+        .re
+        .__binary_result(lhs.im, Interval::ZERO, Decoration::Com);
+    let rhs_dec = rhs
+        .re
+        .__binary_result(rhs.im, Interval::ZERO, Decoration::Com);
+    if lhs.is_empty() || rhs.is_empty() || lhs.is_nai() || rhs.is_nai() {
+        let empty = lhs_dec.__binary_result(rhs_dec, Interval::EMPTY, Decoration::Trv);
+        return ComplexBox::new(empty, empty);
+    }
+
+    let lhs = ComplexBox::new(lhs.re.__interval(), lhs.im.__interval());
+    let rhs = ComplexBox::new(rhs.re.__interval(), rhs.im.__interval());
+    let distance = rhs.re.mig().max(rhs.im.mig());
+    let local = if distance == 0.0 {
+        Decoration::Trv
+    } else {
+        Decoration::Com
+    };
+    let quotient = if rhs.im == Interval::ZERO {
+        ComplexBox::new(Div::div(lhs.re, rhs.re), Div::div(lhs.im, rhs.re))
+    } else if rhs.re == Interval::ZERO {
+        ComplexBox::new(Div::div(lhs.im, rhs.im), Div::div(Neg::neg(lhs.re), rhs.im))
+    } else {
+        div_non_axis_boxes(lhs, rhs, distance)
+    };
     ComplexBox::new(
-        Div::div(
-            Add::add(Mul::mul(lhs.re, rhs.re), Mul::mul(lhs.im, rhs.im)),
-            denominator,
-        ),
-        Div::div(
-            Sub::sub(Mul::mul(lhs.im, rhs.re), Mul::mul(lhs.re, rhs.im)),
-            denominator,
-        ),
+        lhs_dec.__binary_result(rhs_dec, quotient.re, local),
+        lhs_dec.__binary_result(rhs_dec, quotient.im, local),
     )
+}
+
+#[allow(clippy::arithmetic_side_effects)]
+fn div_non_axis_boxes(
+    lhs: ComplexBox<Interval>,
+    rhs: ComplexBox<Interval>,
+    distance: f64,
+) -> ComplexBox<Interval> {
+    let lhs_exponent = division_exponent(lhs.re.mag().max(lhs.im.mag()));
+    let rhs_exponent = division_exponent(rhs.re.mag().max(rhs.im.mag()));
+    let lhs = scale_box(lhs, -lhs_exponent);
+    let rhs = scale_box(rhs, -rhs_exponent);
+    let denominator = rhs.norm_sqr();
+    let numerator = lhs * rhs.conj();
+    let exponent = lhs_exponent - rhs_exponent;
+
+    let quotient = |value| {
+        if exponent == 0 {
+            value / denominator
+        } else {
+            div_interval(value, denominator, |x, y, dir| {
+                rounding::div_scaled(x, y, exponent, dir)
+            })
+        }
+    };
+    let mut re = quotient(numerator.re);
+    let mut im = quotient(numerator.im);
+    if distance > 0.0 && denominator.inf() == 0.0 {
+        // The original box stays away from zero. Only the rounded square
+        // underflowed. Bound |lhs/rhs| using the unscaled divisor distance.
+        let radius = rounding::div_scaled(lhs.mag(), distance, lhs_exponent, Direction::Up);
+        let enclosure = Interval::from_valid_bounds(-radius, radius);
+        re = re.intersection(enclosure);
+        im = im.intersection(enclosure);
+    }
+    ComplexBox::new(re, im)
+}
+
+#[allow(clippy::arithmetic_side_effects)]
+fn division_exponent(magnitude: f64) -> i32 {
+    // When both magnitudes are in this range their dominant products have
+    // room to be multiplied and added without overflow or underflow.
+    const MIN: f64 = f64::from_bits((1023 - 500) << 52);
+    const MAX: f64 = f64::from_bits((1023 + 500) << 52);
+    if (MIN..=MAX).contains(&magnitude) {
+        return 0;
+    }
+    match FloatClass::new(magnitude) {
+        FloatClass::Finite(value) => value.exponent + value.significand.ilog2().cast_signed(),
+        _ => 0,
+    }
+}
+
+fn scale_box(value: ComplexBox<Interval>, exponent: i32) -> ComplexBox<Interval> {
+    if exponent == 0 {
+        return value;
+    }
+    let scale = |component: Interval| {
+        Interval::from_valid_bounds(
+            rounding::scale_pow2(component.inf_raw(), exponent, Direction::Down),
+            rounding::scale_pow2(component.sup_raw(), exponent, Direction::Up),
+        )
+    };
+    ComplexBox::new(scale(value.re), scale(value.im))
 }
 
 fn add_complex_real<I: IntervalOps>(lhs: ComplexBox<I>, rhs: I) -> ComplexBox<I> {

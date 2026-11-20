@@ -125,10 +125,12 @@ pub fn div_split<T: IntervalDatum>(x: T, y: T) -> IntervalSet<T> {
     let mut left = div_interval(
         numerator,
         Interval::from_valid_bounds(denominator.inf_raw(), 0.0),
+        rounding::div,
     );
     let mut right = div_interval(
         numerator,
         Interval::from_valid_bounds(0.0, denominator.sup_raw()),
+        rounding::div,
     );
     if left.inf_raw() > right.inf_raw() {
         core::mem::swap(&mut left, &mut right);
@@ -730,7 +732,12 @@ fn recip_interval(x: Interval) -> Interval {
     }
 }
 
-fn div_interval(x: Interval, y: Interval) -> Interval {
+#[allow(clippy::redundant_pub_crate)] // Keep the kernel out of the crate's public glob re-export.
+pub(crate) fn div_interval(
+    x: Interval,
+    y: Interval,
+    evaluate: impl Fn(f64, f64, Direction) -> f64,
+) -> Interval {
     if x.is_empty_raw() || y.is_empty_raw() {
         return Interval::EMPTY;
     }
@@ -760,8 +767,8 @@ fn div_interval(x: Interval, y: Interval) -> Interval {
     let lower_denominator = if lower < 0.0 { near } else { far };
     let upper_denominator = if upper > 0.0 { near } else { far };
     Interval::from_valid_bounds(
-        rounding::div(lower, lower_denominator, Direction::Down),
-        rounding::div(upper, upper_denominator, Direction::Up),
+        evaluate(lower, lower_denominator, Direction::Down),
+        evaluate(upper, upper_denominator, Direction::Up),
     )
 }
 
@@ -769,7 +776,7 @@ fn div_bare(x: Interval, y: Interval) -> BareResult {
     if x.is_empty_raw() || y.is_empty_raw() {
         return empty_result();
     }
-    let interval = div_interval(x, y);
+    let interval = div_interval(x, y, rounding::div);
     let local = if y.contains_raw(0.0) {
         Decoration::Trv
     } else {

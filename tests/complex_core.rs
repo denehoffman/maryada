@@ -31,6 +31,80 @@ fn complex_addition_encloses_both_components_near_overflow() {
 }
 
 #[test]
+#[allow(clippy::arithmetic_side_effects)]
+fn complex_quotients_cover_both_ends_of_the_binary64_range() {
+    for magnitude in [f64::from_bits(1), 1e-200, 1e200, f64::MAX] {
+        let real = ComplexBox::<Interval>::from(magnitude);
+        let imaginary = ComplexBox::new(Interval::ZERO, Interval::from(magnitude));
+        assert_eq!(real / real, ComplexBox::ONE);
+        assert_eq!(imaginary / imaginary, ComplexBox::ONE);
+        assert_eq!(imaginary / real, ComplexBox::I);
+        let reciprocal = Interval::from(magnitude).recip();
+        assert_eq!(real.recip(), ComplexBox::from(reciprocal));
+        assert_eq!(
+            imaginary.recip(),
+            ComplexBox::new(Interval::ZERO, -reciprocal)
+        );
+    }
+    for exponent in [-1074, -1000, -664, 0, 664, 1023] {
+        let component = libm::scalbn(1.0, exponent);
+        let point = ComplexBox::new(Interval::from(component), Interval::from(component));
+        assert_eq!(point / point, ComplexBox::ONE);
+        let reciprocal = libm::scalbn(0.5, -exponent);
+        let expected = if reciprocal.is_finite() {
+            Interval::from(reciprocal)
+        } else {
+            Interval::new(f64::MAX, f64::INFINITY)
+        };
+        assert_eq!(point.recip(), ComplexBox::new(expected, -expected));
+    }
+}
+
+#[test]
+fn complex_quotients_rescale_before_rounding_the_division() {
+    let lhs = ComplexBox::<Interval>::from(libm::scalbn(1.0, -700));
+    let lower = libm::scalbn(1.0, 70);
+    let upper = libm::scalbn(1.0, 600);
+    let rhs = ComplexBox::new(Interval::new(lower, upper), Interval::from(lower));
+    let quotient = lhs / rhs;
+    assert!(quotient.is_bounded());
+    assert!(quotient.re.contains(libm::scalbn(1.0, -771)));
+    assert!(quotient.im.contains(libm::scalbn(-1.0, -771)));
+    assert_eq!(quotient.re.sup(), libm::scalbn(1.0, -241));
+}
+
+#[test]
+fn complex_quotients_distinguish_underflow_from_an_actual_pole() {
+    let tiny = f64::from_bits(1);
+    let lhs = ComplexBox::<DecoratedInterval>::from(tiny);
+    let rhs = ComplexBox::new(
+        DecoratedInterval::new(tiny, f64::MAX),
+        DecoratedInterval::new(0.0, tiny),
+    );
+    let quotient = lhs / rhs;
+    assert_eq!(quotient.re, DecoratedInterval::new(0.0, 1.0));
+    assert_eq!(quotient.im, DecoratedInterval::new(-1.0, 0.0));
+    assert_eq!(quotient.decoration(), Decoration::Com);
+
+    let crossing = ComplexBox::new(
+        DecoratedInterval::new(0.0, 1.0),
+        DecoratedInterval::new(0.0, 1.0),
+    );
+    let reciprocal = crossing.recip();
+    assert_eq!(
+        reciprocal.re,
+        set_dec(Interval::new(0.0, f64::INFINITY), Decoration::Trv)
+    );
+    assert_eq!(
+        reciprocal.im,
+        set_dec(Interval::new(f64::NEG_INFINITY, 0.0), Decoration::Trv)
+    );
+    assert!((lhs / ComplexBox::<DecoratedInterval>::ZERO).is_empty());
+    assert!(ComplexBox::<DecoratedInterval>::ZERO.recip().is_empty());
+    assert!((lhs / ComplexBox::new(DecoratedInterval::NAI, DecoratedInterval::ZERO)).is_nai());
+}
+
+#[test]
 fn complex_square_root_maps_zero_to_zero() {
     assert_eq!(
         ComplexBox::<Interval>::ZERO.sqrt(),

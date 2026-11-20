@@ -26,7 +26,7 @@ for exact hexadecimal interchange.
 - `num-complex` enables `complex` plus interoperability with `num_complex::Complex64`.
 - `linalg` enables the linear algebra API, namely `IntervalMatrix` and its associated operations.
 - `complex-linalg` enables allocation-backed complex interval matrices and verified complex solves.
-- `branch` enables the `no_std` branch-and-bound engine and its allocation-backed work queues.
+- `branch` enables the `no_std` branch-and-bound engine, its allocation-backed work queues, and scalar interval Newton search with `RootIsolator`.
 - `serde` enables serialization of `Interval` and `DecoratedInterval` without requiring `std` or an allocator in maryada.
 
 Serde writes intervals as exact IEEE interval literals in human-readable formats.

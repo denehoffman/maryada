@@ -1,6 +1,6 @@
 //! Allocation-backed branch-and-bound search primitives.
 //!
-//! The search layer deliberately knows nothing about linear algebra or about
+//! The generic scheduler deliberately knows nothing about linear algebra or about
 //! the function being enclosed.  An [`Evaluator`] maps a domain to an
 //! enclosure, a [`Pruner`] can contract that domain and classify it, and a
 //! [`BranchRule`] supplies the subdivision policy.  This separation makes it
@@ -12,6 +12,10 @@
 //! and is deterministic for equal priorities.
 
 extern crate alloc;
+
+mod root;
+
+pub use root::{RootIsolationError, RootIsolationReport, RootIsolator};
 
 use alloc::{
     collections::{BinaryHeap, binary_heap::PeekMut},

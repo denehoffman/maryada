@@ -101,7 +101,7 @@ fn branch_and_bound_steps_and_resumes() {
     let complete = search.run(16).unwrap();
     assert_eq!(complete.status, RunStatus::Exhausted);
     assert_eq!(complete.certified.len(), 4);
-    assert!(complete.unresolved.is_empty());
+    assert_eq!(complete.unresolved, []);
 }
 
 #[test]
@@ -191,7 +191,7 @@ fn branch_and_bound_resumes_when_only_the_failed_domain_remains() {
     assert_eq!(retried.status, RunStatus::Exhausted);
     assert_eq!(retried.evaluated, 1);
     assert_eq!(retried.certified, vec![root]);
-    assert!(retried.unresolved.is_empty());
+    assert_eq!(retried.unresolved, []);
 }
 
 #[test]
@@ -250,7 +250,7 @@ fn global_minimizer_encloses_a_quadratic_minimum() {
     assert_eq!(result.status, RunStatus::Exhausted);
     assert!(result.minimum.contains(0.0));
     assert!(result.minimum.sup() >= 0.0);
-    assert!(!result.candidates.is_empty());
+    assert_ne!(result.candidates, []);
 }
 
 #[test]

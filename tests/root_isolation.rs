@@ -20,11 +20,11 @@ fn extended_newton_division_keeps_two_disjoint_candidates() {
         progress.unresolved,
         [Interval::new(-2.0, -0.5), Interval::new(0.5, 2.0)]
     );
-    assert!(progress.unique.is_empty());
+    assert_eq!(progress.unique, []);
 
     let report = search.run(2).unwrap();
     assert_eq!(report.status, RunStatus::Exhausted);
-    assert!(report.unresolved.is_empty());
+    assert_eq!(report.unresolved, []);
     assert_eq!(report.evaluated, 3);
     assert_eq!(report.unique.len(), 2);
     assert!(report.unique.first().unwrap().contains(-2.0_f64.sqrt()));
@@ -53,8 +53,8 @@ fn root_exclusion_can_use_the_function_range_or_newton_image() {
     for report in [positive.run(1).unwrap(), overestimated.run(1).unwrap()] {
         assert_eq!(report.status, RunStatus::Exhausted);
         assert_eq!(report.excluded, [domain]);
-        assert!(report.unique.is_empty());
-        assert!(report.unresolved.is_empty());
+        assert_eq!(report.unique, []);
+        assert_eq!(report.unresolved, []);
     }
 }
 
@@ -67,7 +67,7 @@ fn zero_in_both_enclosures_keeps_uncertain_roots() {
         |x: &Interval| Ok::<_, Infallible>(2.0 * *x),
     );
     let report = repeated.run(12).unwrap();
-    assert!(report.unique.is_empty());
+    assert_eq!(report.unique, []);
     assert!(report.unresolved.iter().any(|region| region.contains(0.0)));
 
     let mut constant = RootIsolator::new(
@@ -78,7 +78,7 @@ fn zero_in_both_enclosures_keeps_uncertain_roots() {
     let report = constant.run(1).unwrap();
     assert_eq!(report.status, RunStatus::Exhausted);
     assert_eq!(report.unresolved, [domain]);
-    assert!(report.unique.is_empty());
+    assert_eq!(report.unique, []);
 }
 
 #[test]
@@ -98,7 +98,7 @@ fn roots_on_shared_boundaries_are_reported_once() {
     let report = search.run(2).unwrap();
     assert_eq!(report.status, RunStatus::Exhausted);
     assert_eq!(report.unique, [Interval::ZERO]);
-    assert!(report.unresolved.is_empty());
+    assert_eq!(report.unresolved, []);
 }
 
 #[test]
@@ -112,7 +112,7 @@ fn endpoint_signs_certify_a_root_between_adjacent_floats() {
     );
     let report = search.run(1).unwrap();
     assert_eq!(report.unique, [domain]);
-    assert!(report.unresolved.is_empty());
+    assert_eq!(report.unresolved, []);
 }
 
 #[test]
@@ -173,6 +173,6 @@ fn empty_domains_and_empty_enclosures_have_distinct_results() {
     );
     let report = search.run(1).unwrap();
     assert_eq!(report.status, RunStatus::Exhausted);
-    assert!(report.excluded.is_empty());
-    assert!(report.unresolved.is_empty());
+    assert_eq!(report.excluded, []);
+    assert_eq!(report.unresolved, []);
 }

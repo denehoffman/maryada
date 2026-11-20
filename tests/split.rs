@@ -218,7 +218,7 @@ fn split_decorations_use_the_original_denominator_and_propagate_nai() {
     assert!(result.hull().is_nai());
     for denominator in [DecoratedInterval::ZERO, DecoratedInterval::EMPTY] {
         let result = div_split(DecoratedInterval::ONE, denominator);
-        assert!(result.components().is_empty());
+        assert_eq!(result.components(), []);
         assert_eq!(result.hull(), DecoratedInterval::EMPTY);
     }
 }

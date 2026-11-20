@@ -6,6 +6,43 @@ use maryada::{
 };
 
 #[test]
+fn trig_encloses_near_the_series_limit_and_at_the_smallest_subnormal() {
+    let tiny = f64::from_bits(1);
+    for (point, sine, cosine, tangent) in [
+        // Directed binary64 reference bounds from MPFR.
+        (
+            0.78,
+            Interval::new(
+                f64::from_bits(0x3fe6_8143_d72d_4ce4),
+                f64::from_bits(0x3fe6_8143_d72d_4ce5),
+            ),
+            Interval::new(
+                f64::from_bits(0x3fe6_bfcd_bf81_7bfa),
+                f64::from_bits(0x3fe6_bfcd_bf81_7bfb),
+            ),
+            Interval::new(
+                f64::from_bits(0x3fef_a807_cf82_6c44),
+                f64::from_bits(0x3fef_a807_cf82_6c45),
+            ),
+        ),
+        (
+            tiny,
+            Interval::new(0.0, tiny),
+            Interval::new(1.0_f64.next_down(), 1.0),
+            Interval::new(tiny, tiny.next_up()),
+        ),
+    ] {
+        let x = Interval::from(point);
+        assert!(subset(sine, x.sin()));
+        assert!(subset(-sine, (-x).sin()));
+        assert!(subset(cosine, x.cos()));
+        assert!(subset(cosine, (-x).cos()));
+        assert!(subset(tangent, x.tan()));
+        assert!(subset(-tangent, (-x).tan()));
+    }
+}
+
+#[test]
 fn hypot_keeps_exact_norms_across_binary64_exponents() {
     for exponent in [-1074, -1024, -665, 0, 664, 1021] {
         let x = Interval::from(libm::scalbn(3.0, exponent));

@@ -1151,82 +1151,97 @@ fn reduce_trig(x: f64) -> Option<ReducedAngle> {
     })
 }
 
-#[allow(clippy::arithmetic_side_effects)]
 fn sin_series(x: f64, direction: Direction) -> f64 {
     if x.is_sign_negative() {
         return -sin_series(-x, direction.opposite());
     }
-    debug_assert!((0.0..=0.8).contains(&x));
-    let square_lower = mul(x, x, Direction::Down);
-    let square_upper = mul(x, x, Direction::Up);
-    let mut term_lower = x;
-    let mut term_upper = x;
-    let mut lower = 0.0;
-    let mut upper = 0.0;
-    for index in 0_u32..14 {
-        if index & 1 == 0 {
-            lower = add(lower, term_lower, Direction::Down);
-            upper = add(upper, term_upper, Direction::Up);
-        } else {
-            lower = sub(lower, term_upper, Direction::Down);
-            upper = sub(upper, term_lower, Direction::Up);
-        }
-        let denominator = f64::from((2 * index + 2) * (2 * index + 3));
-        term_lower = div(
-            mul(term_lower, square_lower, Direction::Down),
-            denominator,
-            Direction::Down,
-        );
-        term_upper = div(
-            mul(term_upper, square_upper, Direction::Up),
-            denominator,
-            Direction::Up,
-        );
-    }
-    // Fourteen terms end on a negative term; the next positive term bounds
-    // the alternating remainder from above.
-    upper = add(upper, term_upper, Direction::Up);
-    match direction {
-        Direction::Down => lower,
-        Direction::Up => upper,
-    }
+    let factor = trig_series(x, &SIN_SERIES, direction);
+    mul(x, factor, direction)
 }
 
-#[allow(clippy::arithmetic_side_effects)]
 fn cos_series(x: f64, direction: Direction) -> f64 {
-    let x = x.abs();
+    trig_series(x.abs(), &COS_SERIES, direction)
+}
+
+struct TrigSeries {
+    coefficients: [Bounds; 9],
+    omitted_coefficient_upper: f64,
+}
+
+// The factorial arguments below are exact in binary64. One step in each
+// direction encloses the exact reciprocal of each rounded constant.
+#[allow(clippy::arithmetic_side_effects)]
+const fn reciprocal_factorial(factorial: f64) -> Bounds {
+    let reciprocal = 1.0 / factorial;
+    (reciprocal.next_down(), reciprocal.next_up())
+}
+
+const SIN_SERIES: TrigSeries = TrigSeries {
+    coefficients: [
+        (1.0, 1.0),
+        reciprocal_factorial(6.0),
+        reciprocal_factorial(120.0),
+        reciprocal_factorial(5_040.0),
+        reciprocal_factorial(362_880.0),
+        reciprocal_factorial(39_916_800.0),
+        reciprocal_factorial(6_227_020_800.0),
+        reciprocal_factorial(1_307_674_368_000.0),
+        reciprocal_factorial(355_687_428_096_000.0),
+    ],
+    omitted_coefficient_upper: reciprocal_factorial(121_645_100_408_832_000.0).1,
+};
+
+const COS_SERIES: TrigSeries = TrigSeries {
+    coefficients: [
+        (1.0, 1.0),
+        (0.5, 0.5),
+        reciprocal_factorial(24.0),
+        reciprocal_factorial(720.0),
+        reciprocal_factorial(40_320.0),
+        reciprocal_factorial(3_628_800.0),
+        reciprocal_factorial(479_001_600.0),
+        reciprocal_factorial(87_178_291_200.0),
+        reciprocal_factorial(20_922_789_888_000.0),
+    ],
+    omitted_coefficient_upper: reciprocal_factorial(6_402_373_705_728_000.0).1,
+};
+
+fn trig_series(x: f64, series: &TrigSeries, direction: Direction) -> f64 {
     debug_assert!((0.0..=0.8).contains(&x));
     let square_lower = mul(x, x, Direction::Down);
     let square_upper = mul(x, x, Direction::Up);
-    let mut term_lower = 1.0;
-    let mut term_upper = 1.0;
-    let mut lower = 0.0;
-    let mut upper = 0.0;
-    for index in 0_u32..14 {
-        if index & 1 == 0 {
-            lower = add(lower, term_lower, Direction::Down);
-            upper = add(upper, term_upper, Direction::Up);
-        } else {
-            lower = sub(lower, term_upper, Direction::Down);
-            upper = sub(upper, term_lower, Direction::Up);
-        }
-        let denominator = f64::from((2 * index + 1) * (2 * index + 2));
-        term_lower = div(
-            mul(term_lower, square_lower, Direction::Down),
-            denominator,
-            Direction::Down,
-        );
-        term_upper = div(
-            mul(term_upper, square_upper, Direction::Up),
-            denominator,
-            Direction::Up,
-        );
+
+    // Each normalized Taylor tail is coefficient - x^2 * next_tail.
+    // The terms decrease, so each tail lies between zero and its first
+    // coefficient. Start with that enclosure for the omitted tail.
+    let mut tail_direction = if series.coefficients.len() & 1 == 0 {
+        direction
+    } else {
+        direction.opposite()
+    };
+    let mut tail = match tail_direction {
+        Direction::Down => 0.0,
+        Direction::Up => series.omitted_coefficient_upper,
+    };
+    for &(lower, upper) in series.coefficients.iter().rev() {
+        // Subtracting a nonnegative product reverses the direction needed
+        // from the tail. Compute only the bound used by the next step.
+        tail = match tail_direction {
+            Direction::Down => sub(
+                upper,
+                mul(square_lower, tail, Direction::Down),
+                Direction::Up,
+            ),
+            Direction::Up => sub(
+                lower,
+                mul(square_upper, tail, Direction::Up),
+                Direction::Down,
+            ),
+        };
+        tail = f64::max(0.0, tail);
+        tail_direction = tail_direction.opposite();
     }
-    upper = add(upper, term_upper, Direction::Up);
-    match direction {
-        Direction::Down => lower,
-        Direction::Up => upper,
-    }
+    tail
 }
 
 pub fn asin(x: f64, direction: Direction) -> f64 {

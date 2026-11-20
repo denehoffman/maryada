@@ -1116,6 +1116,11 @@ impl ReducedAngle {
     }
 }
 
+// Adjacent binary64 bounds for pi/2 - FRAC_PI_2. They can be verified
+// with the alternating series in pi/2 = 8 atan(1/5) - 2 atan(1/239).
+const HALF_PI_TAIL_LOWER: f64 = f64::from_bits(0x3c91_a626_3314_5c06);
+const HALF_PI_TAIL_UPPER: f64 = f64::from_bits(0x3c91_a626_3314_5c07);
+
 // The quotient is rounded to an exactly representable integer before this
 // conversion, and the bound limits it to the range of `i64`.
 #[allow(clippy::as_conversions, clippy::cast_possible_truncation)]
@@ -1129,18 +1134,31 @@ fn reduce_trig(x: f64) -> Option<ReducedAngle> {
         return None;
     }
     let multiple_integer = multiple as i64;
-    let half_pi_lower = FRAC_PI_2.next_down();
-    let half_pi_upper = FRAC_PI_2.next_up();
-    let product_lower = f64::min(
-        mul(multiple, half_pi_lower, Direction::Down),
-        mul(multiple, half_pi_upper, Direction::Down),
+    if multiple_integer == 0 {
+        return Some(ReducedAngle {
+            remainder: (x, x),
+            quadrant: 0,
+        });
+    }
+
+    // Cancel the leading part before subtracting the small tail.
+    let (tail_for_lower, tail_for_upper) = if multiple.is_sign_negative() {
+        (HALF_PI_TAIL_LOWER, HALF_PI_TAIL_UPPER)
+    } else {
+        (HALF_PI_TAIL_UPPER, HALF_PI_TAIL_LOWER)
+    };
+    let remainder_lower = fma(
+        -multiple,
+        tail_for_lower,
+        fma(-multiple, FRAC_PI_2, x, Direction::Down),
+        Direction::Down,
     );
-    let product_upper = f64::max(
-        mul(multiple, half_pi_lower, Direction::Up),
-        mul(multiple, half_pi_upper, Direction::Up),
+    let remainder_upper = fma(
+        -multiple,
+        tail_for_upper,
+        fma(-multiple, FRAC_PI_2, x, Direction::Up),
+        Direction::Up,
     );
-    let remainder_lower = sub(x, product_upper, Direction::Down);
-    let remainder_upper = sub(x, product_lower, Direction::Up);
     if remainder_lower < -0.8 || remainder_upper > 0.8 {
         return None;
     }

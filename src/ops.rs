@@ -1111,29 +1111,30 @@ fn trig_bare(
     }
     let inf = x.inf_raw();
     let sup = x.sup_raw();
-    let has_minimum = contains_minimum(inf, sup);
-    let has_maximum = contains_maximum(inf, sup);
-    let interval = if has_minimum && has_maximum {
-        Interval::from_valid_bounds(-1.0, 1.0)
+    let (lower, upper) = if inf == sup {
+        endpoint_bounds(inf)
     } else {
-        let (inf_lower, inf_upper) = endpoint_bounds(inf);
-        let (sup_lower, sup_upper) = if inf == sup {
-            (inf_lower, inf_upper)
+        let has_minimum = contains_minimum(inf, sup);
+        let has_maximum = contains_maximum(inf, sup);
+        if has_minimum && has_maximum {
+            (-1.0, 1.0)
         } else {
-            endpoint_bounds(sup)
-        };
-        let lower = if has_minimum {
-            -1.0
-        } else {
-            f64::min(inf_lower, sup_lower)
-        };
-        let upper = if has_maximum {
-            1.0
-        } else {
-            f64::max(inf_upper, sup_upper)
-        };
-        Interval::from_valid_bounds(lower, upper)
+            let (inf_lower, inf_upper) = endpoint_bounds(inf);
+            let (sup_lower, sup_upper) = endpoint_bounds(sup);
+            let lower = if has_minimum {
+                -1.0
+            } else {
+                f64::min(inf_lower, sup_lower)
+            };
+            let upper = if has_maximum {
+                1.0
+            } else {
+                f64::max(inf_upper, sup_upper)
+            };
+            (lower, upper)
+        }
     };
+    let interval = Interval::from_valid_bounds(lower, upper);
     BareResult {
         interval,
         local: continuous_unary_decoration(x, interval),
@@ -1146,7 +1147,9 @@ fn tan_bare(x: Interval) -> BareResult {
     }
     let inf = x.inf_raw();
     let sup = x.sup_raw();
-    if rounding::contains_tan_pole(inf, sup) {
+    // Nonzero integer multiples of pi/2 are irrational, so a finite
+    // binary64 singleton cannot contain a pole.
+    if inf != sup && rounding::contains_tan_pole(inf, sup) {
         return BareResult {
             interval: Interval::ENTIRE,
             local: Decoration::Trv,

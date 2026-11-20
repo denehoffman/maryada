@@ -43,6 +43,37 @@ fn trig_encloses_near_the_series_limit_and_at_the_smallest_subnormal() {
 }
 
 #[test]
+fn tangent_singletons_on_both_sides_of_a_pole_are_bounded() {
+    let half_pi = core::f64::consts::FRAC_PI_2;
+    for (point, lower_bits, upper_bits) in [
+        (
+            half_pi.next_down(),
+            0x4329_153d_9443_ed0b,
+            0x4329_153d_9443_ed0c,
+        ),
+        (
+            half_pi.next_up(),
+            0xc336_17a1_5494_767b,
+            0xc336_17a1_5494_767a,
+        ),
+    ] {
+        let reference = Interval::new(f64::from_bits(lower_bits), f64::from_bits(upper_bits));
+        let result = Interval::from(point).tan();
+        assert!(result.inf().is_finite() && result.sup().is_finite());
+        assert!(subset(reference, result));
+        assert_eq!(
+            DecoratedInterval::from(point).tan().decoration(),
+            Decoration::Com
+        );
+    }
+
+    let across_pole = DecoratedInterval::from(Interval::new(half_pi, half_pi.next_up()));
+    let result = across_pole.tan();
+    assert!(result.is_entire());
+    assert_eq!(result.decoration(), Decoration::Trv);
+}
+
+#[test]
 fn hypot_keeps_exact_norms_across_binary64_exponents() {
     for exponent in [-1074, -1024, -665, 0, 664, 1021] {
         let x = Interval::from(libm::scalbn(3.0, exponent));

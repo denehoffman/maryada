@@ -65,12 +65,13 @@ pub struct RootIsolationReport {
 ///
 /// ```
 /// use core::convert::Infallible;
-/// use maryada::{EnclosureOps, Interval, IntervalOps, RootIsolator, RunStatus};
+/// use maryada::{Interval, IntervalDual, IntervalOps, RootIsolator, RunStatus};
 ///
+/// let polynomial = |x: &Interval| IntervalDual::variable(*x).sqr() - 2.0;
 /// let mut search = RootIsolator::new(
 ///     Interval::new(-2.0, 2.0),
-///     |x: &Interval| Ok::<_, Infallible>(x.sqr() - 2.0),
-///     |x: &Interval| Ok::<_, Infallible>(2.0 * *x),
+///     |x: &Interval| Ok::<_, Infallible>(polynomial(x).value),
+///     |x: &Interval| polynomial(x).derivative.ok_or("derivative unavailable"),
 /// );
 /// let report = search.run(32).unwrap();
 /// assert_eq!(report.status, RunStatus::Exhausted);

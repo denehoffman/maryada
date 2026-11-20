@@ -10,9 +10,26 @@
 
 use std::convert::Infallible;
 
-use maryada::{EnclosureOps, GlobalMinimizer, Interval, IntervalOps};
+use maryada::{EnclosureOps, GlobalMinimizer, Interval, IntervalDual, IntervalOps};
+
+fn quartic(x: IntervalDual) -> IntervalDual {
+    (x.sqr() - 1.0).sqr() + 0.6 * x + 2.0
+}
+
 fn objective(x: &Interval) -> Result<Interval, Infallible> {
-    Ok((x.sqr() - 1.0).sqr() + 0.6 * *x + 2.0)
+    let result = quartic(IntervalDual::variable(*x));
+    if x.is_bounded()
+        && !x.is_singleton()
+        && result
+            .derivative
+            .is_some_and(|derivative| !derivative.contains(0.0))
+    {
+        // A derivative of one sign puts the extrema at the endpoints.
+        let lower = quartic(IntervalDual::constant(Interval::from(x.inf()))).value;
+        let upper = quartic(IntervalDual::constant(Interval::from(x.sup()))).value;
+        return Ok(result.value.intersection(lower.convex_hull(upper)));
+    }
+    Ok(result.value)
 }
 
 fn schwefel_function(x: &Vec<Interval>) -> Result<Interval, Infallible> {

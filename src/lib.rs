@@ -40,6 +40,7 @@ mod branch;
 #[cfg(feature = "complex")]
 mod complex;
 mod decimal_text;
+mod dual;
 mod enclosure;
 mod interchange;
 #[cfg(feature = "linalg")]
@@ -58,6 +59,7 @@ pub use branch::*;
 #[cfg(feature = "complex")]
 pub use complex::ComplexBox;
 pub use decimal_text::{DecimalIntervalFormat, write_interval_decimal};
+pub use dual::IntervalDual;
 pub use enclosure::EnclosureOps;
 pub use interchange::*;
 #[cfg(all(feature = "linalg", feature = "num-complex", feature = "alloc"))]

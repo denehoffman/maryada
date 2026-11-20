@@ -74,6 +74,42 @@ fn tangent_singletons_on_both_sides_of_a_pole_are_bounded() {
 }
 
 #[test]
+fn trig_encloses_huge_singletons_and_wide_intervals() {
+    for (point, bounds) in [
+        (
+            1e20,
+            [
+                (0xbfe4_a5e6_05fd_6451, 0xbfe4_a5e6_05fd_6450),
+                (0x3fe8_7272_0fc6_0d3d, 0x3fe8_7272_0fc6_0d3e),
+                (0xbfeb_06fb_be99_5394, 0xbfeb_06fb_be99_5393),
+            ],
+        ),
+        (
+            f64::MAX,
+            [
+                (0x3f74_52fc_98b3_4e96, 0x3f74_52fc_98b3_4e97),
+                (0xbfef_ffe6_2ecf_ab76, 0xbfef_ffe6_2ecf_ab75),
+                (0xbf74_530c_fe72_9484, 0xbf74_530c_fe72_9483),
+            ],
+        ),
+    ] {
+        let x = Interval::from(point);
+        let tolerance = Interval::new(-1e-14, 1e-14);
+        // Directed binary64 reference bounds from MPFR.
+        for (result, (lower, upper)) in [x.sin(), x.cos(), x.tan()].into_iter().zip(bounds) {
+            let reference = Interval::new(f64::from_bits(lower), f64::from_bits(upper));
+            assert!(subset(reference, result));
+            assert!(subset(result, reference + tolerance));
+        }
+    }
+
+    let wide = Interval::new(1e20, 1e20_f64.next_up());
+    assert_eq!(wide.sin(), Interval::new(-1.0, 1.0));
+    assert_eq!(wide.cos(), Interval::new(-1.0, 1.0));
+    assert_eq!(wide.tan(), Interval::ENTIRE);
+}
+
+#[test]
 fn hypot_keeps_exact_norms_across_binary64_exponents() {
     for exponent in [-1074, -1024, -665, 0, 664, 1021] {
         let x = Interval::from(libm::scalbn(3.0, exponent));

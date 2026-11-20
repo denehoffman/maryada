@@ -1131,7 +1131,7 @@ fn reduce_trig(x: f64) -> Option<ReducedAngle> {
     // selection or pi enclosure is too imprecise.
     let multiple = libm::round(x / FRAC_PI_2);
     if multiple.abs() > 4_503_599_627_370_496.0 {
-        return None;
+        return reduce_large_trig(x);
     }
     let multiple_integer = multiple as i64;
     if multiple_integer == 0 {
@@ -1160,13 +1160,123 @@ fn reduce_trig(x: f64) -> Option<ReducedAngle> {
         Direction::Up,
     );
     if remainder_lower < -0.8 || remainder_upper > 0.8 {
-        return None;
+        return reduce_large_trig(x);
     }
 
     Some(ReducedAngle {
         remainder: (remainder_lower, remainder_upper),
         quadrant: multiple_integer.rem_euclid(4),
     })
+}
+
+// floor(2/pi * 2^1280), least significant word first. The floor can be
+// verified by inverting the rational Machin bounds from 288 terms of each
+// arctangent series.
+const TWO_OVER_PI: [u64; 20] = [
+    0xf0cf_bc20_9af4_361d,
+    0x5603_3046_fc7b_6bab,
+    0x6bfb_5fb1_1f8d_5d08,
+    0x3d07_39f7_8a52_92ea,
+    0x7527_bac7_ebe5_f17b,
+    0x4f46_3f66_9e5f_ea2d,
+    0x6d36_7ecf_27cb_09b7,
+    0xef2f_118b_5a0a_6d1f,
+    0x1ff8_97ff_de05_980f,
+    0x9c84_5f8b_bdf9_283b,
+    0x3991_d639_8353_39f4,
+    0xe99c_7026_b45f_7e41,
+    0xe882_35f5_2ebb_4484,
+    0xfe1d_eb1c_b129_a73e,
+    0x0649_2eea_09d1_921c,
+    0xb724_6e3a_424d_d2e0,
+    0xfe51_63ab_debb_c561,
+    0xdb62_9599_3c43_9041,
+    0xfc27_57d1_f534_ddc0,
+    0xa2f9_836e_4e44_1529,
+];
+
+#[cold]
+#[allow(
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_possible_truncation
+)]
+fn reduce_large_trig(x: f64) -> Option<ReducedAngle> {
+    let FloatClass::Finite(value) = FloatClass::new(x) else {
+        return None;
+    };
+    let mut product = [0_u64; TWO_OVER_PI.len() + 1];
+    let (last, words) = product.split_last_mut()?;
+    let mut carry = 0_u64;
+    for (word, limb) in words.iter_mut().zip(TWO_OVER_PI) {
+        // The significand and the carry have at most 53 bits.
+        let wide = u128::from(limb) * u128::from(value.significand) + u128::from(carry);
+        *word = wide as u64;
+        carry = (wide >> 64) as u64;
+    }
+    *last = carry;
+
+    let binary_point = usize::try_from(1280 - value.exponent).ok()?;
+    let fraction = (u128::from(fixed_point_word(&product, binary_point - 64)) << 64)
+        | u128::from(fixed_point_word(&product, binary_point - 128));
+    // The sign bit chooses the nearest quadrant of the truncated fraction.
+    // Interpreting the word as signed subtracts one when rounding up.
+    let signed_fraction = fraction.cast_signed();
+    let whole = fixed_point_word(&product, binary_point) & 3;
+    let quadrant = (whole.cast_signed() + i64::from(signed_fraction < 0)).rem_euclid(4);
+    let fraction = WideDyadic {
+        negative: signed_fraction < 0,
+        significand: signed_fraction.unsigned_abs(),
+        exponent: -128,
+    };
+
+    // The exponent is at most 971, so the constant's truncation loses
+    // less than 2^(53 + 971 - 1280) = 2^-256 in x * 2/pi. Keeping the
+    // leading 128 fraction bits loses less than another 2^-128.
+    let fraction_error = f64::from_bits(0x3800_0000_0000_0000); // 2^-127
+    let fraction_lower = fraction.pack(false, Direction::Down);
+    let fraction_upper = add(
+        fraction.pack(false, Direction::Up),
+        fraction_error,
+        Direction::Up,
+    );
+    let (fraction_lower, fraction_upper, quadrant) = if value.negative {
+        (-fraction_upper, -fraction_lower, (-quadrant).rem_euclid(4))
+    } else {
+        (fraction_lower, fraction_upper, quadrant)
+    };
+
+    // FRAC_PI_2 is below exact pi/2, as shown by the positive tail.
+    let half_pi_upper = FRAC_PI_2.next_up();
+    let pi_for_lower = if fraction_lower < 0.0 {
+        half_pi_upper
+    } else {
+        FRAC_PI_2
+    };
+    let pi_for_upper = if fraction_upper < 0.0 {
+        FRAC_PI_2
+    } else {
+        half_pi_upper
+    };
+    Some(ReducedAngle {
+        remainder: (
+            mul(fraction_lower, pi_for_lower, Direction::Down),
+            mul(fraction_upper, pi_for_upper, Direction::Up),
+        ),
+        quadrant,
+    })
+}
+
+#[allow(clippy::arithmetic_side_effects)]
+fn fixed_point_word(words: &[u64], bit: usize) -> u64 {
+    let index = bit / 64;
+    let shift = bit % 64;
+    let lower = words.get(index).copied().unwrap_or_default() >> shift;
+    if shift == 0 {
+        lower
+    } else {
+        lower | (words.get(index + 1).copied().unwrap_or_default() << (64 - shift))
+    }
 }
 
 fn sin_series(x: f64, direction: Direction) -> f64 {

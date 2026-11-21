@@ -393,6 +393,16 @@ impl WideFloatClass {
 const SUM_EXPONENT: i32 = -2148;
 const SUM_WORDS: usize = 67;
 
+#[cfg(feature = "linalg")]
+pub fn pack_integer(value: i128, exponent: i32, direction: Direction) -> f64 {
+    WideDyadic {
+        negative: value < 0,
+        significand: value.unsigned_abs(),
+        exponent,
+    }
+    .pack(false, direction)
+}
+
 pub struct ExactSum {
     positive: [u64; SUM_WORDS],
     negative: [u64; SUM_WORDS],

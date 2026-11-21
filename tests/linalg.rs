@@ -13,6 +13,70 @@ use maryada::{
 };
 use nalgebra::SMatrix;
 
+#[test]
+fn blocked_matrix_product_matches_exact_dot_with_partial_row_block() {
+    let left = SIntervalMatrix::<Interval, 17, 18>::from_fn(|row, column| {
+        let midpoint = if (row + column) % 2 == 0 { 0.3 } else { -0.7 };
+        Interval::new(midpoint - 0.01, midpoint + 0.01)
+    });
+    let right = SIntervalMatrix::<Interval, 18, 5>::from_fn(|row, column| {
+        if (row + column) % 2 == 0 {
+            Interval::new(-0.74, 0.3)
+        } else {
+            Interval::from(0.41)
+        }
+    });
+    let expected = SIntervalMatrix::<Interval, 17, 5>::from_fn(|row, column| {
+        let left_terms = core::array::from_fn::<_, 18, _>(|inner| left[(row, inner)]);
+        let right_terms = core::array::from_fn::<_, 18, _>(|inner| right[(inner, column)]);
+        maryada::dot(&left_terms, &right_terms).unwrap_or(Interval::EMPTY)
+    });
+    assert_eq!(&left * &right, expected);
+    assert_eq!(left.try_mul(&right), Ok(expected));
+
+    let mut backing = SIntervalMatrix::<Interval, 18, 6>::from_element(Interval::ENTIRE);
+    let mut output =
+        IntervalMatrix::from_inner(backing.as_inner_mut().fixed_view_mut::<17, 5>(1, 1));
+    assert_eq!(left.try_mul_into(&right, &mut output), Ok(()));
+    assert!(output.iter().eq(expected.iter()));
+    assert!(
+        backing
+            .as_inner()
+            .row(0)
+            .iter()
+            .all(|x| *x == Interval::ENTIRE)
+    );
+    assert!(
+        backing
+            .as_inner()
+            .column(0)
+            .iter()
+            .all(|x| *x == Interval::ENTIRE)
+    );
+}
+
+#[test]
+fn blocked_matrix_product_can_cancel_terms_that_overflow_binary64() {
+    let left = SIntervalMatrix::<Interval, 16, 16>::from_element(Interval::from(f64::MAX));
+    let right = SIntervalMatrix::<Interval, 16, 4>::from_fn(|row, _| {
+        Interval::from(if row % 2 == 0 { 2.0 } else { -2.0 })
+    });
+    assert_eq!(&left * &right, SIntervalMatrix::<Interval, 16, 4>::zeros());
+}
+
+#[test]
+fn large_matrix_product_falls_back_on_unbounded_or_misaligned_inputs() {
+    let right = SIntervalMatrix::<Interval, 16, 4>::from_element(Interval::ONE);
+    let mut left = SIntervalMatrix::<Interval, 16, 16>::from_element(Interval::ONE);
+    left[(0, 0)] = Interval::ENTIRE;
+    assert_eq!((&left * &right)[(0, 0)], Interval::ENTIRE);
+    left[(0, 0)] = Interval::EMPTY;
+    assert_eq!((&left * &right)[(0, 0)], Interval::EMPTY);
+    left[(0, 0)] = Interval::from(f64::from_bits(1));
+    let rounded = Interval::new(15.0, 15.0_f64.next_up());
+    assert_eq!((&left * &right)[(0, 0)], rounded);
+}
+
 #[cfg(feature = "alloc")]
 #[test]
 fn checked_elementwise_operations_report_both_shapes() {

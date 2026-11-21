@@ -1278,6 +1278,7 @@ where
 }
 
 mod ops;
+mod product;
 
 mod diagnostics;
 pub use diagnostics::{MatrixShapeError, SolveError};

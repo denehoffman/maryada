@@ -67,8 +67,8 @@ Linear algebra has been implemented mostly by following the work of Jaroslav Hor
 cargo bench --locked --bench performance --features branch,linalg
 ```
 
-Criterion measures five scalar input classes, 4×4 and 32×32 matrix products
-and verified inverses, repeated solves with and without reused setup, and an
+Criterion measures five scalar input classes, 4×4, 32×32, and 64×64 matrix products,
+4×4 and 32×32 verified inverses and repeated solves with and without reused setup, and an
 eight-dimensional search with absolute and relative gap checks enabled and
 disabled. The prepared solve timings exclude setup. Time is reported per
 batch of inputs. Throughput counts one operation per scalar call, matrix

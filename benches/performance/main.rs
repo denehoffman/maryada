@@ -221,6 +221,18 @@ fn benchmark_matrices(criterion: &mut Criterion) {
             |matrix| solver.try_inverse(matrix),
         );
     }
+    let matrix: DIntervalMatrix<Interval> = DMatrix::from_fn(64, 64, |row, column| {
+        let sign = if (row + column) % 2 == 0 { 1.0 } else { -1.0 };
+        let midpoint = sign * (0.25 + ((row * 13 + column * 7) % 73) as f64 / 37.0);
+        Interval::new(midpoint - 0.01, midpoint + 0.01)
+    })
+    .into();
+    benchmark(
+        criterion,
+        "matrix/mul/64x64",
+        std::slice::from_ref(&matrix),
+        |matrix| matrix * matrix,
+    );
 }
 
 #[allow(clippy::expect_used)]

@@ -2,6 +2,7 @@
 
 use core::{
     alloc::Layout,
+    any::TypeId,
     ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
@@ -11,7 +12,12 @@ use nalgebra::{
     constraint::{AreMultipliable, SameNumberOfColumns, SameNumberOfRows, ShapeConstraint},
 };
 
-use super::{EnclosureOps, IntervalMatrix, MatrixShapeError, OIntervalMatrix, OIntervalVector};
+use crate::Interval;
+
+use super::{
+    EnclosureOps, IntervalMatrix, MatrixShapeError, OIntervalMatrix, OIntervalVector,
+    product::{ROW_BLOCK, accumulate_grid_product},
+};
 
 macro_rules! checked_elementwise {
     ($(#[$doc:meta])* $name:ident, $operation:path) => {
@@ -321,6 +327,15 @@ where
         CO: Dim,
         SO: StorageMut<T, RO, CO>,
     {
+        if TypeId::of::<T>() == TypeId::of::<Interval>()
+            && self.nrows() >= ROW_BLOCK
+            && self.ncols() >= ROW_BLOCK
+            && rhs.ncols() >= 4
+            && accumulate_grid_product(self.as_inner(), rhs.as_inner(), output.as_inner_mut())
+                .is_some()
+        {
+            return;
+        }
         for (mut output_column, rhs_column) in output.column_iter_mut().zip(rhs.column_iter()) {
             for (lhs_column, rhs_entry) in self.column_iter().zip(rhs_column.iter().copied()) {
                 for (output_entry, lhs_entry) in

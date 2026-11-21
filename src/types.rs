@@ -467,6 +467,9 @@ pub trait IntervalDatum: sealed::Sealed + Copy {
     fn __entire() -> Self;
 
     #[doc(hidden)]
+    fn __from_result(interval: Interval, decoration: Decoration) -> Self;
+
+    #[doc(hidden)]
     #[must_use]
     fn __unary_result(self, interval: Interval, local: Decoration) -> Self;
 
@@ -508,6 +511,10 @@ impl IntervalDatum for Interval {
         Self::ENTIRE
     }
 
+    fn __from_result(interval: Interval, _: Decoration) -> Self {
+        interval
+    }
+
     fn __unary_result(self, interval: Interval, _: Decoration) -> Self {
         interval
     }
@@ -542,6 +549,10 @@ impl IntervalDatum for DecoratedInterval {
 
     fn __entire() -> Self {
         Self::ENTIRE
+    }
+
+    fn __from_result(interval: Interval, decoration: Decoration) -> Self {
+        Self::set_dec_raw(interval, decoration)
     }
 
     fn __unary_result(self, interval: Interval, local: Decoration) -> Self {

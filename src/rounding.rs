@@ -66,7 +66,7 @@ impl Dyadic {
 }
 
 #[derive(Clone, Copy, Debug)]
-enum WideFloatClass {
+pub enum WideFloatClass {
     Zero { negative: bool },
     Finite(WideDyadic),
     Infinity { negative: bool },
@@ -74,7 +74,7 @@ enum WideFloatClass {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct WideDyadic {
+pub struct WideDyadic {
     negative: bool,
     significand: u128,
     exponent: i32,
@@ -366,6 +366,160 @@ impl WideFloatClass {
                 exponent: x.exponent + y.exponent,
             }),
         }
+    }
+
+    pub(crate) fn interval_product(x: f64, y: f64, _: Direction) -> Self {
+        if x == 0.0 || y == 0.0 {
+            Self::Zero { negative: false }
+        } else {
+            Self::exact_product(x, y)
+        }
+    }
+
+    // The two candidates for a mixed-sign product bound have the same
+    // nonzero sign. The larger magnitude is the outward choice.
+    pub(crate) fn outward(self, other: Self, _: Direction) -> Self {
+        match (self, other) {
+            (Self::Infinity { .. }, _) | (_, Self::Zero { .. }) => self,
+            (_, Self::Infinity { .. }) | (Self::Zero { .. }, _) => other,
+            (Self::Finite(a), Self::Finite(b)) if WideDyadic::magnitude_cmp(a, b).is_lt() => other,
+            _ => self,
+        }
+    }
+}
+
+// Binary64 products are multiples of 2^-2148 and have magnitude below 2^2048.
+// A slice has at most 2^64 - 1 terms, which puts each sign total below 2^2112.
+const SUM_EXPONENT: i32 = -2148;
+const SUM_WORDS: usize = 67;
+
+pub struct ExactSum {
+    positive: [u64; SUM_WORDS],
+    negative: [u64; SUM_WORDS],
+    infinite: bool,
+}
+
+impl ExactSum {
+    pub(crate) const fn new() -> Self {
+        Self {
+            positive: [0; SUM_WORDS],
+            negative: [0; SUM_WORDS],
+            infinite: false,
+        }
+    }
+
+    pub(crate) fn add(&mut self, value: f64) {
+        match FloatClass::new(value) {
+            FloatClass::Finite(value) => self.add_finite(value.into()),
+            FloatClass::Infinity { .. } => self.infinite = true,
+            _ => {}
+        }
+    }
+
+    pub(crate) fn add_product(&mut self, product: WideFloatClass) {
+        match product {
+            WideFloatClass::Finite(value) => self.add_finite(value),
+            WideFloatClass::Infinity { .. } => self.infinite = true,
+            _ => {}
+        }
+    }
+
+    // The shift is between 0 and 4090. Exactly three limbs suffice for
+    // the shifted significand. Any carry fits in the sign total above.
+    #[allow(
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        clippy::expect_used
+    )]
+    fn add_finite(&mut self, value: WideDyadic) {
+        if self.infinite {
+            return;
+        }
+        let offset = usize::try_from(value.exponent - SUM_EXPONENT).expect("nonnegative shift");
+        let shift = offset % 64;
+        let low = value.significand as u64;
+        let high = (value.significand >> 64) as u64;
+        let addends = if shift == 0 {
+            [low, high, 0]
+        } else {
+            [
+                low << shift,
+                (high << shift) | (low >> (64 - shift)),
+                high >> (64 - shift),
+            ]
+        };
+        let total = if value.negative {
+            &mut self.negative
+        } else {
+            &mut self.positive
+        };
+        let mut words = total.iter_mut().skip(offset / 64);
+        let mut carry = false;
+        for (word, addend) in words.by_ref().zip(addends) {
+            let (sum, carry_addend) = word.overflowing_add(addend);
+            let (sum, carry_in) = sum.overflowing_add(u64::from(carry));
+            *word = sum;
+            carry = carry_addend || carry_in;
+        }
+        for word in words {
+            if !carry {
+                break;
+            }
+            let (sum, next_carry) = word.overflowing_add(1);
+            *word = sum;
+            carry = next_carry;
+        }
+        debug_assert!(!carry);
+    }
+
+    #[allow(clippy::arithmetic_side_effects, clippy::expect_used)]
+    pub(crate) fn finish(mut self, direction: Direction) -> f64 {
+        if self.infinite {
+            return infinity(direction == Direction::Down);
+        }
+        let negative = self
+            .positive
+            .iter()
+            .rev()
+            .cmp(self.negative.iter().rev())
+            .is_lt();
+        let (larger, smaller) = if negative {
+            (&mut self.negative, &self.positive)
+        } else {
+            (&mut self.positive, &self.negative)
+        };
+        let mut borrow = false;
+        for (word, &subtrahend) in larger.iter_mut().zip(smaller) {
+            let (difference, borrow_subtrahend) = word.overflowing_sub(subtrahend);
+            let (difference, borrow_in) = difference.overflowing_sub(u64::from(borrow));
+            *word = difference;
+            borrow = borrow_subtrahend || borrow_in;
+        }
+        debug_assert!(!borrow);
+
+        let mut words = larger
+            .iter()
+            .enumerate()
+            .rev()
+            .skip_while(|(_, word)| **word == 0);
+        let Some((top_index, &top)) = words.next() else {
+            return direction.exact_zero();
+        };
+        let (index, significand) = if let Some((index, &next)) = words.next() {
+            (index, (u128::from(top) << 64) | u128::from(next))
+        } else {
+            (top_index, u128::from(top))
+        };
+        // The two highest words provide at least 65 bits whenever there
+        // are lower words. Their nonzero bits matter only as a sticky flag.
+        let exponent = SUM_EXPONENT + 64 * i32::try_from(index).expect("bounded limb index");
+        WideDyadic {
+            negative,
+            significand,
+            exponent,
+        }
+        .pack(words.any(|(_, &word)| word != 0), direction)
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::{
     DecoratedInterval, Decoration, Interval, IntervalDatum, IntervalSet,
-    rounding::{self, Direction, TrigPoint},
+    rounding::{self, Direction, ExactSum, TrigPoint, WideFloatClass},
     signals::{Signal, SignalSink},
 };
 
@@ -79,6 +79,125 @@ pub fn sub<T: IntervalDatum>(x: T, y: T) -> T {
 /// Encloses all pairwise products of values from `x` and `y`.
 pub fn mul<T: IntervalDatum>(x: T, y: T) -> T {
     binary(x, y, mul_bare)
+}
+
+/// Returns the tightest binary64 enclosure of the sum of the given intervals.
+///
+/// Endpoint sums are accumulated exactly and rounded outward once. An empty
+/// slice sums to zero. Empty operands produce Empty, and any `NaI` takes
+/// precedence for decorated input. The result inherits the weakest decoration.
+#[must_use]
+pub fn sum<T: IntervalDatum>(terms: &[T]) -> T {
+    let mut reduction = Reduction::new();
+    for &term in terms {
+        let term = reduction.include(term);
+        if reduction.decoration == Decoration::Ill {
+            break;
+        }
+        if !reduction.empty {
+            reduction.lower.add(term.inf_raw());
+            reduction.upper.add(term.sup_raw());
+        }
+    }
+    reduction.finish()
+}
+
+/// The two operands to [`dot`] have different lengths.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DotLengthMismatch {
+    /// Length of the left operand.
+    pub left: usize,
+    /// Length of the right operand.
+    pub right: usize,
+}
+
+impl core::fmt::Display for DotLengthMismatch {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "dot product length mismatch ({} and {})",
+            self.left, self.right
+        )
+    }
+}
+
+impl core::error::Error for DotLengthMismatch {}
+
+/// Returns the tightest binary64 enclosure of the sum of corresponding products.
+///
+/// Products and sums of endpoints are accumulated exactly and rounded outward
+/// once. Empty slices give zero. Empty operands produce Empty, and any `NaI`
+/// takes precedence for decorated input. The result inherits the weakest
+/// decoration.
+///
+/// # Errors
+///
+/// Returns [`DotLengthMismatch`] when the slices have different lengths.
+pub fn dot<T: IntervalDatum>(left: &[T], right: &[T]) -> Result<T, DotLengthMismatch> {
+    if left.len() != right.len() {
+        return Err(DotLengthMismatch {
+            left: left.len(),
+            right: right.len(),
+        });
+    }
+    let mut reduction = Reduction::new();
+    for (&left, &right) in left.iter().zip(right) {
+        let left = reduction.include(left);
+        let right = reduction.include(right);
+        if reduction.decoration == Decoration::Ill {
+            break;
+        }
+        if !reduction.empty {
+            let (lower, upper) = product_bounds(
+                left,
+                right,
+                WideFloatClass::interval_product,
+                WideFloatClass::outward,
+            );
+            reduction.lower.add_product(lower);
+            reduction.upper.add_product(upper);
+        }
+    }
+    Ok(reduction.finish())
+}
+
+struct Reduction {
+    lower: ExactSum,
+    upper: ExactSum,
+    decoration: Decoration,
+    empty: bool,
+}
+
+impl Reduction {
+    const fn new() -> Self {
+        Self {
+            lower: ExactSum::new(),
+            upper: ExactSum::new(),
+            decoration: Decoration::Com,
+            empty: false,
+        }
+    }
+
+    fn include<T: IntervalDatum>(&mut self, term: T) -> Interval {
+        let interval = term.__interval();
+        self.empty |= interval.is_empty_raw();
+        if let Some(decoration) = term.__decoration() {
+            self.decoration = self.decoration.min(decoration);
+        }
+        interval
+    }
+
+    fn finish<T: IntervalDatum>(self) -> T {
+        let interval = if self.empty {
+            Interval::EMPTY
+        } else {
+            Interval::from_valid_bounds(
+                self.lower.finish(Direction::Down),
+                self.upper.finish(Direction::Up),
+            )
+        };
+        T::__from_result(interval, self.decoration)
+    }
 }
 
 /// Encloses all defined quotients `x / y`.
@@ -649,7 +768,7 @@ fn mul_interval(x: Interval, y: Interval) -> Interval {
     if x.is_empty_raw() || y.is_empty_raw() {
         return Interval::EMPTY;
     }
-    product_bounds(x, y, mul_endpoint)
+    product_interval(x, y, mul_endpoint)
 }
 
 enum IntervalSign {
@@ -670,14 +789,28 @@ impl IntervalSign {
     }
 }
 
-// Select corners by the exact product order. Adding an endpoint of the
-// addend in FMA preserves this order and keeps the rounding fused.
 #[inline]
-fn product_bounds(
+fn product_interval(
     x: Interval,
     y: Interval,
     evaluate: impl Fn(f64, f64, Direction) -> f64,
 ) -> Interval {
+    let (lower, upper) = product_bounds(x, y, evaluate, |a, b, direction| match direction {
+        Direction::Down => a.min(b),
+        Direction::Up => a.max(b),
+    });
+    Interval::from_valid_bounds(lower, upper)
+}
+
+// Select corners by the exact product order. Evaluation can round a product,
+// fuse an addend, or retain the exact product for accumulation.
+#[inline]
+fn product_bounds<P>(
+    x: Interval,
+    y: Interval,
+    evaluate: impl Fn(f64, f64, Direction) -> P,
+    outward: impl Fn(P, P, Direction) -> P,
+) -> (P, P) {
     use IntervalSign::{Mixed, Nonnegative, Nonpositive};
 
     let x_inf = x.inf_raw();
@@ -697,17 +830,21 @@ fn product_bounds(
         (Mixed, Nonnegative) => ((x_inf, y_sup), (x_sup, y_sup)),
         (Mixed, Nonpositive) => ((x_sup, y_inf), (x_inf, y_inf)),
         (Mixed, Mixed) => {
-            return Interval::from_valid_bounds(
-                evaluate(x_inf, y_sup, Direction::Down).min(evaluate(
-                    x_sup,
-                    y_inf,
+            return (
+                outward(
+                    evaluate(x_inf, y_sup, Direction::Down),
+                    evaluate(x_sup, y_inf, Direction::Down),
                     Direction::Down,
-                )),
-                evaluate(x_inf, y_inf, Direction::Up).max(evaluate(x_sup, y_sup, Direction::Up)),
+                ),
+                outward(
+                    evaluate(x_inf, y_inf, Direction::Up),
+                    evaluate(x_sup, y_sup, Direction::Up),
+                    Direction::Up,
+                ),
             );
         }
     };
-    Interval::from_valid_bounds(
+    (
         evaluate(lower.0, lower.1, Direction::Down),
         evaluate(upper.0, upper.1, Direction::Up),
     )
@@ -868,7 +1005,7 @@ fn fma_bare(x: Interval, y: Interval, z: Interval) -> BareResult {
     if x.is_empty_raw() || y.is_empty_raw() || z.is_empty_raw() {
         return empty_result();
     }
-    let interval = product_bounds(x, y, |left, right, direction| {
+    let interval = product_interval(x, y, |left, right, direction| {
         let addend = match direction {
             Direction::Down => z.inf_raw(),
             Direction::Up => z.sup_raw(),

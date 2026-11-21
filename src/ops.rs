@@ -86,14 +86,40 @@ pub fn mul<T: IntervalDatum>(x: T, y: T) -> T {
 /// Endpoint sums are accumulated exactly and rounded outward once. An empty
 /// slice sums to zero. Empty operands produce Empty, and any `NaI` takes
 /// precedence for decorated input. The result inherits the weakest decoration.
+/// [`Iterator::sum`] uses the same accumulation for owned and borrowed intervals.
 #[must_use]
 pub fn sum<T: IntervalDatum>(terms: &[T]) -> T {
+    sum_iter(terms.iter().copied())
+}
+
+impl core::iter::Sum for Interval {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        sum_iter(iter)
+    }
+}
+
+impl<'a> core::iter::Sum<&'a Self> for Interval {
+    fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+        sum_iter(iter.copied())
+    }
+}
+
+impl core::iter::Sum for DecoratedInterval {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        sum_iter(iter)
+    }
+}
+
+impl<'a> core::iter::Sum<&'a Self> for DecoratedInterval {
+    fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+        sum_iter(iter.copied())
+    }
+}
+
+fn sum_iter<T: IntervalDatum>(terms: impl Iterator<Item = T>) -> T {
     let mut reduction = Reduction::new();
-    for &term in terms {
+    for term in terms {
         let term = reduction.include(term);
-        if reduction.decoration == Decoration::Ill {
-            break;
-        }
         if !reduction.empty {
             reduction.lower.add(term.inf_raw());
             reduction.upper.add(term.sup_raw());

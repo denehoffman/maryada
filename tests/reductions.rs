@@ -19,6 +19,37 @@ fn sum_rounds_once_after_cancellation() {
 }
 
 #[test]
+fn iterators_sum_owned_and_borrowed_intervals() {
+    let max = Interval::from(f64::MAX);
+    let tiny = Interval::from(f64::from_bits(1));
+    let terms = [max, max, tiny, -max, -max];
+    assert_eq!(terms.iter().sum::<Interval>(), tiny);
+    assert_eq!(
+        terms.into_iter().map(core::ops::Neg::neg).sum::<Interval>(),
+        -tiny
+    );
+
+    let defined = set_dec(Interval::ONE, Decoration::Def);
+    let terms = [DecoratedInterval::ONE, defined];
+    let expected = set_dec(Interval::from(2.0), Decoration::Def);
+    assert_eq!(terms.iter().sum::<DecoratedInterval>(), expected);
+    assert_eq!(terms.into_iter().sum::<DecoratedInterval>(), expected);
+    assert_eq!(
+        core::iter::empty::<Interval>().sum::<Interval>(),
+        Interval::ZERO
+    );
+
+    let terms = [DecoratedInterval::EMPTY, DecoratedInterval::NAI];
+    let mut consumed = 0_usize;
+    let result: DecoratedInterval = terms
+        .into_iter()
+        .inspect(|_| consumed = consumed.saturating_add(1))
+        .sum();
+    assert!(result.is_nai());
+    assert_eq!(consumed, terms.len());
+}
+
+#[test]
 fn dot_accumulates_products_before_rounding_or_overflow() {
     let max = Interval::from(f64::MAX);
     let tiny = Interval::from(f64::from_bits(1));

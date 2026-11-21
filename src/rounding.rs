@@ -480,7 +480,10 @@ impl ExactSum {
             *word = sum;
             carry = next_carry;
         }
-        debug_assert!(!carry);
+        // A sum iterator is not limited to a slice's length. Even with
+        // maximum-magnitude binary64 summands, exhausting a bank takes
+        // over 2^1116 additions. Check the carry to prevent wraparound.
+        assert!(!carry, "exact reduction accumulator overflow");
     }
 
     #[allow(clippy::arithmetic_side_effects, clippy::expect_used)]

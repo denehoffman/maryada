@@ -100,10 +100,14 @@ Use the same machine and Rust toolchain for before-and-after measurements. Run
 `cargo test --locked --all-features` alongside benchmark comparisons to check
 exactness and containment.
 
+## Python bindings
+
+The [Python bindings](bindings/python/README.md) provide immutable scalar real
+intervals through PyO3. Install from a checkout with `pip install .`.
+
 # Future plans
 
 - Linear algebra methods (a lot of this is done, but there are still some thing I want to add)
-- Potentially a PyO3 binding if I find it useful
 
 # Licensing
 

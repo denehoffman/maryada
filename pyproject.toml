@@ -1,0 +1,37 @@
+[build-system]
+requires = ["maturin>=1.9.4,<2"]
+build-backend = "maturin"
+
+[project]
+name = "maryada"
+dynamic = ["version"]
+description = "Outward-rounded binary64 interval arithmetic"
+readme = "bindings/python/README.md"
+requires-python = ">=3.11"
+license = "MIT OR Apache-2.0"
+license-files = ["LICENSE-APACHE", "LICENSE-MIT", "THIRD_PARTY_NOTICES.md"]
+
+[project.urls]
+Repository = "https://github.com/denehoffman/maryada"
+
+[dependency-groups]
+test = ["pytest>=8,<10", "ruff>=0.11,<1", "ty>=0.0.1,<1"]
+
+[tool.maturin]
+bindings = "pyo3"
+manifest-path = "bindings/python/Cargo.toml"
+module-name = "maryada._native"
+python-source = "bindings/python/python"
+exclude = ["ROADMAP.md"]
+
+[tool.ruff]
+src = ["bindings/python/python"]
+
+[tool.ruff.lint]
+extend-select = ["I"]
+
+[tool.ty.src]
+include = ["bindings/python"]
+
+[tool.pytest.ini_options]
+testpaths = ["bindings/python/tests"]

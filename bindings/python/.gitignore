@@ -1,0 +1,4 @@
+/target/
+__pycache__/
+/python/maryada/_native*.so
+/python/maryada/_native*.pyd

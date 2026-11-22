@@ -1,6 +1,6 @@
 # IEEE Std 1788.1-2017 conformance
 
-maryada conforms to IEEE Std 1788.1-2017 for its binary64 real interval API. This document describes the scope of that conformance, the declared accuracy modes, and the implementation of the standard's required features. The crate's rectangular complex interval extension is outside the scope of the standard.
+maryada conforms to IEEE Std 1788.1-2017 for its binary64 real interval API. This document describes the scope of that conformance, the declared accuracy modes, and the implementation of the standard's required features. The crate's complex interval extensions are outside the scope of the standard.
 
 ## Declared operation accuracy
 

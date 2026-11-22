@@ -1,13 +1,13 @@
 //! A `no_std` binary64 real interval arithmetic library conforming to IEEE 1788.1.
 //!
-//! The rectangular complex interval extension is outside the scope of the
+//! The complex interval extensions are outside the scope of the
 //! standard.
 //!
 //! maryada provides [`Interval`] and [`DecoratedInterval`] for outward-rounded
-//! real interval arithmetic, `ComplexBox` for rectangular complex intervals
-//! when the `complex` feature is enabled, and text and binary interchange operations. Most arithmetic functions are
-//! generic over [`IntervalDatum`], so the same standards-oriented free-function
-//! API works with bare and decorated intervals.
+//! real interval arithmetic and text and binary interchange. The `complex`
+//! feature adds `ComplexBox` and `ComplexDisk`. Most real arithmetic functions
+//! are generic over [`IntervalDatum`], so the same standards-oriented
+//! free-function API works with bare and decorated intervals.
 //!
 //! [`EnclosureOps`] provides chaining-friendly operations shared by real
 //! intervals and complex boxes. [`IntervalOps`] adds operations specific to
@@ -39,6 +39,8 @@ extern crate alloc;
 mod branch;
 #[cfg(feature = "complex")]
 mod complex;
+#[cfg(feature = "complex")]
+mod complex_disk;
 mod decimal_text;
 mod dual;
 mod enclosure;
@@ -57,7 +59,9 @@ mod ux;
 #[cfg(feature = "branch")]
 pub use branch::*;
 #[cfg(feature = "complex")]
-pub use complex::ComplexBox;
+pub use complex::{ComplexBox, ComplexEnclosure};
+#[cfg(feature = "complex")]
+pub use complex_disk::{ComplexDisk, ComplexDiskError};
 pub use decimal_text::{DecimalIntervalFormat, write_interval_decimal};
 pub use dual::IntervalDual;
 pub use enclosure::EnclosureOps;

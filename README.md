@@ -1,9 +1,9 @@
 # maryada
 [![Crates.io Version](https://img.shields.io/crates/v/maryada?style=for-the-badge&logo=rust&logoColor=%23D34516&labelColor=%231E2650&color=%23D34516)](https://crates.io/crates/maryada) [![docs.rs](https://img.shields.io/docsrs/maryada?style=for-the-badge&logo=docs.rs&logoColor=%23D34516&labelColor=%231E2650)](https://docs.rs/maryada/latest/maryada/) [![Codecov](https://img.shields.io/codecov/c/github/denehoffman/maryada?style=for-the-badge&logo=codecov)](https://app.codecov.io/gh/denehoffman/maryada) [![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/denehoffman/maryada/build-clippy-test.yml?style=for-the-badge&logo=github)](https://github.com/denehoffman/maryada/actions/workflows/build-clippy-test.yml)
 
-maryada is a `no_std` binary64 interval arithmetic library conforming to IEEE Std 1788.1-2017. It provides bare and decorated real intervals, outward-rounded elementary operations, and text and binary interchange. Rectangular complex intervals are available through an optional feature.
+maryada is a `no_std` binary64 interval arithmetic library conforming to IEEE Std 1788.1-2017. It provides bare and decorated real intervals, outward-rounded elementary operations, and text and binary interchange. Complex boxes and disks are available through an optional feature.
 
-The conformance claim applies to the real interval API. The rectangular complex interval extension is outside the scope of the standard. See [CONFORMANCE.md](CONFORMANCE.md) for the operation accuracy declarations, required features, implementation details, and test coverage.
+The conformance claim applies to the real interval API. The complex interval extensions are outside the scope of the standard. See [CONFORMANCE.md](CONFORMANCE.md) for the operation accuracy declarations, required features, implementation details, and test coverage.
 
 ```rust
 use maryada::{EnclosureOps, Interval, IntervalOps};
@@ -22,7 +22,7 @@ for exact hexadecimal interchange.
 
 ## Features
 
-- `complex` enables the `ComplexBox` rectangular complex interval API.
+- `complex` enables rectangular `ComplexBox` and bare `ComplexDisk` arithmetic, elementary functions, and polar queries.
 - `num-complex` enables `complex` plus interoperability with `num_complex::Complex64`.
 - `linalg` enables `IntervalMatrix`, verified linear solves, and nonlinear root contraction through `krawczyk_contract`.
 - `complex-linalg` enables allocation-backed complex interval matrices and verified complex solves.
@@ -35,6 +35,17 @@ literal strings that parse without IEEE exception flags. In binary formats,
 Serde writes a byte string with the same big-endian payload as `to_be_bytes`.
 The payload contains 16 bytes for an `Interval` and 17 for a `DecoratedInterval`.
 The outer byte-string framing is provided by the format.
+
+Complex boxes take validated interval components. Both bare complex types
+accept checked point conversion from `(f64, f64)`. Use `ComplexBox::from(disk)`
+for the rectangular hull or `ComplexDisk::try_from(rectangle)` for a disk hull.
+Both conversions can widen the set. A proper unbounded box cannot fit in a
+finite disk and returns a conversion error.
+
+Both shapes implement `ComplexEnclosure` for arithmetic and polar queries in
+generic code. Disk multiplication uses a fixed center by default.
+`disk.mul_recentered(other)` spends extra work to try a smaller radius.
+Disk elementary functions enclose the result through rectangular hulls.
 
 Complex systems use the same matrix-facing API as real systems. The default
 verified solve first applies a residual-centered complex epsilon-inflation
@@ -91,7 +102,6 @@ exactness and containment.
 
 # Future plans
 
-- Support for alternate complex interval space formulations, like disks and polyarcs
 - Linear algebra methods (a lot of this is done, but there are still some thing I want to add)
 - Potentially a PyO3 binding if I find it useful
 

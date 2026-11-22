@@ -6,10 +6,46 @@ use core::{
 use num_complex::Complex64;
 
 use crate::{
-    DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalOps, SignalSink,
+    DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalConstructionError, IntervalOps,
+    SignalSink,
     ops::div_interval,
     rounding::{self, Direction, FloatClass},
 };
+
+/// Arithmetic and polar queries shared by complex boxes and disks.
+///
+/// Generic code can use these operators and queries with either shape.
+/// Each shape defines its own geometry and enclosure accuracy.
+pub trait ComplexEnclosure:
+    Copy
+    + From<f64>
+    + Neg<Output = Self>
+    + Add<Output = Self>
+    + Sub<Output = Self>
+    + Mul<Output = Self>
+    + Div<Output = Self>
+{
+    /// The real interval type used for modulus and argument bounds.
+    type Real: IntervalOps;
+
+    /// Encloses the complex modulus.
+    #[must_use]
+    fn abs(self) -> Self::Real;
+
+    /// Encloses the principal argument in radians.
+    #[must_use]
+    fn arg(self) -> Self::Real;
+
+    /// Returns the complex conjugate.
+    #[must_use]
+    fn conj(self) -> Self;
+
+    /// Returns modulus and principal argument enclosures.
+    #[must_use]
+    fn to_polar(self) -> (Self::Real, Self::Real) {
+        (self.abs(), self.arg())
+    }
+}
 
 #[derive(Copy, Clone, Debug)]
 /// A rectangular complex interval with independent real and imaginary components.
@@ -515,6 +551,22 @@ impl<I: IntervalOps> ComplexBox<I> {
     }
 }
 
+impl<I: IntervalOps> ComplexEnclosure for ComplexBox<I> {
+    type Real = I;
+
+    fn abs(self) -> I {
+        Self::abs(self)
+    }
+
+    fn arg(self) -> I {
+        Self::arg(self)
+    }
+
+    fn conj(self) -> Self {
+        Self::conj(self)
+    }
+}
+
 impl<I: IntervalOps> Neg for ComplexBox<I> {
     type Output = Self;
 
@@ -608,7 +660,7 @@ fn div_non_axis_boxes(
 }
 
 #[allow(clippy::arithmetic_side_effects)]
-fn division_exponent(magnitude: f64) -> i32 {
+pub fn division_exponent(magnitude: f64) -> i32 {
     // When both magnitudes are in this range their dominant products have
     // room to be multiplied and added without overflow or underflow.
     const MIN: f64 = f64::from_bits((1023 - 500) << 52);
@@ -622,7 +674,7 @@ fn division_exponent(magnitude: f64) -> i32 {
     }
 }
 
-fn scale_box(value: ComplexBox<Interval>, exponent: i32) -> ComplexBox<Interval> {
+pub fn scale_box(value: ComplexBox<Interval>, exponent: i32) -> ComplexBox<Interval> {
     if exponent == 0 {
         return value;
     }
@@ -1027,6 +1079,18 @@ impl_num_complex_real_op!(Complex64, Div, div, div_complex_boxes);
 impl<I: IntervalOps> From<I> for ComplexBox<I> {
     fn from(value: I) -> Self {
         Self::new(value, I::ZERO)
+    }
+}
+
+impl TryFrom<(f64, f64)> for ComplexBox<Interval> {
+    type Error = IntervalConstructionError;
+
+    /// Embeds a finite complex point, checking each coordinate.
+    fn try_from((re, im): (f64, f64)) -> Result<Self, Self::Error> {
+        Ok(Self::new(
+            Interval::try_new(re, re)?,
+            Interval::try_new(im, im)?,
+        ))
     }
 }
 

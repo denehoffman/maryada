@@ -334,7 +334,7 @@ impl FloatClass {
 
 impl WideFloatClass {
     #[allow(clippy::arithmetic_side_effects)]
-    fn exact_product(x: f64, y: f64) -> Self {
+    pub(crate) fn exact_product(x: f64, y: f64) -> Self {
         match (FloatClass::new(x), FloatClass::new(y)) {
             (FloatClass::NaN, _)
             | (_, FloatClass::NaN)
@@ -388,6 +388,31 @@ impl WideFloatClass {
     }
 }
 
+// Round the sum of two exact finite products. Keeping both products wide also
+// permits cancellation when an individual product would overflow binary64.
+#[cfg(feature = "complex")]
+pub fn two_product_bounds(left: (f64, f64), right: (f64, f64)) -> (f64, f64) {
+    use WideFloatClass::{Finite, Zero};
+    let round = |value: WideDyadic| {
+        (
+            value.pack(false, Direction::Down),
+            value.pack(false, Direction::Up),
+        )
+    };
+    match (
+        WideFloatClass::exact_product(left.0, left.1),
+        WideFloatClass::exact_product(right.0, right.1),
+    ) {
+        (Finite(a), Finite(b)) => (
+            WideDyadic::round_sum(a, b, Direction::Down),
+            WideDyadic::round_sum(a, b, Direction::Up),
+        ),
+        (Finite(value), Zero { .. }) | (Zero { .. }, Finite(value)) => round(value),
+        (Zero { .. }, Zero { .. }) => (-0.0, 0.0),
+        _ => (f64::NAN, f64::NAN),
+    }
+}
+
 // Binary64 products are multiples of 2^-2148 and have magnitude below 2^2048.
 // A slice has at most 2^64 - 1 terms, which puts each sign total below 2^2112.
 const SUM_EXPONENT: i32 = -2148;
@@ -432,6 +457,11 @@ impl ExactSum {
             WideFloatClass::Infinity { .. } => self.infinite = true,
             _ => {}
         }
+    }
+
+    // Compare the finite contributions in the accumulator.
+    pub(crate) fn sign(&self) -> Ordering {
+        self.positive.iter().rev().cmp(self.negative.iter().rev())
     }
 
     // The shift is between 0 and 4090. Exactly three limbs suffice for
@@ -491,12 +521,7 @@ impl ExactSum {
         if self.infinite {
             return infinity(direction == Direction::Down);
         }
-        let negative = self
-            .positive
-            .iter()
-            .rev()
-            .cmp(self.negative.iter().rev())
-            .is_lt();
+        let negative = self.sign().is_lt();
         let (larger, smaller) = if negative {
             (&mut self.negative, &self.positive)
         } else {

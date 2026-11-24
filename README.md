@@ -102,8 +102,9 @@ exactness and containment.
 
 ## Python bindings
 
-The [Python bindings](bindings/python/README.md) provide immutable scalar real
-intervals through PyO3. Install from a checkout with `pip install .`.
+The [Python bindings](bindings/python/README.md) provide immutable bare and
+decorated scalar real intervals through PyO3. Install from a checkout with
+`pip install .`.
 
 # Future plans
 

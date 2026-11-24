@@ -59,9 +59,36 @@ static method lookup, so CPython's REPL can also suggest them on instances.
 
 Use `to_text()` for an exact hexadecimal literal, `repr(interval)` for a Python
 constructor expression, and `str(interval)` for display.
-Equality compares intervals as sets. Use `in` for point membership or interval
+Bare interval equality compares sets. Use `in` for point membership or interval
 containment. For intervals, `a in b` is equivalent to `a.subset(b)`, including
 when both intervals are equal or `a` is empty.
+
+## Decorated intervals
+
+`DecoratedInterval` provides the same scalar operations and carries an IEEE 1788
+decoration that records definedness and continuity. The `Decoration` enum runs
+from weakest to strongest as `ILL`, `TRV`, `DEF`, `DAC`, and `COM`.
+
+```python
+from maryada import DecoratedInterval, Decoration, Interval
+
+x = DecoratedInterval(-1, 4)
+assert x.sqrt().decoration is Decoration.TRV
+
+y = Interval(1, 2).decorate(Decoration.DEF)
+assert (1 + y).decoration is Decoration.DEF
+assert y.interval == Interval(1, 2)
+```
+
+In mixed arithmetic, a bare operand gets its strongest valid decoration and
+the result is decorated. Equality between decorated values compares both
+bounds and decoration. Membership compares the represented sets.
+
+`DecoratedInterval.empty()` represents the empty set, and
+`DecoratedInterval.nai()` represents Not an Interval. NaI propagates through
+arithmetic and raises `IntervalConstructionError` when you access `.interval`.
+Exact text and binary round-trips preserve the decoration and both special
+values.
 
 ## Develop
 

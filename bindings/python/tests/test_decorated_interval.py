@@ -6,6 +6,17 @@ import pytest
 from maryada import DecoratedInterval, Decoration, Interval, IntervalConstructionError
 
 
+@pytest.mark.parametrize("cls", [Interval, DecoratedInterval])
+def test_rust_real_aliases(cls: type[Interval] | type[DecoratedInterval]) -> None:
+    value = cls.from_mid_rad(midpoint=2, radius=1)
+    assert value == cls.from_mid_radius(2, 1)
+    assert value.from_mid_rad(2, 1) == value
+    assert value.sqr() == value.square()
+    assert value.recip() == value.reciprocal()
+    assert value.recip_split() == value.reciprocal_split()
+    assert value.powi(3) == value.pown(3)
+
+
 def test_checked_construction_selects_and_normalizes_decorations() -> None:
     assert DecoratedInterval(1, 2).decoration is Decoration.COM
     assert DecoratedInterval(-math.inf, 2).decoration is Decoration.DAC

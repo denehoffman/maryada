@@ -90,6 +90,46 @@ arithmetic and raises `IntervalConstructionError` when you access `.interval`.
 Exact text and binary round-trips preserve the decoration and both special
 values.
 
+## Complex enclosures
+
+`ComplexBox` encloses independent real and imaginary intervals.
+`ComplexDisk` encloses values within a radius of a complex center. Both
+support complex arithmetic, elementary functions, modulus and argument
+bounds, and set containment. Use `abs(z)` for a real interval enclosing the
+modulus.
+
+Both types accept finite binary64 complex points in arithmetic and membership
+tests. Box arithmetic also accepts a bare `Interval` along the real axis.
+`a in b` checks inclusive containment for two boxes or two disks.
+
+```python
+from maryada import ComplexBox, ComplexDisk, Interval
+
+box = ComplexBox(Interval(1, 2), Interval(-1, 1))
+assert 1.5 + 0.5j in box
+assert box in box.to_disk().to_box()
+
+disk = ComplexDisk(1 + 0j, 0.4375)
+assert 0j in disk * disk
+assert 0j not in disk.mul_recentered(disk)
+```
+
+Use `to_box()` for a disk's rectangular hull and `to_disk()` for a box's
+enclosing disk. Both conversions can widen the enclosure. A proper
+unbounded box or an overflowing radius raises `ComplexDiskError`.
+Ordinary disk multiplication uses the fixed-center product.
+`mul_recentered()` spends extra work to try a smaller radius.
+
+## Rust method names
+
+`sqr()`, `recip()`, and `powi()` are aliases for `square()`, `reciprocal()`,
+and `pown()`. Complex enclosures also support `conj()` for `conjugate()`.
+Real intervals support `recip_split()` and `from_mid_rad()` alongside
+`reciprocal_split()` and `from_mid_radius()`.
+
+Rust inspection methods such as `inf()`, `mid()`, and `wid()` correspond
+to Python properties such as `lower`, `midpoint`, and `width`.
+
 ## Develop
 
 From the repository root, use uv to install the package and test dependencies

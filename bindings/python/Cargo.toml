@@ -12,5 +12,6 @@ name = "_native"
 crate-type = ["cdylib"]
 
 [dependencies]
-maryada = { path = "../.." }
-pyo3 = { version = "0.30.1", features = ["abi3-py311"] }
+maryada = { path = "../..", features = ["num-complex"] }
+num-complex = "0.4.6"
+pyo3 = { version = "0.30.1", features = ["abi3-py311", "num-complex"] }

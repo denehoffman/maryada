@@ -15,6 +15,8 @@ use pyo3::{
     types::{PyBytes, PyFloat, PyInt, PyTuple, PyType},
 };
 
+mod complex;
+
 create_exception!(
     maryada,
     IntervalConstructionError,
@@ -280,13 +282,7 @@ macro_rules! interval_methods {
 
             /// Inflate by relative and absolute amounts.
             fn inflate(&self, relative: &Bound<'_, PyAny>, absolute: &Bound<'_, PyAny>) -> PyResult<Self> {
-                let relative = scalar_argument(relative, "relative")?;
-                let absolute = scalar_argument(absolute, "absolute")?;
-                if relative.is_nan() || relative < 0.0 || absolute.is_nan() || absolute < 0.0 {
-                    return Err(IntervalConstructionError::new_err(
-                        "inflation amounts must be nonnegative",
-                    ));
-                }
+                let (relative, absolute) = inflation_amounts(relative, absolute)?;
                 Ok(Self(self.0.inflate(relative, absolute)))
             }
 
@@ -811,6 +807,20 @@ fn scalar_argument(value: &Bound<'_, PyAny>, argument: &str) -> PyResult<f64> {
         .ok_or_else(|| PyTypeError::new_err(format!("{argument} must be a float or int")))
 }
 
+fn inflation_amounts(
+    relative: &Bound<'_, PyAny>,
+    absolute: &Bound<'_, PyAny>,
+) -> PyResult<(f64, f64)> {
+    let relative = scalar_argument(relative, "relative")?;
+    let absolute = scalar_argument(absolute, "absolute")?;
+    if relative.is_nan() || relative < 0.0 || absolute.is_nan() || absolute < 0.0 {
+        return Err(IntervalConstructionError::new_err(
+            "inflation amounts must be nonnegative",
+        ));
+    }
+    Ok((relative, absolute))
+}
+
 fn components<'py, I: IntervalDatum, T: IntoPyObject<'py>>(
     py: Python<'py>,
     set: IntervalSet<I>,
@@ -841,6 +851,16 @@ fn binary64(value: &Bound<'_, PyAny>) -> PyResult<Option<f64>> {
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyInterval>()?;
     module.add_class::<PyDecoratedInterval>()?;
+    let aliases = [
+        ("sqr", "square"),
+        ("recip", "reciprocal"),
+        ("recip_split", "reciprocal_split"),
+        ("powi", "pown"),
+        ("from_mid_rad", "from_mid_radius"),
+    ];
+    add_method_aliases(&module.py().get_type::<PyInterval>(), &aliases)?;
+    add_method_aliases(&module.py().get_type::<PyDecoratedInterval>(), &aliases)?;
+    complex::register(module)?;
     module.add(
         "IntervalConstructionError",
         module.py().get_type::<IntervalConstructionError>(),
@@ -849,4 +869,13 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         "IntervalParseError",
         module.py().get_type::<IntervalParseError>(),
     )
+}
+
+fn add_method_aliases(class: &Bound<'_, PyType>, aliases: &[(&str, &str)]) -> PyResult<()> {
+    let methods = class.getattr("__dict__")?;
+    for &(alias, original) in aliases {
+        // Copy the raw descriptor so static methods stay static.
+        class.setattr(alias, methods.get_item(original)?)?;
+    }
+    Ok(())
 }

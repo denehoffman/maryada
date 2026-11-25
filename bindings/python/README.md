@@ -31,6 +31,11 @@ are subclasses of `ValueError`. A valid empty set is represented by
 the input has no nonnegative members. `Interval.entire()` represents all real
 numbers.
 
+`IntervalParseError.kind` is an `IntervalParseErrorKind` enum member.
+`byte_offset` is a zero-based UTF-8 byte offset into the original text.
+For a rejected ambiguous ordering, the kind is `POSSIBLY_UNDEFINED` and
+the offset is `None`. Both real interval types expose these diagnostics.
+
 Call alternate constructors on the class, for example `Interval.point(3)`,
 `Interval.parse("...")`, and `Interval.from_bytes(data)`. They use Python's
 static method lookup, so CPython's REPL can also suggest them on instances.
@@ -62,6 +67,14 @@ constructor expression, and `str(interval)` for display.
 Bare interval equality compares sets. Use `in` for point membership or interval
 containment. For intervals, `a in b` is equivalent to `a.subset(b)`, including
 when both intervals are equal or `a` is empty.
+
+The [weighted-sum example](examples/weighted_sum.py) uses `Interval.dot()`
+to check a budget against uncertain usage and prints the exact interval
+literal for storage. Run it from the checkout after installing the package.
+
+```sh
+python bindings/python/examples/weighted_sum.py
+```
 
 ## Decorated intervals
 

@@ -3,7 +3,14 @@ from typing import assert_type
 
 import pytest
 
-from maryada import DecoratedInterval, Decoration, Interval, IntervalConstructionError
+from maryada import (
+    DecoratedInterval,
+    Decoration,
+    Interval,
+    IntervalConstructionError,
+    IntervalParseError,
+    IntervalParseErrorKind,
+)
 
 
 @pytest.mark.parametrize("cls", [Interval, DecoratedInterval])
@@ -141,3 +148,14 @@ def test_invalid_binary_and_distinct_special_text_are_typed() -> None:
         tuple[DecoratedInterval, bool],
     )
     assert possibly_undefined and result.decoration is Decoration.DEF
+
+
+def test_decorated_parse_exposes_rust_diagnostics() -> None:
+    with pytest.raises(IntervalParseError) as raised:
+        DecoratedInterval.parse_checked("[1]_invalid")
+    assert raised.value.kind is IntervalParseErrorKind.INVALID_DECORATION
+    assert raised.value.byte_offset == 4
+    with pytest.raises(IntervalParseError) as ambiguous:
+        DecoratedInterval.parse("[0.100000000000000001,1/10]_def")
+    assert ambiguous.value.kind is IntervalParseErrorKind.POSSIBLY_UNDEFINED
+    assert ambiguous.value.byte_offset is None

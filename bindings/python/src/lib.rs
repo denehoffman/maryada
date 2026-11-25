@@ -5,14 +5,15 @@ use std::{
 
 use maryada::{
     DecimalIntervalFormat, DecoratedInterval, Decoration, EnclosureOps, Interval, IntervalDatum,
-    IntervalOps, IntervalSet, Signal, SignalFlags, div_split, expm1, interval_part,
-    interval_to_text, log1p, recip_split, set_dec, write_interval_decimal,
+    IntervalOps, IntervalSet, ParseIntervalDiagnostic, ParseIntervalErrorKind, Signal, SignalFlags,
+    div_split, expm1, interval_part, interval_to_text, log1p, recip_split, set_dec,
+    write_interval_decimal,
 };
 use pyo3::{
     create_exception,
     exceptions::{PyOverflowError, PyRuntimeError, PyTypeError, PyValueError},
     prelude::*,
-    types::{PyBytes, PyFloat, PyInt, PyTuple, PyType},
+    types::{PyBytes, PyDict, PyFloat, PyInt, PyTuple, PyType},
 };
 
 mod complex;
@@ -22,12 +23,6 @@ create_exception!(
     IntervalConstructionError,
     PyValueError,
     "Numeric inputs do not define a valid interval."
-);
-create_exception!(
-    maryada,
-    IntervalParseError,
-    PyValueError,
-    "An interval literal is invalid or its endpoint order is ambiguous."
 );
 
 /// An immutable closed binary64 interval.
@@ -96,11 +91,14 @@ macro_rules! interval_methods {
 
             /// Parse an IEEE interval literal and round its bounds outward.
             #[staticmethod]
-            fn parse(text: &str) -> PyResult<Self> {
-                let (value, possibly_undefined) = Self::parse_checked(text)?;
+            fn parse(py: Python<'_>, text: &str) -> PyResult<Self> {
+                let (value, possibly_undefined) = Self::parse_checked(py, text)?;
                 if possibly_undefined {
-                    return Err(IntervalParseError::new_err(
+                    return Err(parse_error(
+                        py,
+                        "possibly_undefined",
                         "the exact order of the interval endpoints could not be determined",
+                        None,
                     ));
                 }
                 Ok(value)
@@ -108,9 +106,9 @@ macro_rules! interval_methods {
 
             /// Return the enclosure and whether exact endpoint order was uncertain.
             #[staticmethod]
-            fn parse_checked(text: &str) -> PyResult<(Self, bool)> {
+            fn parse_checked(py: Python<'_>, text: &str) -> PyResult<(Self, bool)> {
                 let (value, flags) = $datum::parse_checked(text)
-                    .map_err(|error| IntervalParseError::new_err(error.to_string()))?;
+                    .map_err(|error| parse_diagnostic(py, error))?;
                 Ok((
                     Self(value),
                     flags.contains(Signal::PossiblyUndefinedOperation),
@@ -847,6 +845,40 @@ fn binary64(value: &Bound<'_, PyAny>) -> PyResult<Option<f64>> {
     Ok(None)
 }
 
+fn parse_diagnostic(py: Python<'_>, diagnostic: ParseIntervalDiagnostic) -> PyErr {
+    let kind = match diagnostic.kind {
+        ParseIntervalErrorKind::InvalidSyntax => "invalid_syntax",
+        ParseIntervalErrorKind::InvalidNumber => "invalid_number",
+        ParseIntervalErrorKind::InvalidDecoration => "invalid_decoration",
+        ParseIntervalErrorKind::ReversedBounds => "reversed_bounds",
+        ParseIntervalErrorKind::InvalidInfinity => "invalid_infinity",
+        ParseIntervalErrorKind::InvalidUncertainty => "invalid_uncertainty",
+    };
+    parse_error(
+        py,
+        kind,
+        &diagnostic.to_string(),
+        Some(diagnostic.byte_offset),
+    )
+}
+
+fn parse_error(py: Python<'_>, kind: &str, message: &str, byte_offset: Option<usize>) -> PyErr {
+    let make_error = || {
+        let module = py.import("maryada._parse")?;
+        let kind = module.getattr("IntervalParseErrorKind")?.call1((kind,))?;
+        let kwargs = PyDict::new(py);
+        kwargs.set_item("kind", kind)?;
+        kwargs.set_item("byte_offset", byte_offset)?;
+        module
+            .getattr("IntervalParseError")?
+            .call((message,), Some(&kwargs))
+    };
+    match make_error() {
+        Ok(error) => PyErr::from_value(error),
+        Err(error) => error,
+    }
+}
+
 #[pymodule]
 fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyInterval>()?;
@@ -867,7 +899,10 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     )?;
     module.add(
         "IntervalParseError",
-        module.py().get_type::<IntervalParseError>(),
+        module
+            .py()
+            .import("maryada._parse")?
+            .getattr("IntervalParseError")?,
     )
 }
 

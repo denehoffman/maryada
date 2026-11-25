@@ -11,9 +11,8 @@ from ._native import (
 from ._native import (
     IntervalConstructionError as IntervalConstructionError,
 )
-from ._native import (
-    IntervalParseError as IntervalParseError,
-)
+from ._parse import IntervalParseError as IntervalParseError
+from ._parse import IntervalParseErrorKind as IntervalParseErrorKind
 
 __all__ = [
     "ComplexBox",
@@ -24,4 +23,5 @@ __all__ = [
     "Interval",
     "IntervalConstructionError",
     "IntervalParseError",
+    "IntervalParseErrorKind",
 ]

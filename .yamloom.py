@@ -1,6 +1,7 @@
 from yamloom.actions.ci.coverage import Codecov
 from yamloom.actions.github.release import ReleasePlease
 from yamloom.actions.github.scm import Checkout
+from yamloom.actions.toolchains.python import SetupUV
 from yamloom.actions.toolchains.rust import InstallRustTool, SetupRust
 
 from yamloom import (
@@ -157,10 +158,58 @@ fi
     },
 )
 
+python_wheel = Workflow(
+    name='Python wheel',
+    on=Events(
+        push=PushEvent(branches=['main']),
+        pull_request=PullRequestEvent(),
+        workflow_dispatch=WorkflowDispatchEvent(),
+    ),
+    jobs={
+        'test-wheel': Job(
+            runs_on='ubuntu-latest',
+            steps=[
+                Checkout(name='Check out repository'),
+                SetupRust(name='Install Rust', toolchain='1.89.0', cache=True),
+                SetupUV(name='Install uv'),
+                script(
+                    """uv build --wheel --python 3.11 --config-setting build-args=--locked \\
+  --out-dir "$RUNNER_TEMP/maryada-wheels"
+""",
+                    name='Build the Python wheel',
+                ),
+                script(
+                    """set -euo pipefail
+checks="$RUNNER_TEMP/maryada-checks"
+mkdir -p "$checks"
+cp -r bindings/python/tests bindings/python/examples "$checks"
+for version in 3.11 3.14; do
+  environment="$RUNNER_TEMP/maryada-python-$version"
+  uv venv --python "$version" "$environment"
+  uv pip install --python "$environment/bin/python" --group test \\
+    "$RUNNER_TEMP"/maryada-wheels/*.whl
+  (
+    cd "$checks"
+    "$environment/bin/python" -I -m pytest -q tests
+    "$environment/bin/ty" check --python "$environment/bin/python" tests examples
+    "$environment/bin/python" -I examples/weighted_sum.py
+  )
+done
+"$environment/bin/ruff" check bindings/python
+"$environment/bin/ruff" format --check bindings/python
+""",
+                    name='Test the installed wheel on CPython 3.11 and 3.14',
+                ),
+            ],
+        ),
+    },
+)
+
 sync(
     {
         'release-please.yml': release_please,
         'codecov.yml': codecov,
         'build-clippy-test.yml': build_clippy_test,
+        'python-wheel.yml': python_wheel,
     }
 )

@@ -8,7 +8,12 @@ from typing import assert_type
 
 import pytest
 
-from maryada import Interval, IntervalConstructionError, IntervalParseError
+from maryada import (
+    Interval,
+    IntervalConstructionError,
+    IntervalParseError,
+    IntervalParseErrorKind,
+)
 
 
 def test_construction_and_typing() -> None:
@@ -117,10 +122,34 @@ def test_decimal_parsing_and_arithmetic_enclose_exact_values() -> None:
 
 def test_parse_errors_are_distinct_from_empty() -> None:
     assert Interval.parse("[empty]").is_empty()
-    with pytest.raises(IntervalParseError, match="at byte 3"):
+    with pytest.raises(IntervalParseError, match="at byte 3") as rejected:
         Interval.parse("[2,1]")
-    with pytest.raises(IntervalParseError, match="exact order"):
+    assert rejected.value.kind is IntervalParseErrorKind.REVERSED_BOUNDS
+    assert rejected.value.byte_offset == 3
+    with pytest.raises(IntervalParseError, match="exact order") as ambiguous:
         Interval.parse("[0.100000000000000001,1/10]")
+    assert ambiguous.value.kind is IntervalParseErrorKind.POSSIBLY_UNDEFINED
+    assert ambiguous.value.byte_offset is None
+
+
+@pytest.mark.parametrize(
+    ("text", "kind", "offset"),
+    [
+        ("[1,2", IntervalParseErrorKind.INVALID_SYNTAX, 4),
+        ("\u2003[1, \u2002bad]", IntervalParseErrorKind.INVALID_NUMBER, 10),
+        ("[inf]", IntervalParseErrorKind.INVALID_INFINITY, 1),
+        (" 1?oops ", IntervalParseErrorKind.INVALID_UNCERTAINTY, 3),
+    ],
+)
+def test_parse_checked_exposes_rust_diagnostics(
+    text: str, kind: IntervalParseErrorKind, offset: int
+) -> None:
+    with pytest.raises(IntervalParseError) as raised:
+        Interval.parse_checked(text)
+    error = raised.value
+    assert isinstance(error, ValueError)
+    assert assert_type(error.kind, IntervalParseErrorKind) is kind
+    assert assert_type(error.byte_offset, int | None) == offset
 
 
 def test_repr_uses_python_constructors() -> None:

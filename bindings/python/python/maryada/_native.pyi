@@ -2,6 +2,7 @@ from collections.abc import Iterable
 from typing import ClassVar, Literal, TypeAlias, final
 
 from ._decoration import Decoration
+from ._parse import IntervalParseError as IntervalParseError
 
 __all__ = [
     "ComplexBox",
@@ -18,7 +19,6 @@ _ByteOrder: TypeAlias = Literal["big", "little"]
 _DecimalNotation: TypeAlias = Literal["fixed", "scientific", "center_radius"]
 
 class IntervalConstructionError(ValueError): ...
-class IntervalParseError(ValueError): ...
 
 @final
 class Interval:

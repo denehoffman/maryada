@@ -1,0 +1,48 @@
+# yamloom: generated from .yamloom.py
+---
+name: Python wheel
+"on":
+  push:
+    branches:
+      - main
+  pull_request: ~
+  workflow_dispatch: ~
+jobs:
+  test-wheel:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.89.0
+          cache: true
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+      - name: Build the Python wheel
+        run: |
+          uv build --wheel --python 3.11 --config-setting build-args=--locked \
+            --out-dir "$RUNNER_TEMP/maryada-wheels"
+      - name: Test the installed wheel on CPython 3.11 and 3.14
+        run: |
+          set -euo pipefail
+          checks="$RUNNER_TEMP/maryada-checks"
+          mkdir -p "$checks"
+          cp -r bindings/python/tests bindings/python/examples "$checks"
+          for version in 3.11 3.14; do
+            environment="$RUNNER_TEMP/maryada-python-$version"
+            uv venv --python "$version" "$environment"
+            uv pip install --python "$environment/bin/python" --group test \
+              "$RUNNER_TEMP"/maryada-wheels/*.whl
+            (
+              cd "$checks"
+              "$environment/bin/python" -I -m pytest -q tests
+              "$environment/bin/ty" check --python "$environment/bin/python" tests examples
+              "$environment/bin/python" -I examples/weighted_sum.py
+            )
+          done
+          "$environment/bin/ruff" check bindings/python
+          "$environment/bin/ruff" format --check bindings/python

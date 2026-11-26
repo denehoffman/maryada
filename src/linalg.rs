@@ -27,7 +27,7 @@ use nalgebra::{
 #[cfg(feature = "alloc")]
 use nalgebra::{Dyn, VecStorage};
 
-#[cfg(feature = "complex")]
+#[cfg(all(feature = "complex", feature = "num-complex"))]
 use crate::ComplexBox;
 use crate::{
     EnclosureOps, IntervalOps,

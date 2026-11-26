@@ -1,5 +1,6 @@
+//! Integration tests for serde round trips and validation of interval data.
 #![cfg(feature = "serde")]
-#![allow(missing_docs, clippy::unwrap_used)]
+#![allow(clippy::unwrap_used)]
 
 use maryada::{DecoratedInterval, Decoration, Interval, IntervalOps, set_dec};
 use serde::{Serialize, de::DeserializeOwned};

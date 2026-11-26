@@ -1,6 +1,6 @@
+//! Integration tests for the Krawczyk contractor on nonlinear interval systems.
 #![cfg(feature = "linalg")]
 #![allow(
-    missing_docs,
     clippy::arithmetic_side_effects,
     clippy::indexing_slicing,
     clippy::unwrap_used

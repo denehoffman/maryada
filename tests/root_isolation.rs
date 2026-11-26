@@ -1,5 +1,6 @@
+//! Integration tests for interval root isolation and its termination states.
 #![cfg(feature = "branch")]
-#![allow(missing_docs, clippy::arithmetic_side_effects, clippy::unwrap_used)]
+#![allow(clippy::arithmetic_side_effects, clippy::unwrap_used)]
 
 use core::convert::Infallible;
 

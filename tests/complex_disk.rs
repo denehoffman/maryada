@@ -1,5 +1,6 @@
+//! Integration tests for complex disk enclosures and arithmetic.
 #![cfg(feature = "complex")]
-#![allow(missing_docs, clippy::arithmetic_side_effects, clippy::unwrap_used)]
+#![allow(clippy::arithmetic_side_effects, clippy::unwrap_used)]
 
 use maryada::{
     ComplexBox, ComplexDisk, ComplexDiskError, ComplexEnclosure, Interval,

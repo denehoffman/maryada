@@ -1,0 +1,177 @@
+# yamloom: generated from .yamloom.py
+---
+name: Build and publish maryada
+"on":
+  push:
+    tags:
+      - v*
+  workflow_dispatch: ~
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  preflight:
+    name: Verify release versions
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+      - run: |
+          python3 - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+          with Path("Cargo.toml").open("rb") as manifest:
+              rust = tomllib.load(manifest)["package"]["version"]
+          with Path("bindings/python/Cargo.toml").open("rb") as manifest:
+              python = tomllib.load(manifest)["package"]["version"]
+          if rust != python:
+              raise SystemExit(f"Rust version {rust} does not match Python version {python}")
+          if os.environ["GITHUB_REF_TYPE"] == "tag":
+              tag = os.environ["GITHUB_REF_NAME"]
+              if tag != f"v{rust}":
+                  raise SystemExit(f"Tag {tag} does not match package version {rust}")
+          PY
+  rust-checks:
+    uses: "./.github/workflows/build-clippy-test.yml"
+  wheels:
+    name: Build and test wheel (${{ matrix.platform.runner }})
+    permissions:
+      contents: read
+    needs:
+      - preflight
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      matrix:
+        platform:
+          - runner: ubuntu-24.04
+            target: x86_64
+            manylinux: "2014"
+            interpreter: python3.11
+          - runner: ubuntu-24.04-arm
+            target: aarch64
+            manylinux: "2014"
+            interpreter: python3.11
+          - runner: windows-latest
+            target: x64
+            interpreter: python
+          - runner: macos-15-intel
+            target: x86_64
+            interpreter: python
+          - runner: macos-latest
+            target: aarch64
+            interpreter: python
+      fail-fast: false
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          manylinux: ${{ matrix.platform.manylinux }}
+          target: ${{ matrix.platform.target }}
+          rust-toolchain: 1.89.0
+          args: --release --locked --out dist --interpreter ${{ matrix.platform.interpreter }}
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+      - name: Run pytest against the packaged distribution
+        run: |
+          set -- dist/maryada-*
+          if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+            echo 'Expected exactly one distribution file' >&2
+            exit 1
+          fi
+          uv run --isolated --no-project --with "$1" --with 'pytest>=8,<10' --python 3.11 \
+            python -I -m pytest -q bindings/python/tests
+        shell: bash
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          path: dist/maryada-*
+          name: maryada-wheel-${{ matrix.platform.runner }}
+  sdist:
+    name: Build and test source distribution
+    permissions:
+      contents: read
+    needs:
+      - preflight
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+      - name: Build source distribution
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: "--out dist"
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.89.0
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v7
+      - name: Run pytest against the packaged distribution
+        run: |
+          set -- dist/maryada-*
+          if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+            echo 'Expected exactly one distribution file' >&2
+            exit 1
+          fi
+          uv run --isolated --no-project --with "$1" --with 'pytest>=8,<10' --python 3.11 \
+            python -I -m pytest -q bindings/python/tests
+        shell: bash
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v6
+        with:
+          path: dist/maryada-*
+          name: maryada-sdist
+  publish-python:
+    name: Publish to PyPI
+    permissions:
+      id-token: write
+    needs:
+      - rust-checks
+      - wheels
+      - sdist
+    if: "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
+    runs-on: ubuntu-24.04
+    environment: pypi
+    steps:
+      - name: Download Artifact
+        uses: actions/download-artifact@v7
+        with:
+          pattern: maryada-*
+          path: dist
+          merge-multiple: true
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+  publish-rust:
+    name: Publish to crates.io
+    permissions:
+      contents: read
+    needs:
+      - rust-checks
+      - wheels
+      - sdist
+    if: "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+      - run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

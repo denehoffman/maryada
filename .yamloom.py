@@ -1,19 +1,26 @@
-from yamloom.actions.ci.coverage import Codecov
-from yamloom.actions.github.release import ReleasePlease
-from yamloom.actions.github.scm import Checkout
-from yamloom.actions.toolchains.python import SetupUV
-from yamloom.actions.toolchains.rust import InstallRustTool, SetupRust
-
 from yamloom import (
+    Concurrency,
+    Environment,
     Events,
     Job,
+    Matrix,
+    Permissions,
     PullRequestEvent,
     PushEvent,
+    Strategy,
     Workflow,
+    WorkflowCallEvent,
     WorkflowDispatchEvent,
     script,
     sync,
 )
+from yamloom.actions.ci.coverage import Codecov
+from yamloom.actions.github.artifacts import DownloadArtifact, UploadArtifact
+from yamloom.actions.github.release import ReleasePlease
+from yamloom.actions.github.scm import Checkout
+from yamloom.actions.packaging.python import Maturin, PypiPublish
+from yamloom.actions.toolchains.python import SetupPython, SetupUV
+from yamloom.actions.toolchains.rust import InstallRustTool, SetupRust
 
 release_please = Workflow(
     name='Release Please',
@@ -27,7 +34,7 @@ release_please = Workflow(
             steps=[
                 ReleasePlease(
                     name='Create or update release PR',
-                    token='${{ secrets.RELEASE_PLEASE }}',  # noqa: S106
+                    token='${{ secrets.RELEASE_PLEASE }}',
                     config_file='release-please-config.json',
                     manifest_file='.release-please-manifest.json',
                 ),
@@ -64,7 +71,7 @@ codecov = Workflow(
                 ),
                 Codecov(
                     name='Upload coverage to Codecov',
-                    token='${{ secrets.CODECOV_TOKEN }}',  # noqa: S106
+                    token='${{ secrets.CODECOV_TOKEN }}',
                     files='lcov.info',
                     fail_ci_if_error=True,
                 ),
@@ -74,10 +81,11 @@ codecov = Workflow(
 )
 
 build_clippy_test = Workflow(
-    name='Build, clippy, test, and release',
+    name='Build, clippy, and test',
     on=Events(
-        push=PushEvent(branches=['main'], tags=['v*']),
+        push=PushEvent(branches=['main']),
         pull_request=PullRequestEvent(),
+        workflow_call=WorkflowCallEvent(),
         workflow_dispatch=WorkflowDispatchEvent(),
     ),
     env={'CARGO_TERM_COLOR': 'always'},
@@ -128,33 +136,6 @@ build_clippy_test = Workflow(
                 ),
             ],
         ),
-        'release': Job(
-            name='Publish to crates.io',
-            condition=("github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"),
-            needs=['build', 'clippy', 'test'],
-            runs_on='ubuntu-latest',
-            steps=[
-                Checkout(name='Check out repository'),
-                SetupRust(name='Install Rust', toolchain='stable'),
-                script(
-                    """crate_version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "maryada") | .version')
-tag_version="${GITHUB_REF_NAME#v}"
-if [ "$tag_version" != "$crate_version" ]; then
-  echo "Tag version $tag_version does not match crate version $crate_version" >&2
-  exit 1
-fi
-""",
-                    name='Verify tag matches crate version',
-                ),
-                script(
-                    'cargo publish --locked',
-                    name='Publish crate',
-                    env={
-                        'CARGO_REGISTRY_TOKEN': ('${{ secrets.CARGO_REGISTRY_TOKEN }}'),
-                    },
-                ),
-            ],
-        ),
     },
 )
 
@@ -183,7 +164,7 @@ python_wheel = Workflow(
 checks="$RUNNER_TEMP/maryada-checks"
 mkdir -p "$checks"
 cp -r bindings/python/tests bindings/python/examples "$checks"
-for version in 3.11 3.14; do
+for version in 3.11 3.14+gil; do
   environment="$RUNNER_TEMP/maryada-python-$version"
   uv venv --python "$version" "$environment"
   uv pip install --python "$environment/bin/python" --group test \\
@@ -205,11 +186,147 @@ done
     },
 )
 
+tag_push = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')"
+wheel_platforms = (
+    {
+        'runner': 'ubuntu-24.04',
+        'target': 'x86_64',
+        'manylinux': '2014',
+        'interpreter': 'python3.11',
+    },
+    {
+        'runner': 'ubuntu-24.04-arm',
+        'target': 'aarch64',
+        'manylinux': '2014',
+        'interpreter': 'python3.11',
+    },
+    {'runner': 'windows-latest', 'target': 'x64', 'interpreter': 'python'},
+    {'runner': 'macos-15-intel', 'target': 'x86_64', 'interpreter': 'python'},
+    {'runner': 'macos-latest', 'target': 'aarch64', 'interpreter': 'python'},
+)
+test_distribution = script(
+    """set -- dist/maryada-*
+if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+  echo 'Expected exactly one distribution file' >&2
+  exit 1
+fi
+uv run --isolated --no-project --with "$1" --with 'pytest>=8,<10' --python 3.11 \\
+  python -I -m pytest -q bindings/python/tests
+""",
+    shell='bash',
+    name='Run pytest against the packaged distribution',
+)
+
+python_release = Workflow(
+    name='Build and publish maryada',
+    on=Events(push=PushEvent(tags=['v*']), workflow_dispatch=WorkflowDispatchEvent()),
+    permissions=Permissions(contents='read'),
+    concurrency=Concurrency(
+        '${{ github.workflow }}-${{ github.ref }}', cancel_in_progress=False
+    ),
+    jobs={
+        'preflight': Job(
+            name='Verify release versions',
+            runs_on='ubuntu-24.04',
+            steps=[
+                Checkout(),
+                script(
+                    """python3 - <<'PY'
+import os
+import tomllib
+from pathlib import Path
+with Path("Cargo.toml").open("rb") as manifest:
+    rust = tomllib.load(manifest)["package"]["version"]
+with Path("bindings/python/Cargo.toml").open("rb") as manifest:
+    python = tomllib.load(manifest)["package"]["version"]
+if rust != python:
+    raise SystemExit(f"Rust version {rust} does not match Python version {python}")
+if os.environ["GITHUB_REF_TYPE"] == "tag":
+    tag = os.environ["GITHUB_REF_NAME"]
+    if tag != f"v{rust}":
+        raise SystemExit(f"Tag {tag} does not match package version {rust}")
+PY
+""",
+                ),
+            ],
+        ),
+        'rust-checks': Job(uses='./.github/workflows/build-clippy-test.yml'),
+        'wheels': Job(
+            name='Build and test wheel (${{ matrix.platform.runner }})',
+            needs=['preflight'],
+            runs_on='${{ matrix.platform.runner }}',
+            strategy=Strategy(
+                fast_fail=False, matrix=Matrix(platform=list(wheel_platforms))
+            ),
+            steps=[
+                Checkout(),
+                SetupPython(python_version='3.11'),
+                Maturin(
+                    name='Build wheel',
+                    rust_toolchain='1.89.0',
+                    target='${{ matrix.platform.target }}',
+                    manylinux='${{ matrix.platform.manylinux }}',
+                    args='--release --locked --out dist --interpreter ${{ matrix.platform.interpreter }}',
+                ),
+                SetupUV(),
+                test_distribution,
+                UploadArtifact(
+                    path='dist/maryada-*',
+                    artifact_name='maryada-wheel-${{ matrix.platform.runner }}',
+                ),
+            ],
+        ),
+        'sdist': Job(
+            name='Build and test source distribution',
+            needs=['preflight'],
+            runs_on='ubuntu-24.04',
+            steps=[
+                Checkout(),
+                Maturin(
+                    name='Build source distribution',
+                    command='sdist',
+                    args='--out dist',
+                ),
+                SetupRust(toolchain='1.89.0'),
+                SetupUV(),
+                test_distribution,
+                UploadArtifact(path='dist/maryada-*', artifact_name='maryada-sdist'),
+            ],
+        ),
+        'publish-python': Job(
+            name='Publish to PyPI',
+            condition=tag_push,
+            needs=['rust-checks', 'wheels', 'sdist'],
+            runs_on='ubuntu-24.04',
+            environment=Environment('pypi'),
+            steps=[
+                DownloadArtifact(path='dist', pattern='maryada-*', merge_multiple=True),
+                PypiPublish(packages_dir='dist/'),
+            ],
+        ),
+        'publish-rust': Job(
+            name='Publish to crates.io',
+            condition=tag_push,
+            needs=['rust-checks', 'wheels', 'sdist'],
+            runs_on='ubuntu-24.04',
+            steps=[
+                Checkout(),
+                SetupRust(toolchain='stable'),
+                script(
+                    'cargo publish --locked',
+                    env={'CARGO_REGISTRY_TOKEN': '${{ secrets.CARGO_REGISTRY_TOKEN }}'},
+                ),
+            ],
+        ),
+    },
+)
+
 sync(
     {
         'release-please.yml': release_please,
         'codecov.yml': codecov,
         'build-clippy-test.yml': build_clippy_test,
         'python-wheel.yml': python_wheel,
+        'python-release.yml': python_release,
     }
 )

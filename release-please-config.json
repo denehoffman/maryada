@@ -23,7 +23,19 @@
   "packages": {
     ".": {
       "initial-version": "0.1.0",
-      "package-name": "maryada"
+      "package-name": "maryada",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "bindings/python/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "bindings/python/Cargo.lock",
+          "jsonpath": "$.package[?(!@.source)].version"
+        }
+      ]
     }
   }
 }

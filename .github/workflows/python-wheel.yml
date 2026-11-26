@@ -32,7 +32,7 @@ jobs:
           checks="$RUNNER_TEMP/maryada-checks"
           mkdir -p "$checks"
           cp -r bindings/python/tests bindings/python/examples "$checks"
-          for version in 3.11 3.14; do
+          for version in 3.11 3.14+gil; do
             environment="$RUNNER_TEMP/maryada-python-$version"
             uv venv --python "$version" "$environment"
             uv pip install --python "$environment/bin/python" --group test \
